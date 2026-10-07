@@ -1,0 +1,200 @@
+{
+  "task_type": "game",
+  "version": 1,
+  "notes": "Static rich pack. State must stay short/front-loaded; option descriptions are matched against state.",
+  "questions": {
+    "genre": {
+      "type": "choice",
+      "instructions": "What genre of game best matches what is being requested?",
+      "criteria": {
+        "arcade_shooter": "fast paced shooting, dodging enemies, bullets and dodges",
+        "platformer": "jumping between platforms, avoiding pits and obstacles",
+        "puzzle": "logic, matching, sliding pieces, thinking over fast reactions",
+        "survival_roguelite": "waves and runs that escalate, permadeath between runs",
+        "racing": "driving, speed, tracks and lap timing",
+        "strategy": "turn-based or real-time commanding units over a map",
+        "runner": "endless forward motion, jump and slide over obstacles",
+        "tower_defense": "placing defenses that stop marching enemies"
+      }
+    },
+    "camera_view": {
+      "type": "choice",
+      "instructions": "What camera perspective suits the game being described?",
+      "criteria": {
+        "top_down": "seen from above like Space Invaders or Binding of Isaac",
+        "side_scroller": "viewed from the side, action moves left to right",
+        "isometric": "angled three-quarter 3D-ish diagonal view",
+        "first_person": "through the player character's eyes"
+      }
+    },
+    "visual_style": {
+      "type": "choice",
+      "instructions": "What visual art direction fits the request?",
+      "criteria": {
+        "neon_vector": "glowing wireframe shapes and trails on dark background",
+        "retro_pixel": "chunky 8 or 16 bit pixel art sprites",
+        "flat_cartoon": "simple flat colored shapes and characters",
+        "paper_cutout": "layered flat paper look with soft shadows",
+        "minimal_monochrome": "black and white minimal geometric shapes",
+        "gritty_detailed": "detailed textured realistic-looking rendering"
+      }
+    },
+    "palette": {
+      "type": "choice",
+      "instructions": "What color mood does the request suggest?",
+      "criteria": {
+        "neon_dark": "dark background with electric cyan magenta and lime accents",
+        "retro_warm": "cream, orange, brown and deep red arcade warmth",
+        "cool_pastel": "soft blues pinks and mint on light background",
+        "high_contrast_bw": "pure black and white with single accent color",
+        "earthy_jewel": "deep greens purples and gold jewel tones"
+      }
+    },
+    "control_scheme": {
+      "type": "choice",
+      "instructions": "What input scheme does the game need?",
+      "criteria": {
+        "keyboard_only": "arrow or WASD keys plus a couple action keys",
+        "mouse_aim": "mouse aims or clicks, keyboard moves",
+        "keyboard_and_mouse": "both keyboard movement and mouse aiming together",
+        "touch_friendly": "pointer buttons or touch pads workable on a phone",
+        "gamepad_style": "map like a gamepad with analog feel via keys"
+      },
+      "fallback": "default to simple keyboard controls with mouse support"
+    },
+    "player_count": {
+      "type": "choice",
+      "instructions": "How many players does the request imply?",
+      "criteria": {
+        "single_player": "one person playing alone against the game",
+        "local_versus": "two or more people sharing the same keyboard",
+        "asynchronous": "one player competing against leaderboard times or scores"
+      },
+      "fallback": "default to single player with score chasing"
+    },
+    "difficulty_curve": {
+      "type": "choice",
+      "instructions": "How should difficulty ramp during play?",
+      "criteria": {
+        "gentle_ramp": "slow increase, forgiving early minutes",
+        "steep_escalation": "gets hard fast, intensity climbs quickly",
+        "constant_pressure": "hard from the start and stays hard",
+        "player_paced": "lets player choose difficulty level up front"
+      },
+      "fallback": "default to gentle ramp with escalating late game"
+    },
+    "progression_system": {
+      "type": "choice",
+      "instructions": "What keeps the player coming back between runs?",
+      "criteria": {
+        "pure_highscore": "score chasing and personal bests only",
+        "meta_upgrades": "permanent upgrades bought with earned currency",
+        "level_unlocks": "discrete levels or stages that unlock in order",
+        "character_choices": "unlockable characters or loadouts with different playstyles"
+      },
+      "fallback": "default to high score plus one unlock if easy"
+    },
+    "enemy_ai": {
+      "type": "choice",
+      "instructions": "What kind of enemy behavior is being asked for?",
+      "criteria": {
+        "scripted_patterns": "enemies follow fixed recognizable patterns and formations",
+        "simple_seeking": "enemies steer toward or predict the player",
+        "swarm_chaos": "many simple enemies creating emergent chaos",
+        "tactical": "enemies use cover, flank, or coordinate attacks"
+      },
+      "fallback": "default to scripted patterns with slight seeking"
+    },
+    "boss_fight": {
+      "type": "noul",
+      "instructions": "Does the request ask for or imply a big boss encounter?",
+      "criteria": {
+        "true": "mentions boss, giant enemy, final confrontation, big bad",
+        "false": "no boss mentioned, only regular enemies or none"
+      },
+      "fallback": "default false"
+    },
+    "physics_feel": {
+      "type": "choice",
+      "instructions": "What movement physics feel suits the request?",
+      "criteria": {
+        "precise_tight": "immediate response, stops on a dime, twitchy control",
+        "floaty_smooth": "drifting momentum, curves and glide",
+        "heavy_weighted": "slow acceleration, real sense of mass",
+        "springy_bouncy": "bouncing, elasticity, playful rebounds"
+      },
+      "fallback": "default to precise tight"
+    },
+    "audio_style": {
+      "type": "choice",
+      "instructions": "What sound direction fits the mood of the request?",
+      "criteria": {
+        "synth_arcade": "chiptune bleeps and square wave melodies",
+        "ambient_minimal": "sparse tones and soft effects, mostly quiet",
+        "rock_instrumental": "drums and guitar energy generated procedurally",
+        "silent": "no audio, purely visual feedback"
+      },
+      "fallback": "default to synth arcade bleeps"
+    },
+    "feedback_juice": {
+      "type": "choice",
+      "instructions": "How much polish and juice should effects convey?",
+      "criteria": {
+        "minimal": "functional feedback, no extra flashes",
+        "moderate_juice": "screen shake, particles on hits and pickups, subtle trails",
+        "maximum_juice": "heavy shake, explosions, chromatic aberration, slowmo kill frames, pop numbers"
+      },
+      "fallback": "default to moderate juice"
+    },
+    "persistence": {
+      "type": "choice",
+      "instructions": "What does the game need to remember between sessions?",
+      "criteria": {
+        "stateless": "nothing saved, fresh each load",
+        "highscore_local": "save best score locally",
+        "full_progress": "save unlocks, upgrades, settings, run history locally"
+      },
+      "fallback": "default to highscore_local"
+    },
+    "session_length": {
+      "type": "choice",
+      "instructions": "What session length does the requested game suit?",
+      "criteria": {
+        "short_burst": "runs of one to three minutes, instant restart",
+        "medium": "rounds of five to fifteen minutes",
+        "long_form": "levels or campaigns strung into a longer arc"
+      },
+      "fallback": "default to short burst runs"
+    },
+    "file_structure": {
+      "type": "choice",
+      "instructions": "What scale of implementation packaging fits the ask?",
+      "criteria": {
+        "single_html": "one self-contained html file, openable directly, no build",
+        "small_project": "a few files with a lightweight engine or canvas helpers",
+        "full_project": "multi-file project with bundler and asset pipeline"
+      },
+      "fallback": "default to single_html"
+    },
+    "onscreen_hud": {
+      "type": "choice",
+      "instructions": "What does the heads up display need to show?",
+      "criteria": {
+        "score_only": "just score and maybe lives",
+        "score_plus_stats": "score, lives, level or wave, active powerups",
+        "rich_hud": "score, health bar, combo meter, minimap or wave banner"
+      },
+      "fallback": "default to score_plus_stats"
+    },
+    "failure_screen": {
+      "type": "choice",
+      "instructions": "What happens when the run ends?",
+      "criteria": {
+        "instant_restart": "one key press restarts immediately",
+        "game_over_summary": "summary screen of stats then restart",
+        "run_recap_rewards": "recap with earned upgrades you can apply"
+      },
+      "fallback": "default to game_over_summary"
+    }
+  }
+}

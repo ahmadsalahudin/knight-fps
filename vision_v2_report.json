@@ -1,0 +1,130 @@
+[
+ {
+  "rot": [
+   0,
+   0,
+   0
+  ],
+  "barrel": "right"
+ },
+ {
+  "rot": [
+   0,
+   90,
+   0
+  ],
+  "barrel": "up"
+ },
+ {
+  "rot": [
+   0,
+   180,
+   0
+  ],
+  "barrel": "left"
+ },
+ {
+  "rot": [
+   0,
+   -90,
+   0
+  ],
+  "barrel": "down"
+ },
+ {
+  "rot": [
+   90,
+   0,
+   0
+  ],
+  "barrel": "right"
+ },
+ {
+  "rot": [
+   90,
+   90,
+   0
+  ],
+  "barrel": "center"
+ },
+ {
+  "rot": [
+   90,
+   180,
+   0
+  ],
+  "barrel": "left"
+ },
+ {
+  "rot": [
+   90,
+   -90,
+   0
+  ],
+  "barrel": "right"
+ },
+ {
+  "rot": [
+   180,
+   0,
+   0
+  ],
+  "barrel": "right"
+ },
+ {
+  "rot": [
+   180,
+   90,
+   0
+  ],
+  "barrel": "camera"
+ },
+ {
+  "rot": [
+   180,
+   180,
+   0
+  ],
+  "barrel": "left"
+ },
+ {
+  "rot": [
+   180,
+   -90,
+   0
+  ],
+  "barrel": "down"
+ },
+ {
+  "rot": [
+   -90,
+   0,
+   0
+  ],
+  "barrel": "right"
+ },
+ {
+  "rot": [
+   -90,
+   90,
+   0
+  ],
+  "barrel": "?"
+ },
+ {
+  "rot": [
+   -90,
+   180,
+   0
+  ],
+  "barrel": "left"
+ },
+ {
+  "rot": [
+   -90,
+   -90,
+   0
+  ],
+  "barrel": "right"
+ }
+]

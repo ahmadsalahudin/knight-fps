@@ -1,0 +1,34 @@
+```json
+[
+  {
+    "bug": "The UMD build 'build/three.min.js' does not exist in three r0.160.0 (global THREE.build UMD ships were removed after r147; only three.module.js / three.module.min.js is published). The script 404s, so window.EngineCore = (function(){ ... new THREE.Raycaster() ... })() throws 'THREE is not defined' at parse time, the entire bottom script dies, HudFx.boot() never runs, and the START button has no listener at all — clicking does nothing.",
+    "location": "script tags at bottom of <body>: <script src='https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js'>",
+    "fix": "Either pin a UMD-capable version, e.g. https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js, or keep r0.160.0 but load it as an ES module via an import map (<script type='importmap'> with 'three': '.../three.module.min.js') and convert this inline script to type='module'."
+  },
+  {
+    "bug": "examples/js was deleted from the three.js repo starting r148; for r0.160.0 the path examples/js/controls/PointerLockControls.js does not exist (controls only ship as jsm modules). The 404 means THREE.PointerLockControls is undefined, so EngineCore.init() would throw 'THREE.PointerLockControls is not a constructor' even if the main bundle loaded, killing initialization.",
+    "location": "script tag: <script src='https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/PointerLockControls.js'> and EngineCore.init(), line 'controls = new THREE.PointerLockControls(camera, renderer.domElement)'",
+    "fix": "Use three r0.147.0 for both scripts (three.min.js + examples/js/controls/PointerLockControls.js), or import PointerLockControls from examples/jsm/controls/PointerLockControls.js in an ES module and pass it into EngineCore.init()."
+  },
+  {
+    "bug": "Double start-button wiring conflict: the 'patchStart' IIFE replaces #startButton with a clone, destroying the listener HudFx.boot() registered on the original node. The replacement listener calls buildArena(), startCombat() and requestPointerLock() but never calls showMenu('none') and never registers the gameLoop via EngineCore.onFrame(), so the menu overlay (z-index 20, pointer-events: all, full-screen) stays visible covering the game, and HUD updates (gameLoop) never run.",
+    "location": "patchStart() IIFE at bottom of the inline script / HudFx.boot() startButton listener",
+    "fix": "Merge into one handler on a single button instance: on click do showMenu('none'), buildArena(), EngineCore.onFrame(gameLoop), CombatApi.startCombat(), and requestPointerLock; delete the cloneNode/replaceChild patch or have it call exactly the same full sequence."
+  },
+  {
+    "bug": "Enemy damage feedback is disconnected: EngineCore.player.takeDamage() only decrements internal gameState.health; it never invokes CombatApi.onPlayerHit callbacks, so window.HudFx.setHealth / damageFlash are never triggered on hits. The health bar only updates via gameLoop, which (per above) is never registered on the working start path.",
+    "location": "EngineCore.player.takeDamage / Enemy-chase onFrame callback ('window.EngineCore.player.takeDamage(10 * delta * 3)')",
+    "fix": "Have takeDamage emit a damage event (e.g. expose EngineCore.player.onDamage(cb) and onPlayerHit from CombatApi subscribes to it), or add window.HudFx.setHealth(window.EngineCore.player.getHealth()/100) + damageFlash directly inside the damage-of-frames branch of the enemy-chase frame callback."
+  },
+  {
+    "bug": "In the movement frame callback, dir is rotated with obj.rotation.y, but PointerLockControls rotates the camera via its own parent-less object quaternion — obj of controls.getObject() is the camera itself and has rotation.y ≈ 0, so A/D/W/S movement axes never rotate with the view (strafing looks wrong / forward is always world -Z).",
+    "location": "window.addEventListener('load', ...) inline block, 'dir.normalize().applyAxisAngle(new THREE.Vector3(0,1,0), obj.rotation.y)'",
+    "fix": "Derive the yaw from the camera quaternion: const yaw = Math.atan2(camera.quaternion.y, camera.quaternion.w) * 2 (or use _getCamera().getWorldDirection for forward/right vectors) instead of obj.rotation.y."
+  },
+  {
+    "bug": "Spawning/instantiating enemies uses THREE.CapsuleGeometry, and shoot()'s raycast sets userData flags, but because module loading (finding 1–2) throws, spawnWave/startCombat never execute at all, so 'enemies never act' is a downstream symptom of the dead script context — any fix must first restore THREE plus PointerLockControls availability.",
+    "location": "CombatApi.spawnEnemy() / spawnWave()",
+    "fix": "After pinning a compatible three.js version and wiring a single start handler (above), verify startCombat() runs by confirming enemies appear; no further change needed in spawn logic itself."
+  }
+]
+```

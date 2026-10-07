@@ -1,0 +1,25 @@
+{
+ "root_cause": "Knight.update() re-triggered swing() every frame during the attack window because there was no one-shot hasSwung flag. swing() also raycasted enemy meshes instead of checking the player arc, and used a flat y-origin ray that missed the player's eye height, so the distance/facing test never registered. Player.hurt() also failed to call Sfx.hurt().",
+ "patched_blocks": [
+  {
+   "find": "            this.shieldUp = true;\n            this._phase0 = Math.random() * 6.28;",
+   "replace": "            this.shieldUp = true;\n            this.hasSwung = false;\n            this._phase0 = Math.random() * 6.28;"
+  },
+  {
+   "find": "                if (dist < 2.4) {\n                    this.isAttacking = true;\n                    this.attackTime = 0;\n                    this.state = 'telegraph';\n                } else {",
+   "replace": "                if (dist < 2.4) {\n                    this.isAttacking = true;\n                    this.attackTime = 0;\n                    this.hasSwung = false;\n                    this.state = 'telegraph';\n                } else {"
+  },
+  {
+   "find": "            if (this.state === 'attack' && this.attackTime > 1.2) {\n                this.swing();\n            }",
+   "replace": "            if (this.state === 'attack' && this.attackTime > 1.2 && !this.hasSwung) {\n                this.hasSwung = true;\n                this.swing();\n            }"
+  },
+  {
+   "find": "        swing() {\n            window.Sfx.swing();\n            const angle = this.mesh.rotation.y;\n            const halfArc = Math.PI * 110 / 180;\n            const from = this.mesh.position.clone();\n            const to = new THREE.Vector3(\n                from.x + Math.sin(angle) * 2.6,\n                from.y,\n                from.z + Math.cos(angle) * 2.6\n            );\n            \n            // Raycast to detect hit\n            const raycaster = new THREE.Raycaster(from, to.clone().sub(from).normalize());\n            const intersects = raycaster.intersectObjects(window.Enemies.rayTargets());\n            for (const hit of intersects) {\n                if (hit.object.userData.hp !== undefined) {\n                    window.Player.hurt(15, hit.face.normal);\n                }\n            }\n        }",
+   "replace": "        swing() {\n            window.Sfx.swing();\n            const playerPos = window.Game.playerObj.position;\n            const from = new THREE.Vector3(this.mesh.position.x, this._mid, this.mesh.position.z);\n            const toPlayer = playerPos.clone().sub(from);\n            const dist = toPlayer.length();\n            if (dist < 3.2 && cosTest(this.lookAt, toPlayer) > 0.2) {\n                window.Player.hurt(15);\n            }\n        }"
+  },
+  {
+   "find": "window.Player = {\n  hurt: function (dmg) { window.Game.hurt(dmg); },\n  hp: function () { return window.Game.playerHP; }\n};",
+   "replace": "window.Player = {\n  hurt: function (dmg) {\n    if (window.Sfx && Sfx.hurt) Sfx.hurt();\n    window.Game.hurt(dmg);\n  },\n  hp: function () { return window.Game.playerHP; }\n};"
+  }
+ ]
+}

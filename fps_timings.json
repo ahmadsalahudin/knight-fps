@@ -1,0 +1,14 @@
+{
+ "pack_ms": 23473.235699988436,
+ "jev_ms": 949.7878000256605,
+ "architect_ms": 156696.40389998676,
+ "module_ms": 3204.4931999989785,
+ "merge_ms": 170264.49909998337,
+ "sizes": {
+  "engine-core": 154,
+  "combat-ai": 211,
+  "fx-hud-audio": 152
+ },
+ "implement_total_ms": 330166.78959998535,
+ "wall_total_ms": 353640.0785999722
+}

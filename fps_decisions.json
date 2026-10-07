@@ -1,0 +1,296 @@
+{
+ "prompt": "A dark sci-fi space-station FPS where you fight alien swarms and a giant hive mother boss, with a shotgun and a plasma rifle, sprint and slide movement, medium horror atmosphere, wave survival with persistent best-wave stats",
+ "decisions": {
+  "fps_subgenre": {
+   "type": "choice",
+   "choice": "boomer_arcade",
+   "probabilities": {
+    "looter_run": 0,
+    "boomer_arcade": 0.8,
+    "modern_arena": 0.19,
+    "tactical": 0,
+    "horror_ambient": 0.01
+   },
+   "confidence": 0.74
+  },
+  "movement_speed": {
+   "type": "choice",
+   "choice": "brisk",
+   "probabilities": {
+    "ultra_fast": 0.01,
+    "brisk": 0.99,
+    "slow_cautious": 0,
+    "measured": 0
+   },
+   "confidence": 0.98
+  },
+  "movement_tech": {
+   "type": "choice",
+   "choice": "sprint_slide",
+   "probabilities": {
+    "none_basic": 0,
+    "sprint_slide": 1,
+    "vault_climb": 0,
+    "airmobility": 0,
+    "dash_dodge": 0
+   },
+   "confidence": 1
+  },
+  "verticality": {
+   "type": "choice",
+   "choice": "multi_level",
+   "probabilities": {
+    "flat_arena": 0.1,
+    "multi_level": 0.83,
+    "towers_holes": 0.07
+   },
+   "confidence": 0.75
+  },
+  "weapons_ranged": {
+   "type": "choice",
+   "choice": "mixed_all",
+   "probabilities": {
+    "projectile_set": 0.17,
+    "mixed_all": 0.7,
+    "melee_heavy": 0,
+    "energy_exotic": 0.02,
+    "hitscan_set": 0.11
+   },
+   "confidence": 0.62
+  },
+  "weapon_slots": {
+   "type": "choice",
+   "choice": "two_slots",
+   "probabilities": {
+    "two_slots": 0.96,
+    "all_arsenal": 0.01,
+    "one_primary": 0.03
+   },
+   "confidence": 0.94
+  },
+  "recoil_feel": {
+   "type": "choice",
+   "choice": "moderate_kick",
+   "probabilities": {
+    "pew_casual": 0.01,
+    "moderate_kick": 0.89,
+    "tactical_burst": 0.1
+   },
+   "confidence": 0.83
+  },
+  "ammo_model": {
+   "type": "choice",
+   "choice": "finite_pickups",
+   "probabilities": {
+    "finite_pickups": 0.75,
+    "battery_heat": 0.02,
+    "infinite_reloading": 0.23,
+    "infinite": 0
+   },
+   "confidence": 0.67
+  },
+  "enemy_archetypes": {
+   "type": "choice",
+   "choice": "rushers_only",
+   "probabilities": {
+    "armor_variety": 0.03,
+    "flying_with_grounded": 0.01,
+    "ranged_mixed": 0.16,
+    "rushers_only": 0.8,
+    "humanoids_squad": 0
+   },
+   "confidence": 0.74
+  },
+  "enemy_ai_brain": {
+   "type": "choice",
+   "choice": "swarm_overwhelm",
+   "probabilities": {
+    "pattern_deterministic": 0,
+    "tactical_cover": 0.01,
+    "direct_chase": 0,
+    "swarm_overwhelm": 0.99
+   },
+   "confidence": 0.98
+  },
+  "wave_or_boss_structure": {
+   "type": "choice",
+   "choice": "wave_arena",
+   "probabilities": {
+    "wave_arena": 1,
+    "timed_run": 0,
+    "open_explore": 0,
+    "boss_first": 0,
+    "linear_corridor": 0
+   },
+   "confidence": 1
+  },
+  "health_model": {
+   "type": "choice",
+   "choice": "pickups_only",
+   "probabilities": {
+    "regen_shield": 0.17,
+    "low_health_grit": 0.03,
+    "regen_slow": 0.36,
+    "pickups_only": 0.44
+   },
+   "confidence": 0.26
+  },
+  "player_damage_feel": {
+   "type": "choice",
+   "choice": "red_vignette",
+   "probabilities": {
+    "screen_shake": 0.1,
+    "tiny_death": 0.01,
+    "red_vignette": 0.89
+   },
+   "confidence": 0.82
+  },
+  "arena_setting": {
+   "type": "choice",
+   "choice": "sci_fi_station",
+   "probabilities": {
+    "abstract_grid": 0,
+    "hell_demonic": 0,
+    "cyber_neon": 0,
+    "urban_warzone": 0,
+    "military_bunker": 0,
+    "sci_fi_station": 1
+   },
+   "confidence": 1
+  },
+  "lighting_mood": {
+   "type": "choice",
+   "choice": "dramatic_contrast",
+   "probabilities": {
+    "dark_horror": 0.12,
+    "bright_clean": 0,
+    "dramatic_contrast": 0.88,
+    "neon_glow": 0
+   },
+   "confidence": 0.84
+  },
+  "camera_fx": {
+   "type": "choice",
+   "choice": "full_juice",
+   "probabilities": {
+    "none_static": 0.01,
+    "full_juice": 0.93,
+    "head_bob": 0.06
+   },
+   "confidence": 0.89
+  },
+  "hud_style": {
+   "type": "choice",
+   "choice": "sci_fi_overlay",
+   "probabilities": {
+    "classic_bars": 0.25,
+    "sci_fi_overlay": 0.75,
+    "minimal_dots": 0
+   },
+   "confidence": 0.61
+  },
+  "crosshair_style": {
+   "type": "choice",
+   "choice": "dynamic_spread",
+   "probabilities": {
+    "static_cross": 0.11,
+    "hit_markers": 0.13,
+    "dynamic_spread": 0.76
+   },
+   "confidence": 0.63
+  },
+  "difficulty_pillars": {
+   "type": "choice",
+   "choice": "balanced_ramp",
+   "probabilities": {
+    "hardcore_punishing": 0.01,
+    "balanced_ramp": 0.99,
+    "casual_fun": 0
+   },
+   "confidence": 0.98
+  },
+  "session_shape": {
+   "type": "choice",
+   "choice": "medium_match",
+   "probabilities": {
+    "instant_burst": 0.01,
+    "medium_match": 0.69,
+    "long_mission": 0.3
+   },
+   "confidence": 0.53
+  },
+  "audio_style": {
+   "type": "choice",
+   "choice": "synth_darksynth",
+   "probabilities": {
+    "silent_views": 0,
+    "chunky_arcade": 0,
+    "synth_darksynth": 0.99,
+    "military_realistic": 0.01
+   },
+   "confidence": 0.98
+  },
+  "persistence": {
+   "type": "choice",
+   "choice": "highscore_local",
+   "probabilities": {
+    "highscore_local": 0.93,
+    "run_stats": 0.07,
+    "stateless": 0
+   },
+   "confidence": 0.89
+  },
+  "loot_or_upgrades": {
+   "type": "choice",
+   "choice": "none_pure_skill",
+   "probabilities": {
+    "pickups_only": 0.17,
+    "weapon_drops": 0,
+    "none_pure_skill": 0.81,
+    "perk_choices": 0.02
+   },
+   "confidence": 0.74
+  },
+  "engine_fidelity": {
+   "type": "choice",
+   "choice": "textured_heavy",
+   "probabilities": {
+    "low_poly_flair": 0.16,
+    "minimal_shapes": 0,
+    "textured_heavy": 0.84
+   },
+   "confidence": 0.77
+  },
+  "file_structure": {
+   "type": "choice",
+   "choice": "full_project",
+   "probabilities": {
+    "full_project": 0.86,
+    "small_project": 0.12,
+    "single_html": 0.02
+   },
+   "confidence": 0.78
+  },
+  "objective_extra": {
+   "type": "choice",
+   "choice": "none_survive",
+   "probabilities": {
+    "none_survive": 1,
+    "defend_object": 0,
+    "collect_items": 0,
+    "hold_zones": 0
+   },
+   "confidence": 0.99
+  },
+  "hit_feedback_enemies": {
+   "type": "choice",
+   "choice": "particles_gib",
+   "probabilities": {
+    "flash_only": 0.1,
+    "particles_gib": 0.84,
+    "ragdoll_physics": 0.06
+   },
+   "confidence": 0.76
+  }
+ }
+}

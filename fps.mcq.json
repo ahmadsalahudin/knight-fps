@@ -1,0 +1,308 @@
+{
+  "task_type": "fps",
+  "version": 1,
+  "research_notes": "Authored from: Wikipedia shooter-game taxonomy (FPS, arena, hero, tactical, looter, boomer shooter subgenres), FPS combat/level-design principles (Game Developer design coverage), classic FPS movement/weapon/health model knowledge (Doom/Quake/Halo/CS conventions). Jev unmatched-answer tolerance: questions the prompt says nothing about.",
+  "questions": {
+    "fps_subgenre": {
+      "type": "choice",
+      "instructions": "Which FPS subgenre does the request most resemble?",
+      "criteria": {
+        "boomer_arcade": "fast movement, hordes of enemies, pickups on floor, Doom and Quake style",
+        "modern_arena": "one enclosed arena, escalating waves, score chasing",
+        "tactical": "slow careful combat, limited ammo, one shot can kill, cover discipline",
+        "horror_ambient": "dark corridors, scarce resources, dread and vulnerability",
+        "looter_run": "runs that earn gear and upgrades between attempts"
+      },
+      "fallback": "default to boomer_arcade movement with modern_arena structure"
+    },
+    "movement_speed": {
+      "type": "choice",
+      "instructions": "How fast does the player move?",
+      "criteria": {
+        "ultra_fast": "very high speed like Quake or Dusk, constant motion",
+        "brisk": "quick but controlled like Doom 2016 or Halo",
+        "measured": "moderate realism pace like CS or stalker-like games",
+        "slow_cautious": "heavy careful steps, horror or tactical pace"
+      },
+      "fallback": "default to brisk"
+    },
+    "movement_tech": {
+      "type": "choice",
+      "instructions": "What advanced movement tools does the request imply?",
+      "criteria": {
+        "none_basic": "walking running jumping only",
+        "sprint_slide": "sprint with slide or crouch slide feel",
+        "dash_dodge": "quick dash bursts or dodge rolls",
+        "airmobility": "double jump, air strafing, rocket or grapple mobility",
+        "vault_climb": "mantling, climbing ledges, limited parkour"
+      },
+      "fallback": "default to sprint_slide"
+    },
+    "verticality": {
+      "type": "choice",
+      "instructions": "How much vertical gameplay does the map need?",
+      "criteria": {
+        "flat_arena": "single floor, no climbing platforming",
+        "multi_level": "two or three levels, catwalks and stairs",
+        "towers_holes": "tall towers, pits, overlooks and underground parts"
+      },
+      "fallback": "default to flat_arena"
+    },
+    "weapons_ranged": {
+      "type": "choice",
+      "instructions": "What weapon types should the player carry?",
+      "criteria": {
+        "hitscan_set": "instant hitscan guns pistol rifle shotgun sniper",
+        "projectile_set": "in-flight projectiles rockets grenades plasma arrows",
+        "energy_exotic": "beams, chain lightning, portals, sci-fi oddities",
+        "melee_heavy": "melee as a real option, claws chainsaw sword",
+        "mixed_all": "one hitscan one explosive one energy spread across slots"
+      },
+      "fallback": "default to hitscan_set"
+    },
+    "weapon_slots": {
+      "type": "choice",
+      "instructions": "How many weapons can be held at once?",
+      "criteria": {
+        "all_arsenal": "carry everything found, quake and doom style",
+        "two_slots": "only two weapons equipped at a time",
+        "one_primary": "one weapon at a time, forced swapping"
+      },
+      "fallback": "default to all_arsenal"
+    },
+    "recoil_feel": {
+      "type": "choice",
+      "instructions": "How should firing feel mechanically?",
+      "criteria": {
+        "pew_casual": "no recoil, pure arcade fun, pattern-free",
+        "moderate_kick": "mild recoil and spread growth on sustained fire",
+        "tactical_burst": "strong recoil, tap and burst firing rewarded"
+      },
+      "fallback": "default to pew_casual"
+    },
+    "ammo_model": {
+      "type": "choice",
+      "instructions": "What ammunition economy fits?",
+      "criteria": {
+        "infinite": "no ammo, only weapon cooldowns if any",
+        "infinite_reloading": "magazines with reloads, endless reserve",
+        "infinite": "unlimited ammo infinite reserve",
+        "finite_pickups": "ammo is finite, replenished by pickups and drops",
+        "battery_heat": "energy or heat system instead of ammo"
+      },
+      "fallback": "default to infinite_reloading"
+    },
+    "enemy_archetypes": {
+      "type": "choice",
+      "instructions": "Which enemy roster is being asked for?",
+      "criteria": {
+        "rushers_only": "many melee close-and-hurt enemies",
+        "ranged_mixed": "shooters plus rushers forming classic duos",
+        "flying_with_grounded": "flyers over ground crowd",
+        "armor_variety": "shielded armored and weakpoint enemies mixed",
+        "humanoids_squad": "soldier squad AI using cover and flanks"
+      },
+      "fallback": "default to ranged_mixed"
+    },
+    "enemy_ai_brain": {
+      "type": "choice",
+      "instructions": "How smart should enemies behave?",
+      "criteria": {
+        "pattern_deterministic": "fixed readable patterns, learnable",
+        "direct_chase": "simple steering straight at player",
+        "tactical_cover": "use cover, retreat when hurt, flank occasionally",
+        "swarm_overwhelm": "individually dumb, dangerous only in numbers"
+      },
+      "fallback": "default to direct_chase"
+    },
+    "wave_or_boss_structure": {
+      "type": "choice",
+      "instructions": "What match structure drives the game?",
+      "criteria": {
+        "wave_arena": "waves of enemies clearing into the next wave",
+        "boss_first": "one big boss encounter as the main event",
+        "linear_corridor": "rooms sequenced like a campaign mission",
+        "open_explore": "one explorable zone with objectives scattered",
+        "timed_run": "finish fast, speedrun-like timer pressure"
+      },
+      "fallback": "default to wave_arena"
+    },
+    "boss_fight": {
+      "type": "noul",
+      "instructions": "Does the request imply a giant boss or final enemy?",
+      "criteria": {
+        "true": "boss, giant, mothership, final duel, big bad mentioned",
+        "false": "no boss or final encounter mentioned"
+      },
+      "fallback": "default false"
+    },
+    "health_model": {
+      "type": "choice",
+      "instructions": "What health and recovery system fits?",
+      "criteria": {
+        "regen_shield": "shield regenerates, like halo style",
+        "pickups_only": "health only comes from kits on the ground",
+        "regen_slow": "health slowly regenerates after no damage",
+        "low_health_grit": "tiny health pool, deaths fast, restart quick"
+      },
+      "fallback": "default to regen_shield"
+    },
+    "player_damage_feel": {
+      "type": "choice",
+      "instructions": "How should taking damage express itself?",
+      "criteria": {
+        "red_vignette": "red edges of screen and heartbeat",
+        "screen_shake": "camera shake and directional indicator",
+        "tiny_death": "near-instant death with no drawn out hurt"
+      },
+      "fallback": "default to red_vignette"
+    },
+    "arena_setting": {
+      "type": "choice",
+      "instructions": "What setting or environment theme does the request suggest?",
+      "criteria": {
+        "sci_fi_station": "space station, sci-fi corridors and hangars",
+        "urban_warzone": "city streets, ruined buildings, war rubble",
+        "hell_demonic": "hell, gore, lava, demonic architecture",
+        "cyber_neon": "cyberpunk neon streets and holograms",
+        "military_bunker": "concrete military base, labs, bunkers",
+        "abstract_grid": "abstract geometric arena like tron or superhot"
+      },
+      "fallback": "default to sci_fi_station"
+    },
+    "lighting_mood": {
+      "type": "choice",
+      "instructions": "What lighting atmosphere fits the mood?",
+      "criteria": {
+        "bright_clean": "well lit, visibility first, arcade readability",
+        "dramatic_contrast": "strong spotlights, deep shadows, moody",
+        "dark_horror": "very dark, limited sightlines, dread",
+        "neon_glow": "emissive neon surfaces and fog with bloom"
+      },
+      "fallback": "default to bright_clean"
+    },
+    "camera_fx": {
+      "type": "choice",
+      "instructions": "What first-person camera effects should exist?",
+      "criteria": {
+        "none_static": "steady camera, no bob or tilt",
+        "head_bob": "subtle walking bob",
+        "full_juice": "bob, strafe tilt, landing kick, FOV kick on dash"
+      },
+      "fallback": "default to head_bob"
+    },
+    "hud_style": {
+      "type": "choice",
+      "instructions": "What HUD presentation fits?",
+      "criteria": {
+        "minimal_dots": "nearly nothing, diegetic or tiny corner dot",
+        "classic_bars": "health bar, ammo counter, wave number corners",
+        "sci_fi_overlay": "stylish futuristic frame with animated meters"
+      },
+      "fallback": "default to classic_bars"
+    },
+    "crosshair_style": {
+      "type": "choice",
+      "instructions": "What aiming reticle fits the game feel?",
+      "criteria": {
+        "static_cross": "simple fixed crosshair always same size",
+        "dynamic_spread": "crosshair expands with weapon spread",
+        "hit_markers": "dynamic crosshair plus hit confirm markers"
+      },
+      "fallback": "default to dynamic_spread"
+    },
+    "difficulty_pillars": {
+      "type": "choice",
+      "instructions": "What difficulty stance should the game take?",
+      "criteria": {
+        "casual_fun": "easy to survive, spectacle over challenge",
+        "balanced_ramp": "escalating challenge with fair telegraphs",
+        "hardcore_punishing": "fast death, mastery demanded, few checkpoints"
+      },
+      "fallback": "default to balanced_ramp"
+    },
+    "session_shape": {
+      "type": "choice",
+      "instructions": "What session length does the request imply?",
+      "criteria": {
+        "instant_burst": "one to three minute runs, instant restart",
+        "medium_match": "five to fifteen minute sessions",
+        "long_mission": "twenty minute plus multi-stage mission"
+      },
+      "fallback": "default to instant_burst"
+    },
+    "audio_style": {
+      "type": "choice",
+      "instructions": "What audio approach fits?",
+      "criteria": {
+        "synth_darksynth": "dark synthwave pulses, Carpenter Brut energy",
+        "chunky_arcade": "punchy arcade pops, zaps and booms",
+        "military_realistic": "realistic gunfire and ambience implied",
+        "silent_views": "no audio needed"
+      },
+      "fallback": "default to chunky_arcade"
+    },
+    "persistence": {
+      "type": "choice",
+      "instructions": "What should be saved between sessions?",
+      "criteria": {
+        "stateless": "nothing saved between page loads",
+        "highscore_local": "local best score/wave only",
+        "run_stats": "detailed stats, weapon choices, run history saved"
+      },
+      "fallback": "default to highscore_local"
+    },
+    "loot_or_upgrades": {
+      "type": "choice",
+      "instructions": "Does the run include mid-combat upgrades or loot?",
+      "criteria": {
+        "none_pure_skill": "no in-run upgrades, pure shooting",
+        "pickups_only": "health, ammo and powerup pickups on map",
+        "perk_choices": "choose an upgrade perk between waves",
+        "weapon_drops": "enemies drop better weapons progressively"
+      },
+      "fallback": "default to pickups_only"
+    },
+    "engine_fidelity": {
+      "type": "choice",
+      "instructions": "What 3D implementation depth fits the request and constraint reality?",
+      "criteria": {
+        "minimal_shapes": "simple colored boxes and cylinders, stylized",
+        "low_poly_flair": "low-poly models with lights, fog, particles",
+        "textured_heavy": "textured meshes, shadows, postprocessing"
+      },
+      "fallback": "default to low_poly_flair"
+    },
+    "file_structure": {
+      "type": "choice",
+      "instructions": "What packaging scale fits the ask?",
+      "criteria": {
+        "single_html": "one self-contained html file using CDN three.js",
+        "small_project": "a few files with local web server",
+        "full_project": "bundled multi-file project"
+      },
+      "fallback": "default to single_html"
+    },
+    "objective_extra": {
+      "type": "choice",
+      "instructions": "Beyond shooting enemies, what secondary goal does the prompt imply?",
+      "criteria": {
+        "none_survive": "nothing extra, survival is the goal",
+        "collect_items": "fetch or collect objects in the map",
+        "hold_zones": "control or defend specific areas",
+        "defend_object": "protect something that can be damaged"
+      },
+      "fallback": "default to none_survive"
+    },
+    "hit_feedback_enemies": {
+      "type": "choice",
+      "instructions": "How should enemy hits and deaths register visually?",
+      "criteria": {
+        "flash_only": "flash white on hit, shrink and vanish",
+        "particles_gib": "explode into particles upon death and hit",
+        "ragdoll_physics": "physical collapse with ragdoll or knockback"
+      },
+      "fallback": "default to particles_gib"
+    }
+  }
+}

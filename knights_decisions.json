@@ -1,0 +1,72 @@
+{
+ "revolver_style": {
+  "type": "choice",
+  "choice": "arcane_flintlock",
+  "probabilities": {
+   "gritty_steampunk": 0.02,
+   "pistol_rifle": 0.28,
+   "arcane_flintlock": 0.7
+  },
+  "confidence": 0.55
+ },
+ "enemy_behavior": {
+  "type": "choice",
+  "choice": "advance_shield",
+  "probabilities": {
+   "guard_counter": 0.19,
+   "sprint_rush": 0.11,
+   "advance_shield": 0.7
+  },
+  "confidence": 0.54
+ },
+ "arena_structure": {
+  "type": "choice",
+  "choice": "open_meadow",
+  "probabilities": {
+   "ruin_arena": 0,
+   "open_meadow": 1,
+   "forest_edge": 0
+  },
+  "confidence": 1
+ },
+ "boss_archetype": {
+  "type": "choice",
+  "choice": "black_knight",
+  "probabilities": {
+   "siege_golem": 0,
+   "black_knight": 1,
+   "warlord_grail": 0
+  },
+  "confidence": 0.99
+ },
+ "difficulty_style": {
+  "type": "choice",
+  "choice": "frenzy_horde",
+  "probabilities": {
+   "arcade_fast": 0.2,
+   "frenzy_horde": 0.42,
+   "methodical": 0.38
+  },
+  "confidence": 0.14
+ },
+ "wave_structure": {
+  "type": "choice",
+  "choice": "wave_arena",
+  "probabilities": {
+   "logging_arena": 0.01,
+   "objective_capture": 0,
+   "wave_arena": 0.99
+  },
+  "confidence": 0.99
+ },
+ "signature_powerup": {
+  "type": "choice",
+  "choice": "holy_smite",
+  "probabilities": {
+   "holy_smite": 0.62,
+   "time_slow": 0.15,
+   "shield_bash": 0.23
+  },
+  "confidence": 0.43
+ }
+}

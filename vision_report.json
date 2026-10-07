@@ -1,0 +1,26 @@
+[
+ {
+  "name": "A_upright-yfwd",
+  "verdict": "WEAPON: yes\nBARREL: up\nUPSIDEDOWN: no\nSCORE: 2"
+ },
+ {
+  "name": "B_flat-yfwd",
+  "verdict": ""
+ },
+ {
+  "name": "C_upright-y180",
+  "verdict": "WEAPON: yes\nBARREL: up\nUPSIDEDOWN: no\nSCORE"
+ },
+ {
+  "name": "D_flat-y180",
+  "verdict": "WEAPON: yes\nBARREL: left\nUPSIDEDOWN: no\nSCORE: 6/10"
+ },
+ {
+  "name": "E_upright-z0",
+  "verdict": ""
+ },
+ {
+  "name": "F_flat-z0",
+  "verdict": ""
+ }
+]

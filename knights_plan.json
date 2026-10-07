@@ -1,0 +1,88 @@
+{
+ "modules": [
+  {
+   "id": "world",
+   "task_brief": "Create window.World.single() returning THREE.Group with the arena: (1) ground plane ~120x120 units, MeshLambertMaterial green-brown (#4a7c3a), receiveShadow. (2) Fog THREE.FogExp2(0x9fb98a, 0.02) and hemispheric + directional light with shadows. (3) Scatter via window.Assets.instance(name) helper (loading GLBs once from window.ASSETS base64 via new THREE.ObjectLoader or GLTF parse \u2014 decode base64 to ArrayBuffer, use THREE.GLTFLoader-equivalent: since UMD r147, use THREE.ObjectLoader is wrong for GLB; instruct coder to decode base64 with atob->Uint8Array and use THREE.GLTFLoader polyfilled: they may implement a minimal GLB parser OR use the included examples/js/loaders/GLTFLoader.js via note in merge; simplest: write inline parser wrapping THREE.BufferGeometryLoader after extracting JSON+BIN chunks \u2014 provide exact code: read 12-byte header, chunks, JSON.parse chunk 0, Uint8Array chunk 1 as binary, new THREE.LoadingManager, use loader.parse(json, binary, onDone) from THREE.GLTFLoader.prototype). Use THREE scripts loaded: three.min.js only (no GLTFLoader on CDN path guaranteed) \u2014 coder must implement parseGLB(ab) returning THREE.Group: strip glTF into ObjectLoader-incompatible, so instead REQUIRE: implement minimal GLTF parser using THREE.GLTFLoader source not available; fallback: manually build geometry from accessors/bufferViews (positions, normals, indices, materials via textures NOT needed \u2014 use flat colors). Approximate: 200 grass tufts (grass.glb, grass_2.glb randomly), 8 birch trees at edges, 10 rocks mid-field, small random scale/rotation, no shadows on grass. (4) Sky: scene.background color #a8c8e8. Keep draw calls low by merging grass geometries into one BufferGeometry when possible. Export window.World.build(scene) adds everything and returns list of collidable objects (trees, rocks) with bounding spheres for movement clamp.",
+   "provides": [
+    "window.World.build",
+    "window.World.colliders"
+   ],
+   "consumes": [
+    "window.Assets.parseGLB"
+   ]
+  },
+  {
+   "id": "assets",
+   "task_brief": "Create window.Assets with parseGLB(base64Name): decode window.ASSETS[name] (base64 string) via atob into Uint8Array ArrayBuffer, binary-parse GLB chunks, and load mesh data using minimal GLTF reader: parse the JSON chunk with JSON.parse, then construct THREE.BufferGeometry from accessor data (FLOAT/USHORT components, positions+normals), and THREE.MeshBasicMaterial-ish MeshLambertMaterial from material baseColorFactor. Return THREE.Mesh or Group. Cache per asset name. Acceptable to ignore node hierarchies \u2014 merge mesh primitives per node at node transforms applied. If a chunk is problematic, fall back to a placeholder box mesh with console.warn but NEVER crash. Provide Assets.get('knight') etc.",
+   "provides": [
+    "window.Assets.parseGLB",
+    "window.Assets.get",
+    "window.Assets.instance"
+   ],
+   "consumes": []
+  },
+  {
+   "id": "controls",
+   "task_brief": "Create window.Game with init(scene, camera), update(dt, input), and pointer-lock wiring using THREE.PointerLockControls (script from shared header). Player: position.y=1.7, WASD move speed 6, sprint, clamp against window.World.colliders (sphere radius collision), jump optional no. Viewmodel: Assets.get('revolver') scaled ~0.3, attached to camera at offset (0.25,-0.22,-0.5). Recoil: on fire kick z+0.12 and pitch rotation, lerp back over 120ms. Reload: R key, cylinder gltf child if exists animates rotate/offset 'cylinder out' \u2014 approximate by rotating whole gun roll 90deg and lowering, 1.6s, blocks firing. Fire: LMB, hitscan raycast from camera against enemy hitboxes list window.Enemies.rayTargets() \u2014 burst double-action style (semi-auto, 350ms between shots, 4-shot cylinder, auto reload when empty). Hit feedback: return {hit, point, object}. Exposes window.Player.aimRay() for enemies' damage logic. Also manages pointer lock overlay div `#lock` click-to-play.",
+   "provides": [
+    "window.Game.init",
+    "window.Game.update",
+    "window.Player.fire",
+    "window.Player.rayTargets"
+   ],
+   "consumes": [
+    "window.Assets.get",
+    "window.Enemies.rayTargets",
+    "window.HUD.updateAmmo",
+    "window.Sfx.shoot",
+    "window.Sfx.reload"
+   ]
+  },
+  {
+   "id": "ai",
+   "task_brief": "Create window.Waves, window.Enemies. Each knight: Assets.get('knight') mesh + helmet on head + shield attached left + sword right. (1) Enemy AI: spawn at arena edge, advance_shield \u2014 walk toward player 2.2 u/s with shield raised (shield child rotated up), every 2-4s strafe sideways 1s, when within 2.4u: telegraph 0.8s (rear shield up, sword arm pulls back, tint redder) then swing \u2014 if player within 2.6u arc, damage 15 to player health (window.Player.hp -= dmg via window.Player.hurt(dmg, fromDir)). HP 40. (2) Waves: wave count math n=wave, knights = 3+2n, spawn staggered over wave duration; wave banner via HUD. Wave 5 boss: giant knight (scale 3.5, black material override, no helmet, shield boss variant), HP 400, 3 phases at 66%/33%: phase raises speed + swing frequency, spawns 2 minions when phase transitions, sweeping greatsword = 220-degree horizontal arc telegraph 1.0s then 0.4s sweep, hit if player in sector radius 6. Victory on boss death (wave 5 cleared). (3) Gentle challenge: every other wave can be frenzy_rush: knights speed 3.4. Update(dt) loop, ragdoll-lite death = tip over + fade & remove, sfx hooks, hit flash on takeShot(rayResult) consuming Bullet hit names \u2014 hitbox: invisible Box3 per knight registered in window.Enemies.rayTargets() as meshes with .userData.hp.",
+   "provides": [
+    "window.Enemies.update",
+    "window.Enemies.rayTargets",
+    "window.Enemies.hurt",
+    "window.Waves.start",
+    "window.Waves.update",
+    "window.Waves.current"
+   ],
+   "consumes": [
+    "window.Assets.get",
+    "window.Sfx.swing",
+    "window.Sfx.bossRoar",
+    "window.HUD.setWave",
+    "window.HUD.playerHit",
+    "window.Player.hurt"
+   ]
+  },
+  {
+   "id": "fx_hud",
+   "task_brief": "Create window.HUD and window.Sfx and window.Smite. (1) HUD: plain DOM/CSS: crosshair (center dot), health bar bottom-left, ammo 4 pips bottom-right reloading spinner, current wave + best-wave from localStorage key 'kf_best' top-center, damage vignette flash on hit, enemy hit marker X on crosshair briefly. Game over screen (show wave reached + 'new best' if beat), victory screen. window.HUD.setWave/updateAmmo/playerHit/hitmark/gameOver/victory/updateHP. (2) Sfx webaudio: one AudioContext singleton lazily created on first user gesture. shoot (noise burst + pitch-down square blip), reload clicks, swing whoosh (filtered noise sweep), hurt thud, hit tick, knight death groan (two detuned saws pitch drop), boss roar (low saw+dist). All synthesized, no files. (3) Signature powerup holy_smite: each wave cleared kills credited; every 10th kill, or a guaranteed pickup each wave \u2014 spawn golden pillar of light; player walks through it (distance check) \u2192 next 6 seconds rays: on next shot fired, sky beam bolt strikes the aimed at point; canisters: implement function Smite.arm(shot) \u2014 Player.fire needs to call window.Smite.maybeApply(rayHit). Provide Smite.update(dt, playerPos) for pickup glow and kolComposerTimes. All key mechanics must survive alone if other modules stub-empty.",
+   "provides": [
+    "window.HUD.*",
+    "window.Sfx.*",
+    "window.Smite.arm",
+    "window.Smite.maybeApply",
+    "window.Smite.update"
+   ],
+   "consumes": [
+    "window.Player.fire?via callback",
+    "window.Waves.current"
+   ]
+  }
+ ],
+ "merge_instructions": "Single HTML: <head> CSS inline; body: HUD DOM, #lock overlay, then <canvas>-created scene div; scripts in order: three.min.js + PointerLockControls.js (r147 UMD from cdn.jsdelivr), then modules in dependency order assets\u2192fx_hud\u2192world\u2192controls\u2192ai, then bootstrap <script> main that wires: scene/camera/renderer setup (r147 standard), World.build, Game.init, Waves.start(1) on first pointer lock, one RAF loop calling Game.update, Enemies.update, Waves.update, HUD, Smite.update with clock.getDelta capped 0.05. Resolve contract conflicts: (1) Player.fire must call Enemies for hitscan \u2014 implement in controls module raycasting against window.Enemies.rayTargets() array of meshes with userData.hp/enemyRef, then call window.Enemies.hurt(mesh, dmg, point); hurt returns {died}. (2) Enemy damage to player routes through window.Player.hurt which calls HUD.playerHit + Sfx.hurt + gameOver at hp<=0. (3) Bullet smite: Player.fire calls window.Smite.maybeApply(hitInfo, point) when armed. (4) If any module stub broke, merge pass must patch inline rather than reorder order. (5) All modules defensive: never throw on missing ASSETS keys \u2014 placeholder box fallback. (6) Ensure window resize handler. (7) Merge must verify every window.* listed in 'provides' exists before finishing.",
+ "qa_checklist": [
+  "Pointer lock engages on click; WASD moves and collides with tree/rock colliders (can't pass through trunk spheres).",
+  "Firing 4 shots triggers auto-reload with visible cylinder-out gun animation and no shots during reload.",
+  "Knights advance with shield up, sidestep periodically, and telegraph (visual tint/pose) before every swing; being struck reduces HP and flashes vignette.",
+  "Wave banner displays wave number; wave 5 spawns visibly giant black knight boss with greatsword sweep mechanic; killing boss triggers victory screen.",
+  "Death at HP 0 shows game-over with wave reached; localStorage best-wave persists across reload (refresh page \u2192 shows previous best).",
+  "Holy smite pickup spawns at least once per wave; with it armed, a shot spawns a visible beam strike dealing bonus damage at the hit point.",
+  "All SFX (shot, reload, swing, hurt, death, boss roar) play via synthesized webaudio with no network audio requests.",
+  "Console captured during scripted 60s play session: zero uncaught errors across spawn/death/one emptied magazine; perf \u2265 50fps at 200 grass instances."
+ ]
+}

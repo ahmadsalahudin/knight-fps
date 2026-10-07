@@ -1,0 +1,17 @@
+{
+ "root_cause": "window.Player.fire is undefined \u2014 the Player object literal only declares hurt and hp, so the declared fire contract is never implemented. Consequently window.Smite.arm(shotObj) is never invoked before any raycast, and window.Smite.maybeApply(hitInfo) is never invoked on a confirmed hit; the only firing path is window.Game.tryFire, which calls window.Enemies.hurt directly and skips Smite entirely. Additionally, window.Player.hurt does not call Sfx.hurt, and window.Player has no position getter (consumed by window.Smite.maybeApply via window.Player.position).",
+ "patched_blocks": [
+  {
+   "find": "window.Player = {\n  hurt: function (dmg) { window.Game.hurt(dmg); },\n  hp: function () { return window.Game.playerHP; }\n};",
+   "replace": "window.Player = {\n  hurt: function (dmg) {\n    if (window.Sfx && Sfx.hurt) Sfx.hurt();\n    window.Game.hurt(dmg);\n  },\n  hp: function () { return window.Game.playerHP; },\n  fire: function () { return window.Game.tryFire.apply(window.Game, arguments); },\n  get position() {\n    return (window.Game && window.Game.playerObj) ? window.Game.playerObj.position : new THREE.Vector3();\n  }\n};"
+  },
+  {
+   "find": "  tryFire: function () {\n    if (this.dead || this.reloadTimer > 0 || this.fireCooldown > 0) return;\n    if (this.ammo <= 0) { this.tryReload(); return; }\n    this.ammo--;\n    this.fireCooldown = 350;\n    this.shots++;\n    if (window.Sfx && Sfx.shoot) Sfx.shoot();",
+   "replace": "  tryFire: function () {\n    if (this.dead || this.reloadTimer > 0 || this.fireCooldown > 0) return;\n    if (this.ammo <= 0) { this.tryReload(); return; }\n    this.ammo--;\n    this.fireCooldown = 350;\n    this.shots++;\n    if (window.Sfx && Sfx.shoot) Sfx.shoot();\n    if (window.Smite && Smite.arm) { const _s = {}; Smite.arm(_s); this._lastShot = _s; }"
+  },
+  {
+   "find": "      if (node) {\n        window.Enemies.hurt(node, 34, hits[0].point);\n        if (window.HUD && HUD.hitmark) HUD.hitmark();\n      }",
+   "replace": "      if (node) {\n        window.Enemies.hurt(node, 34, hits[0].point);\n        const hitInfo = { object: node, point: hits[0].point, distance: hits[0].distance, shot: this._lastShot || null };\n        if (window.Smite && Smite.maybeApply) Smite.maybeApply(hitInfo);\n        if (window.HUD && HUD.hitmark) HUD.hitmark();\n        window.__lastHitInfo = hitInfo;\n        return hitInfo;\n      }"
+  }
+ ]
+}

@@ -1,0 +1,4 @@
+{
+ "parse_error": "Invalid control character at: line 5 column 31 (char 379)",
+ "raw": "{\n  \"root_cause\": \"HUD.init() creates duplicate DOM elements with IDs that already exist in static HTML, causing x3 crosshair, x3 waveInfo, x2 gameOver, x2 victory, and duplicate health bars. The static HTML declares these IDs but fx_hud's init() ignores them and creates new elements instead of reus"
+}

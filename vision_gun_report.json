@@ -1,0 +1,90 @@
+[
+ {
+  "name": "r1_-90y0",
+  "rot": [
+   -1.5707963267948966,
+   0,
+   0
+  ],
+  "score": 2,
+  "barrel": "right",
+  "verdict": "BARREL: right\nGRIP: down\nSCORE: 2/10"
+ },
+ {
+  "name": "r3_90y0",
+  "rot": [
+   1.5707963267948966,
+   0,
+   0
+  ],
+  "score": 2,
+  "barrel": "right",
+  "verdict": "BARREL: right\nGRIP: down\nSCORE: 2/10"
+ },
+ {
+  "name": "r4_90y180",
+  "rot": [
+   1.5707963267948966,
+   3.141592653589793,
+   0
+  ],
+  "score": 2,
+  "barrel": "down",
+  "verdict": "BARREL: down\nGRIP: down\nSCORE: 2/10"
+ },
+ {
+  "name": "r5_0y0",
+  "rot": [
+   0,
+   0,
+   0
+  ],
+  "score": 2,
+  "barrel": "right",
+  "verdict": "BARREL: right\nGRIP: down\nSCORE: 2/10"
+ },
+ {
+  "name": "r6_0y90",
+  "rot": [
+   0,
+   1.5707963267948966,
+   0
+  ],
+  "score": 2,
+  "barrel": "down",
+  "verdict": "BARREL: down\nGRIP: down\nSCORE: 2/10"
+ },
+ {
+  "name": "r7_0y-90",
+  "rot": [
+   0,
+   -1.5707963267948966,
+   0
+  ],
+  "score": 2,
+  "barrel": "down",
+  "verdict": "BARREL: down\nGRIP: down\nSCORE: 2/10"
+ },
+ {
+  "name": "r8_-90z90",
+  "rot": [
+   -1.5707963267948966,
+   0,
+   1.5707963267948966
+  ],
+  "score": 2,
+  "barrel": "right",
+  "verdict": "BARREL: right\nGRIP: down\nSCORE: 2/10"
+ },
+ {
+  "name": "r2_-90y90",
+  "rot": [
+   -1.5707963267948966,
+   1.5707963267948966,
+   0
+  ],
+  "score": 1,
+  "barrel": "camera",
+  "verdict": "BARREL: camera\nGRIP: down\nSCORE: 1/10"
+ }
+]

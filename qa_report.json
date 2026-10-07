@@ -1,0 +1,59 @@
+{
+ "file": "knights_out_final.html",
+ "checks": {
+  "C1_no_load_errors": {
+   "ok": true,
+   "detail": ""
+  },
+  "C2_threejs_loaded": {
+   "ok": true,
+   "detail": ""
+  },
+  "C2b_knight_glbt_parses": {
+   "ok": true,
+   "detail": ""
+  },
+  "C3_start_button_visible": {
+   "ok": true,
+   "detail": ""
+  },
+  "C4_menu_hides_on_start": {
+   "ok": true,
+   "detail": ""
+  },
+  "C5_pointer_locked": {
+   "ok": true,
+   "detail": ""
+  },
+  "C6_enemies_spawned": {
+   "ok": true,
+   "detail": "count=5"
+  },
+  "C7_wasd_movement": {
+   "ok": true,
+   "detail": "dz=-2.4 (camera faces -Z, W must go -Z)"
+  },
+  "C7b_strafe_left": {
+   "ok": true,
+   "detail": "dx=-1.8"
+  },
+  "C8_shoot_kills_knight": {
+   "ok": true,
+   "detail": "after={\"count\":5,\"hps\":[40,40,40,40],\"wave\":1}"
+  },
+  "C9_death_gameover": {
+   "ok": true,
+   "detail": "hp=85 dead=false goScreens=1"
+  },
+  "C10_wave_progression": {
+   "ok": true,
+   "detail": "before=1 after={\"wave\":2,\"enemies\":8}"
+  },
+  "C11_no_runtime_errors": {
+   "ok": true,
+   "detail": ""
+  }
+ },
+ "errors": [],
+ "failedReqs": []
+}

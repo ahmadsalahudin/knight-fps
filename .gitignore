@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# backup / debug preview copies
+*.backup.html
+*.pre_fix.html
+block*.js
+*.log
+
+# vision/debug screenshots (debug frame captures, not shipped assets)
+*.png
+
+# OS/dev-generated junk
+__pycache__/
+*.msi
+
+# never commit secret keys — local config only
+.env
+*.local.key

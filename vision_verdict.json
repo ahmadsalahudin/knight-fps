@@ -1,0 +1,22 @@
+[
+ {
+  "frame": "F1 t+2s forward",
+  "answer": "KNIGHTS: yes\nCOUNT: 1\nPOS: 73%, 53%\nHEIGHT: 10% screen\nDESC: armored knights\n\nGUN_VISIBLE: yes\nGRIP: down\nBARREL_DIRECTION: into_screen\nFPS_POSE: yes"
+ },
+ {
+  "frame": "F2 t+2.5s back-turned",
+  "answer": "KNIGHTS: no\nCOUNT: 0\nPOS: N/A\nHEIGHT: N/A\nDESC: N/A\n\nGUN_VISIBLE: yes\nGRIP: down\nBARREL_DIRECTION: into_screen\nFPS_POSE: yes"
+ },
+ {
+  "frame": "F3 t+9s knights closer",
+  "answer": "KNIGHTS: no\nCOUNT: 0\nPOS: N/A\nHEIGHT: N/A\nDESC: N/A\n\nGUN_VISIBLE: yes\nGRIP: down\nBARREL_DIRECTION: into_screen\nFPS_POSE: yes"
+ },
+ {
+  "frame": "F4 t+15s knights closer still",
+  "answer": "KNIGHTS: no\nCOUNT: 0\nPOS: N/A\nHEIGHT: N/A\nDESC: N/A\n\nGUN_VISIBLE: yes\nGRIP: down\nBARREL_DIRECTION: into_screen\nFPS_POSE: yes"
+ },
+ {
+  "frame": "F5 forced knight 4u in front",
+  "answer": "KNIGHTS: yes\nCOUNT: 1\nPOS: 60%, 50%\nHEIGHT: 15% screen\nDESC: fallen armored knight\n\nGUN_VISIBLE: yes\nGRIP: down\nBARREL_DIRECTION: into_screen\nFPS_POSE: yes"
+ }
+]

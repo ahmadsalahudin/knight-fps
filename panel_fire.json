@@ -1,0 +1,17 @@
+{
+ "root_cause": "window.Player.fire is undefined because the controls module only defined window.Player with hurt/hp, and the mousedown handler calls Game.tryFire. Additionally, Smite.arm is never invoked on shots, and Smite.maybeApply is never invoked after a hit, making the holy_smite powerup dead code.",
+ "patched_blocks": [
+  {
+   "find": "  tryFire: function () {\n    if (this.dead || this.reloadTimer > 0 || this.fireCooldown > 0) return;\n    if (this.ammo <= 0) { this.tryReload(); return; }\n    this.ammo--;\n    this.fireCooldown = 350;\n    this.shots++;\n    if (window.Sfx && Sfx.shoot) Sfx.shoot();",
+   "replace": "  tryFire: function () {\n    if (this.dead || this.reloadTimer > 0 || this.fireCooldown > 0) return;\n    if (this.ammo <= 0) { this.tryReload(); return; }\n    this.ammo--;\n    this.fireCooldown = 350;\n    this.shots++;\n    if (window.Smite && Smite.arm) { const _shotObj = {}; Smite.arm(_shotObj); this._lastShot = _shotObj; }\n    if (window.Sfx && Sfx.shoot) Sfx.shoot();"
+  },
+  {
+   "find": "      if (node) {\n        window.Enemies.hurt(node, 34, hits[0].point);\n        if (window.HUD && HUD.hitmark) HUD.hitmark();\n      }",
+   "replace": "      if (node) {\n        window.Enemies.hurt(node, 34, hits[0].point);\n        if (window.Smite && Smite.maybeApply) Smite.maybeApply(hits[0]);\n        if (window.HUD && HUD.hitmark) HUD.hitmark();\n      }"
+  },
+  {
+   "find": "window.Player = {\n  hurt: function (dmg) { window.Game.hurt(dmg); },\n  hp: function () { return window.Game.playerHP; }\n};",
+   "replace": "window.Player = {\n  hurt: function (dmg) { window.Game.hurt(dmg); },\n  hp: function () { return window.Game.playerHP; },\n  fire: function () { return window.Game.tryFire.apply(window.Game, arguments); },\n  get position() { return (window.Game && window.Game.playerObj) ? window.Game.playerObj.position : new THREE.Vector3(); }\n};"
+  }
+ ]
+}

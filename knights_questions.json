@@ -1,0 +1,67 @@
+{
+  "questions": {
+    "revolver_style": {
+      "type": "choice",
+      "instructions": "What fantasy-of-medieval flavor should the revolver weapon have?",
+      "criteria": {
+        "arcane_flintlock": "rune-etched barrel glowing runes arcane magic",
+        "pistol_rifle": "clean elegant dueling pistol duelist finesse",
+        "gritty_steampunk": "brass gears smoke hissing steam industrial"
+      }
+    },
+    "enemy_behavior": {
+      "type": "choice",
+      "instructions": "How should the knight enemies behave in combat?",
+      "criteria": {
+        "advance_shield": "march forward shields raised blocking front",
+        "sprint_rush": "sprint at player and swing swords",
+        "guard_counter": "advance slowly parry then riposte when close"
+      }
+    },
+    "arena_structure": {
+      "type": "choice",
+      "instructions": "What arena layout fits the grassy field theme?",
+      "criteria": {
+        "open_meadow": "open fields scattered trees rocks ruins",
+        "ruin_arena": "broken stone walls enclosing battlefield",
+        "forest_edge": "open center ringed by dense forest"
+      }
+    },
+    "boss_archetype": {
+      "type": "choice",
+      "instructions": "What kind of boss should guard the field?",
+      "criteria": {
+        "black_knight": "giant armored knight dark armor greatsword",
+        "warlord_grail": "corrupt king in gold plate halberd",
+        "siege_golem": "huge stone golem with shield tower"
+      }
+    },
+    "difficulty_style": {
+      "type": "choice",
+      "instructions": "What combat feel should the game have?",
+      "criteria": {
+        "arcade_fast": "fast arcade shooting snappy kills",
+        "methodical": "deliberate cover aim timing thoughtful",
+        "frenzy_horde": "horde survival stuffing enemies constant"
+      }
+    },
+    "wave_structure": {
+      "type": "choice",
+      "instructions": "How should progression work?",
+      "criteria": {
+        "wave_arena": "waves cleared between upgrades",
+        "logging_arena": "wave survivors pick loot drop next wave",
+        "objective_capture": "capture points while defending"
+      }
+    },
+    "signature_powerup": {
+      "type": "choice",
+      "instructions": "What signature powerup fits the fantasy?",
+      "criteria": {
+        "time_slow": "slow motion aiming dissolving time",
+        "holy_smite": "calling down lightning bolts from sky",
+        "shield_bash": "massive shield slam shockwave"
+      }
+    }
+  }
+}

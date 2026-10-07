@@ -1,0 +1,260 @@
+{
+ "prompt": "A neon 2D space shooter where you dodge asteroid swarms, grab powerups like triple shot and shield, fight a giant mothership boss every 5 waves, with a persistent high score",
+ "decisions": {
+  "genre": {
+   "choice": "arcade_shooter",
+   "confidence": 1,
+   "probabilities": {
+    "strategy": 0,
+    "racing": 0,
+    "platformer": 0,
+    "puzzle": 0,
+    "tower_defense": 0,
+    "runner": 0,
+    "survival_roguelite": 0,
+    "arcade_shooter": 1
+   }
+  },
+  "camera_view": {
+   "choice": "top_down",
+   "confidence": 0.77,
+   "probabilities": {
+    "isometric": 0,
+    "top_down": 0.83,
+    "side_scroller": 0.17,
+    "first_person": 0
+   }
+  },
+  "visual_style": {
+   "choice": "neon_vector",
+   "confidence": 1,
+   "probabilities": {
+    "minimal_monochrome": 0,
+    "retro_pixel": 0,
+    "gritty_detailed": 0,
+    "flat_cartoon": 0,
+    "neon_vector": 1,
+    "paper_cutout": 0
+   }
+  },
+  "palette": {
+   "choice": "neon_dark",
+   "confidence": 1,
+   "probabilities": {
+    "high_contrast_bw": 0,
+    "earthy_jewel": 0,
+    "cool_pastel": 0,
+    "retro_warm": 0,
+    "neon_dark": 1
+   }
+  },
+  "control_scheme": {
+   "choice": "keyboard_only",
+   "confidence": 0.74,
+   "probabilities": {
+    "touch_friendly": 0,
+    "gamepad_style": 0.01,
+    "keyboard_and_mouse": 0.18,
+    "keyboard_only": 0.8,
+    "mouse_aim": 0.01
+   }
+  },
+  "player_count": {
+   "choice": "single_player",
+   "confidence": 0.86,
+   "probabilities": {
+    "asynchronous": 0.09,
+    "local_versus": 0,
+    "single_player": 0.91
+   }
+  },
+  "difficulty_curve": {
+   "choice": "gentle_ramp",
+   "confidence": 0.7,
+   "probabilities": {
+    "steep_escalation": 0.35,
+    "gentle_ramp": 0.63,
+    "constant_pressure": 0.02,
+    "player_paced": 0
+   }
+  },
+  "progression_system": {
+   "choice": "pure_highscore",
+   "confidence": 1,
+   "probabilities": {
+    "pure_highscore": 1,
+    "meta_upgrades": 0,
+    "character_choices": 0,
+    "level_unlocks": 0
+   }
+  },
+  "enemy_ai": {
+   "choice": "swarm_chaos",
+   "confidence": 0.99,
+   "probabilities": {
+    "scripted_patterns": 0.01,
+    "swarm_chaos": 0.99,
+    "tactical": 0,
+    "simple_seeking": 0
+   }
+  },
+  "boss_fight": {
+   "noul": 0.99
+  },
+  "physics_feel": {
+   "choice": "precise_tight",
+   "confidence": 0.56,
+   "probabilities": {
+    "heavy_weighted": 0,
+    "floaty_smooth": 0.45,
+    "precise_tight": 0.55,
+    "springy_bouncy": 0
+   }
+  },
+  "audio_style": {
+   "choice": "synth_arcade",
+   "confidence": 1,
+   "probabilities": {
+    "silent": 0,
+    "rock_instrumental": 0,
+    "synth_arcade": 1,
+    "ambient_minimal": 0
+   }
+  },
+  "feedback_juice": {
+   "choice": "maximum_juice",
+   "confidence": 0.4,
+   "probabilities": {
+    "maximum_juice": 0.52,
+    "minimal": 0,
+    "moderate_juice": 0.48
+   }
+  },
+  "persistence": {
+   "choice": "highscore_local",
+   "confidence": 1,
+   "probabilities": {
+    "stateless": 0,
+    "highscore_local": 1,
+    "full_progress": 0
+   }
+  },
+  "session_length": {
+   "choice": "medium",
+   "confidence": 0.49,
+   "probabilities": {
+    "short_burst": 0.43,
+    "long_form": 0.07,
+    "medium": 0.5
+   }
+  },
+  "file_structure": {
+   "choice": "small_project",
+   "confidence": 0.69,
+   "probabilities": {
+    "small_project": 0.79,
+    "full_project": 0.05,
+    "single_html": 0.16
+   }
+  },
+  "onscreen_hud": {
+   "choice": "score_plus_stats",
+   "confidence": 0.86,
+   "probabilities": {
+    "score_plus_stats": 0.91,
+    "score_only": 0,
+    "rich_hud": 0.09
+   }
+  },
+  "failure_screen": {
+   "choice": "game_over_summary",
+   "confidence": 0.83,
+   "probabilities": {
+    "game_over_summary": 0.89,
+    "run_recap_rewards": 0,
+    "instant_restart": 0.11
+   }
+  },
+  "shield_behavior": {
+   "choice": "absorb_one_hit",
+   "confidence": 0.16,
+   "probabilities": {
+    "absorb_one_hit": 0.54,
+    "both": 0.3,
+    "timer_based": 0.16
+   }
+  },
+  "powerup_spawn_system": {
+   "choice": "free_floating",
+   "confidence": 0.73,
+   "probabilities": {
+    "free_floating": 0.82,
+    "asteroid_drops": 0.18,
+    "enemy_kills": 0
+   }
+  },
+  "boss_entrance": {
+   "choice": "warning_sequence",
+   "confidence": 0.88,
+   "probabilities": {
+    "warning_sequence": 0.92,
+    "immediate_attack": 0.02,
+    "wave_merge": 0.06
+   }
+  },
+  "mothership_attack_pattern": {
+   "choice": "turret_spread",
+   "confidence": 0.71,
+   "probabilities": {
+    "turret_spread": 0.69,
+    "sweep_beam": 0.19,
+    "spawning_mines": 0.12
+   }
+  },
+  "triple_shot_duration": {
+   "choice": "timed",
+   "confidence": 0.97,
+   "probabilities": {
+    "per_waves": 0.01,
+    "stacking": 0.01,
+    "timed": 0.98
+   }
+  },
+  "high_score_conditions": {
+   "choice": "wave_record",
+   "confidence": 0.6,
+   "probabilities": {
+    "minimum_ladge": 0.11,
+    "wave_record": 0.57,
+    "initials_entry": 0.32
+   }
+  },
+  "asteroid_hazard_types": {
+   "choice": "mutated_variants",
+   "confidence": 0.8,
+   "probabilities": {
+    "mutated_variants": 0.87,
+    "homogeneous": 0.06,
+    "density_scales": 0.07
+   }
+  },
+  "powerup_stack_rule": {
+   "choice": "independent",
+   "confidence": 0.85,
+   "probabilities": {
+    "replace_only": 0.06,
+    "one_slot": 0.04,
+    "independent": 0.9
+   }
+  }
+ },
+ "timings": {
+  "static_pack_load_ms": 0.22849999368190765,
+  "glm_dynamic_pack_ms": 15887.240000010934,
+  "jev_ms": 916.5189999621361,
+  "rephrase_ms": 65518.95229995716,
+  "total_to_decisions_ms": 82323.15549999475,
+  "implement_ms": 169544.32470002212,
+  "total_ms": 251868.817999959
+ }
+}
