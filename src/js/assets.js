@@ -1,127 +1,236 @@
-/* assets.js — window.Assets
-   Extracted verbatim from the single-file build (hand-written GLB parser, no GLTFLoader).
-   Plan: B1 replaces this with GLTFLoader + SkeletonUtils; keep the Assets.get(name, opts) call shape. */
+/* assets.js — window.Assets (B1)
+   THREE.GLTFLoader over the base64 GLBs in window.ASSETS, cloned with THREE.SkeletonUtils so skinned meshes animate
+   independently.
+
+   Boot:    await Assets.load()                      Promise<void>; idempotent; get()/clips() are only valid afterwards.
+   Assets.srgbOutput = true                           main.js then sets renderer.outputEncoding = sRGB (glTF colours are linear).
+
+   Assets.get(name, opts?) -> THREE.Group | null      NEW wrapper per call, origin at the bottom-centre of the asset's
+                                                      bind-pose bounding box (wrapper.children[0] is the model clone).
+       opts.height  default 1.8   uniform scale so the box height == height   (applied as wrapper.scale)
+       opts.length                uniform scale so the longest horizontal extent == length (overrides height)
+       opts.raw     true          no recentering, no normalization (native glTF units, identity wrapper)
+       opts.cloneMaterials true   give this instance its own materials (tint / fade without touching other instances)
+   Assets.clips(name)   -> AnimationClip[]            names with the 'HumanArmature|' prefix stripped ('Walking', 'Run', ...)
+   Assets.clip(name, clipName) -> AnimationClip|null
+   Assets.bone(root, 'Palm.R') -> Object3D|null        find a node by its ORIGINAL glTF name ('Palm.R'); GLTFLoader sanitises
+                                                      node names ('PalmR'), the original is kept in userData.name
+   Assets.bones(root)   -> { 'Head': Bone, 'Palm.R': Bone, ... }   every Bone under root keyed by its original name
+   Assets.size(name)    -> THREE.Vector3 | null       native (un-normalised) bind-pose bounding-box size
+   Assets.has(name), Assets.names(), Assets.isLoaded(), Assets.failed (names that failed to parse)
+   Legacy aliases kept so old call sites work: Assets.instance, Assets.parseGLB (== get). */
 window.Assets = (function () {
-  const cache = {};
+  const store = Object.create(null);   // name -> { scene, animations, box:Box3, size:Vector3, center:Vector3, skinned:bool }
+  let loadPromise = null;
+  let loaded = false;
+  const failed = [];
+  const warned = {};
 
-  function decodeGLB(ab) {
-    const view = new DataView(ab);
-    if (view.getUint32(0, true) !== 0x46546C67) throw new Error('not GLB'); // 'glTF'
-    const totalLen = view.getUint32(8, true);
-    let json = null, bin = null, off = 12;
-    while (off < totalLen) {
-      const cLen = view.getUint32(off, true);
-      const cType = view.getUint32(off + 4, true);
-      const data = new Uint8Array(ab, off + 8, Math.min(cLen, ab.byteLength - off - 8));
-      if (cType === 0x4E4F534A) json = JSON.parse(new TextDecoder().decode(data));        // 'JSON'
-      else if (cType === 0x004E4942) bin = data;                                          // 'BIN\0'
-      off += 8 + cLen; off = (off + 3) & ~3;
-    }
-    if (!json) throw new Error('no JSON chunk');
-    return { json, bin: bin || new Uint8Array(0) };
+  // ---- tuning ---------------------------------------------------------------------------------------------------
+  // Material tuning for this lighting (hemisphere + one sun, no environment map): the glTF files ship metalness 0.4
+  // and a very dark Armor colour, which reads as black without an env map. Metal needs light to bounce off, so keep
+  // the diffuse term alive (low metalness) and the specular broad (higher roughness).
+  const MAX_METALNESS = 0.3;
+  const MIN_ROUGHNESS = 0.5;
+  // Per-material overrides by glTF material name. Colours are linear (multiplied by `tint`, floored at `lift`);
+  // metalness / roughness replace the generic clamp above.
+  const MATERIAL_TWEAKS = {
+    Armor: { lift: 0.09, tint: [0.92, 1.0, 1.14], metalness: 0.35, roughness: 0.45 },   // dark cool steel with a visible sun glint
+  };
+  // Per-asset linear colour gain (the grass material is almost black next to the lit ground).
+  const ASSET_GAIN = { grass: 1.7, grass_2: 1.7 };
+  const DOUBLE_SIDED_ASSETS = { grass: 1, grass_2: 1 };   // single-sided blade cards
+
+  function warnOnce(key, msg) {
+    if (warned[key]) return;
+    warned[key] = true;
+    console.warn('[Assets] ' + msg);
   }
 
-  const COMP = { 5126: { c: 4, t: Float32Array }, 5123: { c: 2, t: Uint16Array }, 5125: { c: 4, t: Uint32Array }, 5121: { c: 1, t: Uint8Array } };
-  const NCOMP = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
-
-  function accessorBytes(json, bin, idx) {
-    const a = json.accessors[idx];
-    const bv = json.bufferViews[a.bufferView];
-    const info = COMP[a.componentType];
-    const n = NCOMP[a.type];
-    const start = (bv.byteOffset || 0) + (a.byteOffset || 0);
-    const count = a.count * n;
-    const raw = bin.subarray(start, start + count * info.c);
-    const arr = new info.t(raw.buffer, raw.byteOffset, count);
-    return { arr, n, count, min: a.min, max: a.max };
+  function dataURIToArrayBuffer(uri) {
+    const b64 = uri.slice(uri.indexOf(',') + 1);
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8.buffer;
   }
 
-  function buildPrimitive(json, bin, prim) {
-    const g = new THREE.BufferGeometry();
-    const pos = accessorBytes(json, bin, prim.attributes.POSITION);
-    g.setAttribute('position', new THREE.BufferAttribute(pos.arr, 3));
-    if (prim.attributes.NORMAL !== undefined) {
-      const nrm = accessorBytes(json, bin, prim.attributes.NORMAL);
-      g.setAttribute('normal', new THREE.BufferAttribute(nrm.arr, 3));
-    } else {
-      g.computeVertexNormals();
+  function tuneMaterial(mat, assetName) {
+    if (!mat || !mat.isMaterial) return;
+    if (mat.metalness !== undefined) mat.metalness = Math.min(mat.metalness, MAX_METALNESS);
+    if (mat.roughness !== undefined) mat.roughness = Math.max(mat.roughness, MIN_ROUGHNESS);
+    const tw = MATERIAL_TWEAKS[mat.name];
+    if (tw && mat.color) {
+      const lift = tw.lift, t = tw.tint;
+      mat.color.setRGB(Math.max(mat.color.r, lift) * t[0], Math.max(mat.color.g, lift) * t[1], Math.max(mat.color.b, lift) * t[2]);
+      if (tw.metalness !== undefined) mat.metalness = Math.min(tw.metalness, 0.4);
+      if (tw.roughness !== undefined) mat.roughness = Math.max(tw.roughness, 0.45);
     }
-    const indices = accessorBytes(json, bin, prim.indices);
-    g.setIndex(new THREE.BufferAttribute(indices.arr, 1));
-
-    let material;
-    const matDef = json.materials ? json.materials[prim.material || 0] : null;
-    if (matDef && matDef.pbrMetallicRoughness && matDef.pbrMetallicRoughness.baseColorFactor) {
-      const c = matDef.pbrMetallicRoughness.baseColorFactor;
-      material = new THREE.MeshLambertMaterial({ color: new THREE.Color(c[0], c[1], c[2]), transparent: c[3] < 1, opacity: c[3], side: THREE.DoubleSide });
-    } else {
-      material = new THREE.MeshLambertMaterial({ color: 0x999999, side: THREE.DoubleSide });
-    }
-    const mesh = new THREE.Mesh(g, material);
-    mesh.castShadow = true;
-    mesh.frustumCulled = false;
-    return mesh;
+    const gain = ASSET_GAIN[assetName];
+    if (gain && mat.color) mat.color.multiplyScalar(gain);
+    if (DOUBLE_SIDED_ASSETS[assetName]) mat.side = THREE.DoubleSide;
   }
 
-  function buildNode(json, bin, nodeIdx, parent) {
-    const nd = json.nodes[nodeIdx];
-    const obj = new THREE.Object3D();
-    if (nd.translation) obj.position.fromArray(nd.translation);
-    if (nd.rotation) obj.quaternion.fromArray(nd.rotation);
-    if (nd.scale) obj.scale.fromArray(nd.scale);
-    if (nd.matrix) obj.applyMatrix4(new THREE.Matrix4().fromArray(nd.matrix));
-    if (nd.mesh !== undefined) {
-      const meshDef = json.meshes[nd.mesh];
-      for (const prim of meshDef.primitives) obj.add(buildPrimitive(json, bin, prim));
-    }
-    if (nd.children) for (const c of nd.children) buildNode(json, bin, c, obj);
-    parent.add(obj);
-    return obj;
+  function prepare(name, gltf) {
+    const scene = gltf.scene || (gltf.scenes && gltf.scenes[0]);
+    if (!scene) throw new Error('glTF has no scene');
+    let skinned = false;
+    scene.traverse(function (o) {
+      if (!o.isMesh) return;
+      o.castShadow = true;
+      o.receiveShadow = true;
+      // Bind-pose bounds are wrong once a skeleton animates: never cull skinned meshes. Static meshes keep culling.
+      o.frustumCulled = !o.isSkinnedMesh;
+      if (o.isSkinnedMesh) skinned = true;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (let i = 0; i < mats.length; i++) tuneMaterial(mats[i], name);
+    });
+
+    // clips: strip the "HumanArmature|" style prefix once, on the cached clips we own
+    const animations = (gltf.animations || []).map(function (c) {
+      const i = c.name.lastIndexOf('|');
+      if (i >= 0) c.name = c.name.slice(i + 1);
+      return c;
+    });
+
+    // native bind-pose bounding box (scene root is at identity, so this is also the clone's box)
+    scene.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(scene);
+    if (!isFinite(box.min.x)) box.set(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 0));
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    store[name] = { scene: scene, animations: animations, box: box, size: size, center: center, skinned: skinned };
   }
 
-  function parse(name) {
-    if (cache[name]) return cache[name].clone(true);
-    const dataURI = window.ASSETS[name];
-    if (!dataURI) { console.warn('[Assets] missing asset', name); return null; }
-    const b64 = dataURI.split(',')[1];
-    const binStr = atob(b64);
-    const ab = new Uint8Array(binStr.length);
-    for (let i = 0; i < binStr.length; i++) ab[i] = binStr.charCodeAt(i);
-    const { json, bin } = decodeGLB(ab.buffer);
-    const root = new THREE.Group();
-    if (!json.scenes || !json.scenes[0] || !json.scenes[0].nodes) return null;
-    for (const ni of json.scenes[0].nodes) buildNode(json, bin, ni, root);
-    // CULL-FIX: LL parsers can produce triangle winding/three.js-side artifacts baked into
-    // un-indexed geometry, causing WebGL to skip painting every triangle. Combined with a
-    // wrong-bounding-sphere the engine then frustum-culls meshes that ARE on screen. Belt
-    // AND suspenders: force culling-safe material everywhere + disable frustum-culling
-    // recursively on the whole parsed tree. Never trust the path of ancestors alone.
-    root.traverse(function (o) {
-      if (o.isMesh) {
-        o.frustumCulled = false;
-        o.castShadow = true;
-        o.receiveShadow = true;
-        if (o.material && o.material.side !== undefined) o.material.side = THREE.DoubleSide;
-        if (o.geometry && !o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+  function parseOne(name) {
+    return new Promise(function (resolve) {
+      const uri = window.ASSETS && window.ASSETS[name];
+      if (!uri) { failed.push(name); console.error('[Assets] no data for asset "' + name + '"'); resolve(); return; }
+      let ab;
+      try { ab = dataURIToArrayBuffer(uri); } catch (e) { failed.push(name); console.error('[Assets] bad base64 for "' + name + '"', e); resolve(); return; }
+      try {
+        new THREE.GLTFLoader().parse(ab, '', function (gltf) {
+          try { prepare(name, gltf); } catch (e) { failed.push(name); console.error('[Assets] failed to prepare "' + name + '"', e); }
+          resolve();
+        }, function (err) {
+          failed.push(name); console.error('[Assets] GLTFLoader failed on "' + name + '"', err); resolve();
+        });
+      } catch (e) {
+        failed.push(name); console.error('[Assets] GLTFLoader threw on "' + name + '"', e); resolve();
       }
     });
-    // REBASE: vendor GLBs carry armature offsets far from the group origin; recenter
-    // the visible body's ground-center to origin and normalize standup height to 1.8u.
-    root.updateMatrixWorld(true);
-    const _bb = new THREE.Box3().setFromObject(root);
-    if (isFinite(_bb.min.x)) {
-      const _size = _bb.getSize(new THREE.Vector3());
-      const _center = _bb.getCenter(new THREE.Vector3());
-      root.position.set(-_center.x, -_bb.min.y, -_center.z);
-      const _wrap = new THREE.Group();
-      _wrap.add(root);
-      if (_size.y > 0.001) _wrap.scale.setScalar(1.8 / _size.y);
-      cache[name] = _wrap;
-      return _wrap.clone(true);
-    }
-    cache[name] = root;
-    return root.clone(true);
   }
 
-  return { get: parse, instance: parse, parseGLB: parse };
+  function load() {
+    if (loadPromise) return loadPromise;
+    if (!THREE.GLTFLoader || !THREE.SkeletonUtils) {
+      loadPromise = Promise.reject(new Error('GLTFLoader / SkeletonUtils not loaded (check the CDN script tags)'));
+      return loadPromise;
+    }
+    const names = Object.keys(window.ASSETS || {});
+    loadPromise = Promise.all(names.map(parseOne)).then(function () {
+      loaded = true;
+      if (failed.length) console.error('[Assets] failed assets: ' + failed.join(', '));
+    });
+    return loadPromise;
+  }
+
+  // ---- instances ------------------------------------------------------------------------------------------------
+  function cloneMaterialsOf(root) {
+    const map = new Map();
+    root.traverse(function (o) {
+      if (!o.isMesh) return;
+      const dup = function (m) {
+        if (!map.has(m)) map.set(m, m.clone());
+        return map.get(m);
+      };
+      o.material = Array.isArray(o.material) ? o.material.map(dup) : dup(o.material);
+    });
+  }
+
+  function get(name, opts) {
+    const entry = store[name];
+    if (!entry) {
+      if (!loaded) warnOnce('early:' + name, 'Assets.get("' + name + '") called before Assets.load() resolved');
+      else warnOnce('missing:' + name, 'missing asset "' + name + '"');
+      return null;
+    }
+    opts = opts || {};
+    const model = THREE.SkeletonUtils.clone(entry.scene);
+    if (opts.cloneMaterials) cloneMaterialsOf(model);
+
+    const wrapper = new THREE.Group();
+    wrapper.name = 'asset:' + name;
+    wrapper.userData.asset = name;
+    wrapper.add(model);
+    if (opts.raw) return wrapper;
+
+    // bottom-centre of the bind-pose box at the wrapper origin; normalisation lives on wrapper.scale
+    model.position.set(-entry.center.x, -entry.box.min.y, -entry.center.z);
+    let s = 1;
+    if (opts.length > 0) {
+      const ext = Math.max(entry.size.x, entry.size.z);
+      if (ext > 1e-6) s = opts.length / ext;
+    } else {
+      const h = opts.height > 0 ? opts.height : 1.8;
+      if (entry.size.y > 1e-6) s = h / entry.size.y;
+    }
+    wrapper.scale.setScalar(s);
+    return wrapper;
+  }
+
+  function clips(name) {
+    const entry = store[name];
+    return entry ? entry.animations.slice() : [];
+  }
+
+  function clip(name, clipName) {
+    const entry = store[name];
+    if (!entry) return null;
+    for (let i = 0; i < entry.animations.length; i++) if (entry.animations[i].name === clipName) return entry.animations[i];
+    return null;
+  }
+
+  // ---- bone lookup by original glTF name ('Palm.R' is sanitised to 'PalmR' by GLTFLoader) -----------------------------
+  function bone(root, name) {
+    if (!root) return null;
+    const plain = THREE.PropertyBinding.sanitizeNodeName(name);
+    let found = null;
+    root.traverse(function (o) {
+      if (found) return;
+      if (o.name === name || o.name === plain || (o.userData && o.userData.name === name)) found = o;
+    });
+    return found;
+  }
+
+  function bones(root) {
+    const out = {};
+    if (!root) return out;
+    root.traverse(function (o) {
+      if (o.isBone) out[(o.userData && o.userData.name) || o.name] = o;
+    });
+    return out;
+  }
+
+  function size(name) {
+    const e = store[name];
+    return e ? e.size.clone() : null;
+  }
+
+  return {
+    srgbOutput: true,
+    load: load,
+    get: get,
+    instance: get,      // legacy aliases
+    parseGLB: get,
+    clips: clips,
+    clip: clip,
+    bone: bone,
+    bones: bones,
+    size: size,
+    has: function (name) { return !!store[name]; },
+    names: function () { return Object.keys(store); },
+    isLoaded: function () { return loaded; },
+    failed: failed
+  };
 })();
