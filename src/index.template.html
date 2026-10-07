@@ -2,15 +2,119 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Knights of the Meadow</title>
 <style>
-  html,body{margin:0;height:100%;overflow:hidden;font-family:'Segoe UI',sans-serif;background:#111}
+  html,body{margin:0;height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-serif;background:#111}
+  canvas{display:block}
+
+  /* ---- title screen ---- */
   #lock{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
         background:linear-gradient(rgba(8,20,8,.8),rgba(8,20,8,.9));color:#eee;z-index:20;cursor:pointer;text-align:center}
   #lock h1{font-size:44px;margin:.2em;text-shadow:0 2px 8px #000}
   #lock p{color:#b8d8b8}
   #startBtn{margin-top:18px;padding:12px 34px;font-size:20px;background:#2e5d2e;color:#fff;border:1px solid #7fae7f;border-radius:8px;cursor:pointer}
   #startBtn:hover{background:#3e7d3e}
+
+  /* ---- HUD (driven by src/js/hud.js; every animated value is set from its own rAF/performance.now loop) ---- */
+  #hud{position:fixed;inset:0;pointer-events:none;user-select:none;font-family:'Segoe UI',system-ui,sans-serif;color:#fff;z-index:10;
+       --ui-shadow:0 1px 3px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.6);--gold:#ffd24a;--red:#ff3b30}
+  #hud .hidden{display:none !important}
+
+  /* top centre: wave + enemies left */
+  #topBar{position:absolute;top:12px;left:50%;transform:translateX(-50%);text-align:center;text-shadow:var(--ui-shadow)}
+  #waveInfo{font-size:22px;font-weight:700;letter-spacing:.18em}
+  #waveInfo.final{color:var(--red)}
+  #enemiesLeft{margin-top:2px;font-size:13px;letter-spacing:.14em;color:#d8e6d0;opacity:.9}
+
+  /* top right: kills */
+  #killBox{position:absolute;top:14px;right:22px;text-align:right;text-shadow:var(--ui-shadow);letter-spacing:.14em}
+  #killBox .lbl{display:block;font-size:11px;opacity:.75}
+  #killCount{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
+
+  /* boss bar (shown while the boss lives) */
+  #bossBar{position:absolute;top:62px;left:50%;transform:translateX(-50%);width:min(62vw,680px);text-align:center;text-shadow:var(--ui-shadow)}
+  #bossName{font:700 15px Georgia,'Palatino Linotype',serif;letter-spacing:.32em;text-transform:uppercase;color:#f1d28a;margin-bottom:5px}
+  #bossTrack{position:relative;height:15px;background:rgba(10,4,4,.72);border:2px solid #b8923a;border-radius:3px;
+             box-shadow:0 0 12px rgba(0,0,0,.7),inset 0 0 6px rgba(0,0,0,.8);overflow:hidden}
+  #bossGhost{position:absolute;left:0;top:0;bottom:0;width:100%;background:#e8d9b0;opacity:.75}
+  #bossFill{position:absolute;left:0;top:0;bottom:0;width:100%;background:linear-gradient(#e0442f,#8e1a12)}
+  #bossPct{margin-top:3px;font-size:11px;letter-spacing:.2em;color:#e7cf9a;font-variant-numeric:tabular-nums}
+
+  /* centre banner */
+  #banner{position:absolute;left:0;right:0;top:25%;text-align:center;opacity:0;visibility:hidden;text-shadow:0 2px 10px #000,0 0 24px rgba(0,0,0,.8)}
+  #bannerTitle{font:700 clamp(30px,6.2vw,72px) Georgia,'Palatino Linotype','Book Antiqua',serif;letter-spacing:.14em;text-transform:uppercase;color:#f3ead0}
+  #bannerSub{margin-top:8px;font-size:clamp(14px,2.1vw,24px);letter-spacing:.22em;text-transform:uppercase;color:#cfe3c4}
+  #banner.boss #bannerTitle{color:#ff5a3c;text-shadow:0 0 22px rgba(255,60,30,.55),0 2px 10px #000}
+  #banner.boss #bannerSub{color:#f1d28a}
+  #banner.clear #bannerTitle{color:#cfe8a8}
+
+  /* crosshair + hit markers */
+  #crosshair{position:absolute;left:50%;top:50%;width:0;height:0}
+  #crosshair i{position:absolute;background:#fff;box-shadow:0 0 3px rgba(0,0,0,.95)}
+  #crosshair i:nth-child(1){left:-1px;top:-12px;width:2px;height:7px}
+  #crosshair i:nth-child(2){left:-1px;top:5px;width:2px;height:7px}
+  #crosshair i:nth-child(3){left:-12px;top:-1px;width:7px;height:2px}
+  #crosshair i:nth-child(4){left:5px;top:-1px;width:7px;height:2px}
+  #crosshair b{position:absolute;left:-1.5px;top:-1.5px;width:3px;height:3px;border-radius:50%;background:#fff;box-shadow:0 0 3px rgba(0,0,0,.95)}
+
+  #hitMarker{position:absolute;left:50%;top:50%;width:0;height:0;opacity:0;color:#fff;--d:10px;--w:2px;--l:9px}
+  #hitMarker i{position:absolute;left:calc(var(--w) / -2);top:calc(var(--l) / -2);width:var(--w);height:var(--l);background:currentColor;
+               box-shadow:0 0 3px rgba(0,0,0,.95);transform:rotate(var(--r)) translateY(calc(var(--d) * -1))}
+  #hitMarker i:nth-child(1){--r:45deg}
+  #hitMarker i:nth-child(2){--r:135deg}
+  #hitMarker i:nth-child(3){--r:225deg}
+  #hitMarker i:nth-child(4){--r:315deg}
+  #hitMarker b{position:absolute;left:-9px;top:-9px;width:14px;height:14px;border:2px solid currentColor;border-radius:50%;
+               box-shadow:0 0 4px rgba(0,0,0,.9);display:none;transform:scale(var(--ring,1))}
+  #hitMarker.head{color:var(--gold)}
+  #hitMarker.kill{color:var(--red)}
+  #hitMarker.head b,#hitMarker.kill b{display:block}
+
+  /* directional damage indicators (pooled; rotated around the screen centre) */
+  #dmgDirs{position:absolute;left:50%;top:50%;width:0;height:0}
+  .dmg-arc{position:absolute;left:-150px;top:-150px;width:300px;height:300px;opacity:0;visibility:hidden;transform-origin:50% 50%;
+           filter:drop-shadow(0 0 7px rgba(255,20,10,.85))}
+  .dmg-arc svg{display:block;width:100%;height:100%;overflow:visible}
+  .dmg-arc path.glow{fill:none;stroke:rgba(255,40,25,.35);stroke-width:26;stroke-linecap:round}
+  .dmg-arc path.core{fill:none;stroke:rgba(255,70,50,.95);stroke-width:9;stroke-linecap:round}
+
+  /* full screen damage / low HP vignettes */
+  #vignette{position:absolute;inset:0;opacity:0;visibility:hidden;background:radial-gradient(circle,transparent 48%,rgba(190,0,0,.62) 100%)}
+  #lowHp{position:absolute;inset:0;opacity:0;visibility:hidden;background:radial-gradient(circle,transparent 58%,rgba(140,0,0,.5) 100%)}
+
+  /* bottom left: HP */
+  #hpBox{position:absolute;left:24px;bottom:22px;display:flex;align-items:center;gap:10px;text-shadow:var(--ui-shadow)}
+  #hpBox .lbl{font-size:13px;font-weight:700;letter-spacing:.18em;opacity:.85}
+  #hpTrack{position:relative;width:230px;height:16px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.35);border-radius:8px;overflow:hidden}
+  #hpGhost{position:absolute;left:0;top:0;bottom:0;width:100%;background:rgba(255,255,255,.7)}
+  #hpFill{position:absolute;left:0;top:0;bottom:0;width:100%;background:linear-gradient(90deg,#c0392b,#27ae60)}
+  #hpText{min-width:34px;font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+
+  /* bottom right: ammo */
+  #ammoBox{position:absolute;right:24px;bottom:22px;display:flex;align-items:flex-end;gap:12px;text-shadow:var(--ui-shadow)}
+  #ammoPips{display:flex;gap:6px;align-items:flex-end}
+  .ammo-pip{position:relative;width:11px;height:26px;border-radius:5px 5px 2px 2px;background:linear-gradient(90deg,#f0c75a,#b8862a);
+            border:1px solid rgba(0,0,0,.55);box-shadow:0 1px 3px rgba(0,0,0,.7)}
+  .ammo-pip::before{content:'';position:absolute;left:0;right:0;bottom:0;height:7px;background:#8a5f1c;border-radius:0 0 2px 2px}
+  .ammo-pip.empty{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.35);box-shadow:none}
+  .ammo-pip.empty::before{display:none}
+  #reloadSpinner{display:none;align-self:center;color:#ffd54f;font-size:14px;font-weight:700;letter-spacing:.2em;animation:kfPulse .7s ease-in-out infinite alternate}
+  @keyframes kfPulse{from{opacity:.55}to{opacity:1}}
+
+  /* game over / victory */
+  .endscreen{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;z-index:30;color:#eee;text-align:center}
+  #gameOverScreen{background:radial-gradient(circle,rgba(40,0,0,.78),rgba(0,0,0,.92))}
+  #victoryScreen{background:radial-gradient(circle,rgba(30,40,6,.78),rgba(0,0,0,.92))}
+  .endscreen h2{margin:0 0 6px;font:700 clamp(36px,6vw,64px) Georgia,'Palatino Linotype',serif;letter-spacing:.16em;text-transform:uppercase}
+  #gameOverScreen h2{color:#ff5a3c}
+  #victoryScreen h2{color:#f1d28a}
+  .endscreen .tag{margin-bottom:22px;font-size:16px;letter-spacing:.2em;text-transform:uppercase;color:#bfbfbf}
+  .endscreen .stats{display:grid;grid-template-columns:auto auto;gap:6px 28px;margin-bottom:30px;font-size:17px;text-align:left}
+  .endscreen .stats span:nth-child(odd){color:#a9b8a0;letter-spacing:.12em;font-size:13px;align-self:center}
+  .endscreen .stats span:nth-child(even){font-weight:700;font-variant-numeric:tabular-nums;text-align:right}
+  .endscreen button{padding:12px 34px;font-size:18px;letter-spacing:.14em;background:#2e5d2e;color:#fff;border:1px solid #7fae7f;border-radius:8px;cursor:pointer}
+  .endscreen button:hover{background:#3e7d3e}
 </style>
   <!-- @@THREE_SCRIPTS@@ -->
 </head>
@@ -20,27 +124,60 @@
   <p>WASD move · Mouse aim · LMB fire · R reload · Survive the armored waves · Boss at wave 5</p>
   <button id="startBtn">START</button>
 </div>
-<div id="hud" style="position:fixed;inset:0;pointer-events:none;font-family:monospace;color:#fff;z-index:10">
-  <div id="spawnBadge" style="position:absolute;top:8px;left:10px;font-size:11px;color:#6f6;padding:2px 6px;background:rgba(0,0,0,.35);border-radius:3px">SPAWN OK (0)</div>
-  <div id="waveInfo" style="position:absolute;top:14px;left:50%;transform:translateX(-50%);font-size:20px;text-shadow:0 1px 3px #000">WAVE 1</div>
-  <div style="position:absolute;bottom:22px;left:24px;display:flex;align-items:center;gap:10px">
-    <span>HP</span>
-    <div style="width:220px;height:14px;background:rgba(0,0,0,.5);border-radius:7px;overflow:hidden">
-      <div id="hpFill" style="height:100%;width:100%;background:linear-gradient(90deg,#c0392b,#27ae60);transition:width .2s"></div>
+
+<div id="hud">
+  <div id="topBar">
+    <div id="waveInfo">WAVE 1</div>
+    <div id="enemiesLeft"></div>
+  </div>
+  <div id="killBox"><span class="lbl">KILLS</span><span id="killCount">0</span></div>
+
+  <div id="bossBar" class="hidden">
+    <div id="bossName">Boss</div>
+    <div id="bossTrack"><div id="bossGhost"></div><div id="bossFill"></div></div>
+    <div id="bossPct">100%</div>
+  </div>
+
+  <div id="banner"><div id="bannerTitle"></div><div id="bannerSub"></div></div>
+
+  <div id="dmgDirs">
+    <div class="dmg-arc"><svg viewBox="-150 -150 300 300"><path class="glow" d="M -62 -127 A 141 141 0 0 1 62 -127"/><path class="core" d="M -62 -127 A 141 141 0 0 1 62 -127"/></svg></div>
+    <div class="dmg-arc"><svg viewBox="-150 -150 300 300"><path class="glow" d="M -62 -127 A 141 141 0 0 1 62 -127"/><path class="core" d="M -62 -127 A 141 141 0 0 1 62 -127"/></svg></div>
+    <div class="dmg-arc"><svg viewBox="-150 -150 300 300"><path class="glow" d="M -62 -127 A 141 141 0 0 1 62 -127"/><path class="core" d="M -62 -127 A 141 141 0 0 1 62 -127"/></svg></div>
+    <div class="dmg-arc"><svg viewBox="-150 -150 300 300"><path class="glow" d="M -62 -127 A 141 141 0 0 1 62 -127"/><path class="core" d="M -62 -127 A 141 141 0 0 1 62 -127"/></svg></div>
+  </div>
+  <div id="vignette"></div>
+  <div id="lowHp"></div>
+
+  <div id="crosshair"><i></i><i></i><i></i><i></i><b></b></div>
+  <div id="hitMarker"><i></i><i></i><i></i><i></i><b></b></div>
+
+  <div id="hpBox">
+    <span class="lbl">HP</span>
+    <div id="hpTrack"><div id="hpGhost"></div><div id="hpFill"></div></div>
+    <span id="hpText">100</span>
+  </div>
+
+  <div id="ammoBox">
+    <div id="reloadSpinner">RELOADING</div>
+    <div id="ammoPips">
+      <span class="ammo-pip"></span><span class="ammo-pip"></span><span class="ammo-pip"></span>
+      <span class="ammo-pip"></span><span class="ammo-pip"></span><span class="ammo-pip"></span>
     </div>
   </div>
-  <div style="position:absolute;bottom:22px;right:24px;display:flex;gap:7px;font-size:17px">
-    <span class="ammo-pip" style="width:11px;height:22px;background:#0f0;border-radius:2px"></span>
-    <span class="ammo-pip" style="width:11px;height:22px;background:#0f0;border-radius:2px"></span>
-    <span class="ammo-pip" style="width:11px;height:22px;background:#0f0;border-radius:2px"></span>
-    <span class="ammo-pip" style="width:11px;height:22px;background:#0f0;border-radius:2px"></span>
-    <span class="ammo-pip" style="width:11px;height:22px;background:#0f0;border-radius:2px"></span>
-    <span class="ammo-pip" style="width:11px;height:22px;background:#0f0;border-radius:2px"></span>
-    <div id="reloadSpinner" style="display:none;color:#ffd54f">RELOADING…</div>
-  </div>
-  <div id="crosshair" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:6px;height:6px;background:#fff;border-radius:50%;box-shadow:0 0 4px #000"></div>
-  <div id="hitMarker" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(45deg);color:#ffd54f;font-size:22px">✕</div>
-  <div id="vignette" style="display:none;position:absolute;inset:0;background:radial-gradient(circle,transparent 55%,rgba(200,0,0,.55) 100%)"></div>
+</div>
+
+<div id="gameOverScreen" class="endscreen">
+  <h2>You Died</h2>
+  <div class="tag" id="gameOverWave"></div>
+  <div class="stats" id="gameOverStats"></div>
+  <button id="restartButton">RESTART</button>
+</div>
+<div id="victoryScreen" class="endscreen">
+  <h2>Victory</h2>
+  <div class="tag" id="victoryWave"></div>
+  <div class="stats" id="victoryStats"></div>
+  <button id="continueButton">PLAY AGAIN</button>
 </div>
 <!-- @@ASSETS@@ -->
 <!-- @@MODULES@@ -->
