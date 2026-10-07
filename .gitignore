@@ -17,3 +17,5 @@ __pycache__/
 # never commit secret keys — local config only
 .env
 *.local.key
+# build backups / QA output
+tools/build-cache/
