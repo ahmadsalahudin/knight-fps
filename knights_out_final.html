@@ -3094,216 +3094,1628 @@ window.World = (function () {
 //# sourceURL=src/js/weapon.js
 </script>
 <script>
-/* combat.js — window.Combat (stub).
-   C2 implements hit zones, damage model, hit/kill reactions and loose-prop physics (see docs/FIX_PLAN.md).
-   Callers always guard (`if (window.Combat && Combat.zoneFor) ...`). */
+/* combat.js — window.Combat  (Worker C2, docs/FIX_PLAN.md section 3 "Combat")
+
+   Hit zones, the damage model, hit / kill reactions and the physics of loose gear.
+
+     Combat.zoneFor(enemy, hit)         -> 'head' | 'torso' | 'limb'
+                                           hit = THREE.Intersection (object, point) or takeHit data ({zone, point, dir}).
+                                           helmet mesh => head; otherwise the distance of hit.point to the head bone sphere,
+                                           the torso axis (hips -> neck) and the arm / leg bone chains (skeleton found by
+                                           the original glTF bone names, so enemy.bones is optional). Without any bones:
+                                           height above enemy.mesh.position relative to the enemy's height.
+     Combat.damageFor(zone, enemy)      -> head 150, torso 40, limb 28 (knights have 100 HP; the boss only has more HP)
+     Combat.onHit(enemy, hit, dir)      -> sparks + a little blood, armour sound, horizontal knockback impulse.
+                                           Returns 'head' | 'hit' (Game turns it into the hitmarker; Combat NEVER calls HUD.hitmark).
+     Combat.onKill(enemy, hit, dir)     -> sets enemy._killFx = true (repeat calls are ignored), blood burst + pool, death
+                                           sound, bigger knockback, loose gear: a head shot pops the helmet off (velocity + spin);
+                                           the sword and shield leave the hands a few frames later. Returns 'kill'.
+     Combat.update(dt)                  -> simulates the loose props (gravity, rigid-body ground contact with bounce, friction,
+                                           sleeping), runs the delayed effects, despawns props after ~15 s (sink, remove, dispose).
+   Extras: Combat.clear() removes every loose prop, Combat.stats(), Combat.zoneShapes(enemy) (debug), Combat.props (read only).
+
+   Knockback protocol (enemies.js): Combat adds a horizontal velocity impulse in m/s. If the enemy has applyImpulse(Vector3) it is
+   called with it; otherwise enemy.knockback (THREE.Vector3, created when missing) is incremented. The enemy owns the decay and
+   the movement (collide / slide, then damp ~6 /s). enemy.knockbackScale (default 1, 0.1 for type 'boss') scales the impulse.
+   Safety net: when the enemy never changes that vector (it does not read it), Combat slides enemy.mesh itself and damps the
+   vector (see stepKnockback); the first time the enemy modifies it, Combat stops touching it (enemy._cmbKbOwn).
+
+   Loose gear: the original object (enemy.helmet / sword / shield, the Assets wrapper) is re-parented into a small physics holder
+   Group in the scene, keeping its exact world transform (like scene.attach), and gets userData.loose = true. The enemy must not
+   remove / dispose it any more (enemy.mesh does not contain it any more). Everything is dt driven (no timers); every
+   cross-module call is guarded, and missing enemy.bones / helmet / sword / shield are tolerated. */
 (function () {
+  'use strict';
+
+  const V3 = THREE.Vector3, Q = THREE.Quaternion, M4 = THREE.Matrix4;
+  const rnd = Math.random;
+  const rr = function (a, b) { return a + rnd() * (b - a); };
+  const clamp = function (v, a, b) { return v < a ? a : (v > b ? b : v); };
+
+  // ---------------------------------------------------------------------------------------------------------------- tuning
+  const DAMAGE = { head: 150, torso: 40, limb: 28 };
+  const KNOCK = { head: 2.0, torso: 1.3, limb: 0.8 };            // m/s horizontal, per non-lethal hit
+  const KNOCK_KILL = { head: 3.6, torso: 3.0, limb: 2.2 };       // m/s horizontal, on the killing shot
+  const BLOOD_HIT = { head: 7, torso: 4, limb: 3 };              // FX.blood amounts (modest on purpose)
+  const BLOOD_KILL = { head: 16, torso: 11, limb: 9 };
+  const POOL_R = { head: 0.66, torso: 0.82, limb: 0.64 };          // metres, for a 1.8 m knight
+  // zone geometry in "knight units" (a 1.8 m knight); multiplied by the enemy's own scale
+  const HEAD_UP = 0.24, HEAD_R = 0.25, TORSO_R = 0.25, ARM_R = 0.115, LEG_R = 0.14, PELVIS_DROP = 0.04;
+  const HIPS_TO_HEAD = 0.696;                                    // hips -> head bone distance of the 1.8 m knight
+
+  // props
+  const GRAVITY = 9.8, STEP = 1 / 120, MAX_STEPS = 12;
+  const LIFE = 12.5, SINK_TIME = 1.6, MAX_PROPS = 30;
+  const SHAPES = {
+    helmet: { shape: 'sphere', e: 0.40, mu: 0.45, angDamp: 3.0, linDamp: 2.2 },
+    sword: { shape: 'box', e: 0.26, mu: 0.60, angDamp: 2.6, linDamp: 0.25 },
+    shield: { shape: 'box', e: 0.20, mu: 0.55, angDamp: 2.8, linDamp: 0.25 }
+  };
+
+  // ---------------------------------------------------------------------------------------------------------------- state
+  const props = [];            // active loose bodies
+  const tasks = [];            // delayed effects { t, fn }
+  const kbWatch = new Set();   // enemies whose knockback vector Combat wrote and nobody has consumed yet
+  const probes = Object.create(null);   // asset name -> { mats:Set, geos:Set } (what the shared asset cache owns)
+  let dbgInstalled = false;
+  let propsSpawned = 0;
+
+  // scratch
+  const _a = new V3(), _b = new V3(), _c = new V3(), _d = new V3(), _hc = new V3(), _up = new V3();
+  const _wp = []; for (let i = 0; i < 6; i++) _wp.push(new V3());
+  const UP = new V3(0, 1, 0);
+
+  function guard(fn, label) {
+    try { return fn(); } catch (e) { if (!guard.n || guard.n < 4) { guard.n = (guard.n || 0) + 1; console.error('[Combat] ' + label, e); } return undefined; }
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------- rig
+  function isDescendant(obj, root) { for (let o = obj; o; o = o.parent) if (o === root) return true; return false; }
+
+  function segDist(p, a, b) {
+    const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z;
+    const apx = p.x - a.x, apy = p.y - a.y, apz = p.z - a.z;
+    const l2 = abx * abx + aby * aby + abz * abz;
+    let t = l2 > 1e-10 ? (apx * abx + apy * aby + apz * abz) / l2 : 0;
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    const dx = apx - abx * t, dy = apy - aby * t, dz = apz - abz * t;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  // Find (once per enemy) the bones the zone test needs. Names are the ORIGINAL glTF names; Assets.bones() maps them.
+  function rigOf(enemy) {
+    let r = enemy._cmbRig;
+    if (r && r.mesh === enemy.mesh) return r;
+    const B = enemy.bones || {};
+    let named = null;
+    try { if (window.Assets && Assets.bones && enemy.mesh) named = Assets.bones(enemy.mesh); } catch (e) { named = null; }
+    const pick = function (name, alt) { return (named && named[name]) || alt || null; };
+    r = { mesh: enemy.mesh, head: pick('Head', B.head), neck: pick('Neck', null), hips: pick('Hips', B.hips), arms: [], legs: [], H: 0 };
+    if (!r.neck) r.neck = B.torso || null;
+    const side = ['L', 'R'];
+    for (let i = 0; i < 2; i++) {
+      const s = side[i];
+      const arm = [pick('UpperArm.' + s), pick('LowerArm.' + s, B['arm' + s]), pick('Palm.' + s, B['hand' + s]), pick('Fingers.' + s)].filter(Boolean);
+      const leg = [pick('UpperLeg.' + s), pick('LowerLeg.' + s), pick('Foot.' + s)].filter(Boolean);
+      if (!leg.length && B['leg' + s]) leg.push(B['leg' + s]);
+      if (arm.length) r.arms.push(arm);
+      if (leg.length) r.legs.push(leg);
+    }
+    // the height of the enemy: explicit, else from the rigid hips -> head distance, else its bounding box
+    if (typeof enemy.height === 'number' && enemy.height > 0.2) r.H = enemy.height;
+    else if (r.head && r.hips && r.head !== r.hips) {
+      r.head.getWorldPosition(_a); r.hips.getWorldPosition(_b);
+      const d = _a.distanceTo(_b);
+      if (d > 0.05) r.H = d / HIPS_TO_HEAD * 1.8;
+    }
+    if (!(r.H > 0.2) && enemy.mesh) {
+      enemy.mesh.updateWorldMatrix(true, true);
+      const bb = new THREE.Box3().setFromObject(enemy.mesh);
+      r.H = bb.isEmpty() ? 1.8 : Math.max(0.5, bb.max.y - bb.min.y);
+    }
+    if (!(r.H > 0.2)) r.H = 1.8;
+    r.s = r.H / 1.8;
+    r.bones = !!(r.head && r.hips);
+    enemy._cmbRig = r;
+    return r;
+  }
+
+  function worldPos(obj, out) { obj.getWorldPosition(out); return out; }
+
+  // ---------------------------------------------------------------------------------------------------------------- zones
+  function zoneByBones(rig, pt) {
+    const s = rig.s;
+    worldPos(rig.head, _a);                                    // head bone = base of the head
+    if (rig.neck && rig.neck !== rig.head) { worldPos(rig.neck, _b); _up.subVectors(_a, _b); } else _up.set(0, 0, 0);
+    if (_up.lengthSq() < 1e-6) _up.set(0, 1, 0); else _up.normalize();
+    _hc.copy(_a).addScaledVector(_up, HEAD_UP * s);
+    if (pt.distanceTo(_hc) < HEAD_R * s) return 'head';
+
+    // torso axis: hips -> neck (or the head bone)
+    worldPos(rig.hips, _c);
+    const top = (rig.neck && rig.neck !== rig.hips) ? worldPos(rig.neck, _d) : _a;
+    // legs: everything clearly below the pelvis
+    if (pt.y < _c.y - PELVIS_DROP * s) return 'limb';
+    const mT = segDist(pt, _c, top) - TORSO_R * s;
+    let mA = 1e9;
+    for (let i = 0; i < rig.arms.length; i++) {
+      const ch = rig.arms[i];
+      for (let k = 0; k < ch.length; k++) worldPos(ch[k], _wp[k]);
+      if (ch.length === 1) mA = Math.min(mA, pt.distanceTo(_wp[0]) - ARM_R * s);
+      for (let k = 0; k + 1 < ch.length; k++) mA = Math.min(mA, segDist(pt, _wp[k], _wp[k + 1]) - ARM_R * s);
+    }
+    let mL = 1e9;
+    for (let i = 0; i < rig.legs.length; i++) {
+      const ch = rig.legs[i];
+      for (let k = 0; k < ch.length; k++) worldPos(ch[k], _wp[k]);
+      if (ch.length === 1) mL = Math.min(mL, pt.distanceTo(_wp[0]) - LEG_R * s);
+      for (let k = 0; k + 1 < ch.length; k++) mL = Math.min(mL, segDist(pt, _wp[k], _wp[k + 1]) - LEG_R * s);
+    }
+    const mLimb = Math.min(mA, mL);
+    return (mLimb < mT - 0.03 * s) ? 'limb' : 'torso';
+  }
+
+  // no skeleton at all: height above the enemy's feet relative to its height, lateral offset for the arms
+  function zoneByHeight(enemy, rig, pt) {
+    const base = worldPos(enemy.mesh, _a);
+    const f = (pt.y - base.y) / rig.H;
+    if (f > 0.78) return 'head';
+    if (f < 0.40) return 'limb';
+    const lat = Math.hypot(pt.x - base.x, pt.z - base.z);
+    return lat > 0.27 * rig.s ? 'limb' : 'torso';
+  }
+
+  function zoneFor(enemy, hit) {
+    if (!enemy || !hit) return 'torso';
+    if (!hit.object && typeof hit.zone === 'string' && DAMAGE[hit.zone] !== undefined) return hit.zone;   // takeHit() data
+    if (hit.__cmbZone && hit.__cmbEnemy === enemy) return hit.__cmbZone;
+    let zone = 'torso';
+    const z = guard(function () {
+      if (hit.object && enemy.helmet && isDescendant(hit.object, enemy.helmet)) return 'head';
+      if (!hit.point || !enemy.mesh) return 'torso';
+      const rig = rigOf(enemy);
+      return rig.bones ? zoneByBones(rig, hit.point) : zoneByHeight(enemy, rig, hit.point);
+    }, 'zoneFor');
+    if (z) zone = z;
+    try { hit.__cmbZone = zone; hit.__cmbEnemy = enemy; } catch (e) { /* frozen hit object */ }
+    return zone;
+  }
+
+  function damageFor(zone, enemy) {
+    const d = DAMAGE[zone];
+    return d === undefined ? DAMAGE.torso : d;
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------- helpers
+  function bulletDir(enemy, hit, dir) {
+    const d = new V3();
+    if (dir && isFinite(dir.x) && isFinite(dir.y) && isFinite(dir.z)) d.copy(dir);
+    else if (hit && hit.dir && isFinite(hit.dir.x)) d.copy(hit.dir);
+    else {
+      if (enemy && enemy.mesh) enemy.mesh.getWorldPosition(d);
+      const pp = window.Game && Game.playerObj ? Game.playerObj.position : null;
+      if (pp) d.sub(pp); else d.set(0, 0, -1);
+    }
+    if (d.lengthSq() < 1e-8) d.set(0, 0, -1);
+    return d.normalize();
+  }
+
+  function hitPoint(enemy, hit) {
+    if (hit && hit.point && isFinite(hit.point.x)) return hit.point;
+    const p = new V3();
+    if (enemy && enemy.mesh) { enemy.mesh.getWorldPosition(p); p.y += 1.1 * (enemy._cmbRig ? enemy._cmbRig.s : 1); }
+    return p;
+  }
+
+  function enemyScale(enemy) {
+    if (!enemy) return 1;
+    if (enemy._cmbRig) return enemy._cmbRig.s;
+    return guard(function () { return enemy.mesh ? rigOf(enemy).s : 1; }, 'scale') || 1;
+  }
+
+  // horizontal velocity impulse (m/s) along (dx, dz)
+  function push(enemy, dx, dz, speed) {
+    if (!enemy || !(speed > 0)) return;
+    const l = Math.hypot(dx, dz);
+    if (l < 1e-4) return;
+    const ks = typeof enemy.knockbackScale === 'number' ? enemy.knockbackScale : (enemy.type === 'boss' ? 0.1 : 1);
+    const f = speed * ks / l;
+    if (typeof enemy.applyImpulse === 'function') { enemy.applyImpulse(new V3(dx * f, 0, dz * f)); return; }
+    if (enemy.knockback && enemy.knockback.isVector3) { enemy.knockback.x += dx * f; enemy.knockback.z += dz * f; }
+    else enemy.knockback = new V3(dx * f, 0, dz * f);
+    if (!enemy._cmbKbOwn && !kbWatch.has(enemy)) { kbWatch.add(enemy); enemy._cmbKbX = enemy.knockback.x; enemy._cmbKbZ = enemy.knockback.z; enemy._cmbKbSeen = false; }
+    else if (kbWatch.has(enemy)) { enemy._cmbKbX = enemy.knockback.x; enemy._cmbKbZ = enemy.knockback.z; }
+  }
+
+  // Safety net for enemies that never read enemy.knockback: if the vector is still exactly what Combat wrote after the enemy's own
+  // update has run (Enemies.update runs before Combat.update in the main loop), Combat slides the mesh itself and damps the vector.
+  // As soon as an enemy changes the vector it is marked as the owner (enemy._cmbKbOwn) and is never touched again.
+  function stepKnockback(dt) {
+    kbWatch.forEach(function (e) {
+      const kb = e.knockback;
+      if (!kb || !e.mesh || !e.mesh.parent) { kbWatch.delete(e); return; }
+      if (Math.abs(kb.x - e._cmbKbX) > 1e-6 || Math.abs(kb.z - e._cmbKbZ) > 1e-6) { e._cmbKbOwn = true; kbWatch.delete(e); return; }
+      e.mesh.position.x += kb.x * dt; e.mesh.position.z += kb.z * dt;
+      const k = Math.exp(-7 * dt);
+      kb.x *= k; kb.z *= k;
+      if (kb.x * kb.x + kb.z * kb.z < 4e-4) { kb.x = 0; kb.z = 0; kbWatch.delete(e); return; }
+      e._cmbKbX = kb.x; e._cmbKbZ = kb.z;
+    });
+  }
+
+  function later(t, fn) { tasks.push({ t: t, fn: fn }); }
+
+  function getScene(obj, enemy) {
+    for (let o = obj; o; o = o.parent) if (o.isScene) return o;
+    if (enemy && enemy.mesh) for (let o = enemy.mesh; o; o = o.parent) if (o.isScene) return o;
+    if (window.Game && Game.scene) return Game.scene;
+    if (window.Main && Main.scene) return Main.scene;
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------- hit / kill
+  function onHit(enemy, hit, dir) {
+    if (!enemy) return 'hit';
+    const zone = zoneFor(enemy, hit);
+    const d = bulletDir(enemy, hit, dir);
+    const pt = hitPoint(enemy, hit);
+    const toShooter = new V3().copy(d).negate();
+    if (window.FX) {
+      if (FX.sparks) guard(function () { FX.sparks(pt, toShooter, zone === 'head' ? 11 : 8); }, 'sparks');
+      if (FX.blood) guard(function () { FX.blood(pt, d, BLOOD_HIT[zone]); }, 'blood');
+    }
+    if (window.Sfx) {
+      if (Sfx.armorHit) guard(function () { Sfx.armorHit(); }, 'sfx');
+      if (zone === 'head' && Sfx.fleshHit) guard(function () { Sfx.fleshHit(); }, 'sfx');
+    }
+    push(enemy, d.x, d.z, KNOCK[zone]);
+    return zone === 'head' ? 'head' : 'hit';
+  }
+
+  function onKill(enemy, hit, dir) {
+    if (!enemy) return 'kill';
+    if (enemy._killFx) return 'kill';
+    enemy._killFx = true;
+    const zone = zoneFor(enemy, hit);
+    const d = bulletDir(enemy, hit, dir);
+    const pt = hitPoint(enemy, hit).clone();
+    const s = enemyScale(enemy);
+    const flat = new V3(d.x, 0, d.z);
+    if (flat.lengthSq() < 1e-6) flat.set(0, 0, -1);
+    flat.normalize();
+    const side = new V3(-flat.z, 0, flat.x);
+
+    if (window.FX) {
+      if (FX.sparks) guard(function () { FX.sparks(pt, new V3().copy(d).negate(), zone === 'head' ? 12 : 9); }, 'sparks');
+      if (FX.blood) guard(function () { FX.blood(pt, d, BLOOD_KILL[zone]); }, 'blood');
+    }
+    if (window.Sfx) {
+      if (Sfx.armorHit) guard(function () { Sfx.armorHit(); }, 'sfx');
+      if (Sfx.death) guard(function () { Sfx.death(); }, 'sfx');
+    }
+    push(enemy, d.x, d.z, KNOCK_KILL[zone]);
+
+    // ---- loose gear ---------------------------------------------------------------------------------------------
+    if (zone === 'head' && enemy.helmet) {
+      const v = new V3().copy(flat).multiplyScalar(rr(1.0, 1.9)).addScaledVector(side, rr(-0.6, 0.6));
+      v.y = rr(3.4, 4.2);
+      const w = new V3(rr(-1, 1), rr(-1, 1), rr(-1, 1)).normalize().multiplyScalar(rr(9, 15));
+      detach(enemy, enemy.helmet, 'helmet', 0, v, w, s);
+    }
+    if (enemy.sword) {
+      const v = new V3().copy(flat).multiplyScalar(rr(0.7, 1.5)).addScaledVector(side, rr(-0.8, 0.8));
+      v.y = rr(0.8, 1.7);
+      const w = new V3(rr(-1, 1), rr(-1, 1), rr(-1, 1)).normalize().multiplyScalar(rr(3, 6));
+      detach(enemy, enemy.sword, 'sword', 0.10, v, w, s);
+    }
+    if (enemy.shield) {
+      const v = new V3().copy(flat).multiplyScalar(rr(0.3, 0.9)).addScaledVector(side, rr(-0.5, 0.5));
+      v.y = rr(0.4, 1.0);
+      const w = new V3(rr(-1, 1), rr(-1, 1), rr(-1, 1)).normalize().multiplyScalar(rr(2, 4));
+      detach(enemy, enemy.shield, 'shield', 0.26, v, w, s);
+    }
+
+    // ---- blood: a short second spurt, then a pool that spreads under the fallen body -----------------------------
+    const rig = enemy._cmbRig;
+    const p0 = new V3();
+    if (enemy.mesh) enemy.mesh.getWorldPosition(p0); else p0.copy(pt);
+    later(0.14, function () { if (window.FX && FX.blood) FX.blood(pt, d, zone === 'head' ? 6 : 4); });
+    const radius = POOL_R[zone] * Math.pow(Math.max(1, s), 0.85) * rr(0.9, 1.12);
+    later(0.5, function () {
+      const p = new V3();
+      let ok = false;
+      if (enemy.mesh && getScene(enemy.mesh)) {
+        const bone = (rig && (rig.hips || rig.head)) || null;
+        if (bone) { bone.getWorldPosition(p); ok = true; }
+        else { enemy.mesh.getWorldPosition(p); ok = true; }
+      }
+      if (!ok) p.copy(p0);
+      if (!isFinite(p.x) || !isFinite(p.z)) p.copy(p0);
+      if (window.FX && FX.bloodPool) FX.bloodPool(p, radius);
+    });
+    if (zone === 'head') {
+      later(0.8, function () {
+        if (!(rig && rig.head && enemy.mesh && getScene(enemy.mesh))) return;
+        const p = new V3(); rig.head.getWorldPosition(p);
+        if (isFinite(p.x) && window.FX && FX.bloodPool) FX.bloodPool(p, 0.45 * Math.pow(Math.max(1, s), 0.85));
+      });
+    }
+    return 'kill';
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------- loose props
+  // Local-space AABB (in prop's own frame) of all visible mesh geometry below prop.
+  function localBox(prop) {
+    prop.updateWorldMatrix(true, true);
+    const inv = new M4().copy(prop.matrixWorld).invert();
+    const box = new THREE.Box3();
+    const m = new M4(), v = new V3();
+    prop.traverse(function (o) {
+      if (!o.isMesh || !o.geometry || o.visible === false) return;
+      const g = o.geometry;
+      if (!g.boundingBox) g.computeBoundingBox();
+      const bb = g.boundingBox;
+      if (!bb || bb.isEmpty()) return;
+      m.multiplyMatrices(inv, o.matrixWorld);
+      for (let i = 0; i < 8; i++) {
+        v.set((i & 1) ? bb.max.x : bb.min.x, (i & 2) ? bb.max.y : bb.min.y, (i & 4) ? bb.max.z : bb.min.z).applyMatrix4(m);
+        box.expandByPoint(v);
+      }
+    });
+    return box;
+  }
+
+  // Release an enemy's gear after `delay` seconds with a launch velocity (+ whatever speed the part had while it was still attached).
+  function detach(enemy, prop, kind, delay, v, w, s) {
+    if (!prop || !prop.parent || prop.userData.loose) return;
+    const startPos = new V3();
+    prop.getWorldPosition(startPos);
+    const t0 = delay;
+    const go = function () {
+      if (!prop.parent || prop.userData.loose) return;
+      let sc = null;
+      for (let o = prop; o; o = o.parent) if (o.isScene) { sc = o; break; }
+      if (!sc) return;                                      // enemy already removed from the scene: nothing to show
+      const vel = new V3().copy(v);
+      if (t0 > 0.02) {                                      // inherit the motion of the falling limb
+        const now = prop.getWorldPosition(new V3());
+        const inh = now.sub(startPos).multiplyScalar(1 / t0);
+        const sp = inh.length();
+        if (sp > 4) inh.multiplyScalar(4 / sp);
+        vel.addScaledVector(inh, 0.6);
+      }
+      spawnBody(enemy, prop, kind, sc, vel, w, s);
+    };
+    if (delay > 0) later(delay, go); else go();
+  }
+
+  function spawnBody(enemy, prop, kind, sc, vel, angVel, s) {
+    const cfg = SHAPES[kind] || SHAPES.sword;
+    prop.updateWorldMatrix(true, false);
+    const pos = new V3(), quat = new Q(), scl = new V3();
+    prop.matrixWorld.decompose(pos, quat, scl);
+    const box = localBox(prop);
+    let center, hs;
+    if (box.isEmpty()) { center = new V3(); hs = new V3(0.12, 0.12, 0.12); }
+    else { center = box.getCenter(new V3()); hs = box.getSize(new V3()).multiplyScalar(0.5); }
+    const he = new V3(Math.max(0.012, hs.x * Math.abs(scl.x)), Math.max(0.012, hs.y * Math.abs(scl.y)), Math.max(0.012, hs.z * Math.abs(scl.z)));
+    const cs = center.clone().multiply(scl);
+
+    const holder = new THREE.Group();
+    holder.name = 'combat-prop:' + kind;
+    holder.position.copy(pos).add(cs.clone().applyQuaternion(quat));
+    holder.quaternion.copy(quat);
+    sc.add(holder);
+    holder.add(prop);                                       // leaves the bone / mesh, keeps its world transform
+    prop.position.copy(cs).negate();
+    prop.quaternion.identity();
+    prop.scale.copy(scl);
+    prop.userData.loose = true;
+    prop.visible = true;
+
+    const b = {
+      kind: kind, holder: holder, prop: prop, assets: assetNames(prop), cfg: cfg,
+      p: holder.position.clone(), q: holder.quaternion.clone(), v: vel.clone(), w: angVel.clone(),
+      he: he, shape: cfg.shape, R: 0, corners: null, invI: new V3(), acc: 0, age: 0, rest: 0, asleep: false,
+      settleT: 0, settleDur: 0, q0: null, q1: null, y0: 0, y1: 0, restY: 0, sink: 0, sinkTotal: 0, clangCd: 0, contact: false
+    };
+    // limit absurd launch speeds
+    if (b.v.length() > 9) b.v.setLength(9);
+    if (b.w.length() > 20) b.w.setLength(20);
+    if (cfg.shape === 'sphere') {
+      b.R = clamp((he.x + he.y + he.z) / 3 * 0.95, 0.05, 0.6);
+      const I = 0.4 * b.R * b.R * 1.4;
+      b.invI.set(1 / I, 1 / I, 1 / I);
+      b.nc = 1;
+    } else {
+      b.corners = [];
+      for (let i = 0; i < 8; i++) b.corners.push(new V3((i & 1) ? he.x : -he.x, (i & 2) ? he.y : -he.y, (i & 4) ? he.z : -he.z));
+      const hx = Math.max(he.x, 0.04), hy = Math.max(he.y, 0.04), hz = Math.max(he.z, 0.04);
+      const k = 1.4 / 3;
+      b.invI.set(1 / (k * (hy * hy + hz * hz)), 1 / (k * (hx * hx + hz * hz)), 1 / (k * (hx * hx + hy * hy)));
+      b.nc = 8;
+    }
+    b.sinkTotal = 2 * Math.max(he.x, he.y, he.z) + 0.05;
+    props.push(b);
+    propsSpawned++;
+    if (props.length > MAX_PROPS) {                         // too many loose props: the oldest one sinks away fast
+      for (let i = 0; i < props.length; i++) {
+        if (!props[i].fast) { props[i].fast = true; if (props[i].age < LIFE) props[i].age = LIFE; break; }
+      }
+    }
+    syncHolder(b);
+    return b;
+  }
+
+  // ---- rigid body: gravity, bounce, friction against the flat ground (y = 0) ------------------------------------------
+  const _r = []; for (let i = 0; i < 8; i++) _r.push(new V3());
+  const _depth = new Float32Array(8), _vn0 = new Float32Array(8), _jn = new Float32Array(8), _jtx = new Float32Array(8), _jtz = new Float32Array(8), _act = new Uint8Array(8);
+  const _qi = new Q(), _wq = new Q(), _qs = new Q(), _u = new V3(), _t1 = new V3(), _t2 = new V3(), _t3 = new V3(), _P = new V3();
+
+  // out = I^-1 * vec  (diagonal inertia in the body frame)
+  function invIApply(b, vec, out) {
+    out.copy(vec).applyQuaternion(_qi).multiply(b.invI).applyQuaternion(b.q);
+    return out;
+  }
+
+  // 1 / m + ( (I^-1 (r x d)) x r ) . d      (m = 1)
+  function effMass(b, r, d) {
+    _t1.crossVectors(r, d);
+    invIApply(b, _t1, _t2);
+    _t3.crossVectors(_t2, r);
+    return 1 + _t3.dot(d);
+  }
+
+  function applyImpulse(b, r, P) {
+    b.v.add(P);
+    _t1.crossVectors(r, P);
+    invIApply(b, _t1, _t2);
+    b.w.add(_t2);
+  }
+
+  const NY = new V3(0, 1, 0), NX = new V3(1, 0, 0), NZ = new V3(0, 0, 1);
+
+  function contacts(b, h) {
+    const n = b.nc;
+    let any = false, maxDepth = 0, impact = 0;
+    for (let i = 0; i < n; i++) {
+      if (b.shape === 'sphere') _r[i].set(0, -b.R, 0); else _r[i].copy(b.corners[i]).applyQuaternion(b.q);
+      const dep = -(b.p.y + _r[i].y);
+      _depth[i] = dep;
+      if (dep > 0) {
+        _act[i] = 1; any = true;
+        if (dep > maxDepth) maxDepth = dep;
+        _u.crossVectors(b.w, _r[i]).add(b.v);
+        _vn0[i] = _u.y; _jn[i] = 0; _jtx[i] = 0; _jtz[i] = 0;
+        if (-_u.y > impact) impact = -_u.y;
+      } else _act[i] = 0;
+    }
+    b.contact = any;
+    if (!any) return;
+    _qi.copy(b.q).invert();
+    const mu = b.cfg.mu, e = b.cfg.e;
+    for (let it = 0; it < 5; it++) {
+      for (let i = 0; i < n; i++) {
+        if (!_act[i]) continue;
+        const r = _r[i];
+        // normal
+        _u.crossVectors(b.w, r).add(b.v);
+        const target = _vn0[i] < -1.3 ? -e * _vn0[i] : 0;
+        let j = (target - _u.y) / effMass(b, r, NY);
+        const acc = Math.max(0, _jn[i] + j);
+        j = acc - _jn[i]; _jn[i] = acc;
+        if (j !== 0) { _P.set(0, j, 0); applyImpulse(b, r, _P); }
+        // friction (two tangents), clamped by the Coulomb cone of the accumulated normal impulse
+        const lim = mu * _jn[i];
+        _u.crossVectors(b.w, r).add(b.v);
+        let jx = -_u.x / effMass(b, r, NX);
+        let nx = clamp(_jtx[i] + jx, -lim, lim); jx = nx - _jtx[i]; _jtx[i] = nx;
+        if (jx !== 0) { _P.set(jx, 0, 0); applyImpulse(b, r, _P); }
+        _u.crossVectors(b.w, r).add(b.v);
+        let jz = -_u.z / effMass(b, r, NZ);
+        const nz = clamp(_jtz[i] + jz, -lim, lim); jz = nz - _jtz[i]; _jtz[i] = nz;
+        if (jz !== 0) { _P.set(0, 0, jz); applyImpulse(b, r, _P); }
+      }
+    }
+    b.p.y += maxDepth;                                      // project out of the ground: never sinks in
+    // contact damping (rolling resistance, scrubbing)
+    const ad = Math.max(0, 1 - b.cfg.angDamp * h), ld = Math.max(0, 1 - b.cfg.linDamp * h);
+    b.w.multiplyScalar(ad); b.v.x *= ld; b.v.z *= ld;
+    if (impact > 1.6 && b.clangCd <= 0) {
+      b.clangCd = 0.16;
+      guard(function () {
+        if (window.Sfx && Sfx.clang && (b.kind !== 'helmet' || impact > 2.2)) Sfx.clang();
+        if (impact > 3.2 && window.FX && FX.dust) FX.dust(new V3(b.p.x, 0.02, b.p.z), UP, 0.35);
+      }, 'impact fx');
+    }
+  }
+
+  function stepBody(b, h) {
+    const v = b.v, w = b.w, p = b.p, q = b.q;
+    v.y -= GRAVITY * h;
+    const drag = 1 - 0.04 * h;
+    v.multiplyScalar(drag);
+    p.x += v.x * h; p.y += v.y * h; p.z += v.z * h;
+    _wq.set(w.x, w.y, w.z, 0).multiply(q);
+    q.x += 0.5 * h * _wq.x; q.y += 0.5 * h * _wq.y; q.z += 0.5 * h * _wq.z; q.w += 0.5 * h * _wq.w;
+    q.normalize();
+    if (b.clangCd > 0) b.clangCd -= h;
+    contacts(b, h);
+    // sleep: in contact and (almost) not moving for a short while -> settle flat
+    if (b.contact && v.lengthSq() < 0.0036 && w.lengthSq() < 0.05) b.rest += h; else b.rest = 0;
+    if (b.rest > 0.18 || b.age > 7) trySettle(b);
+  }
+
+  // Snap to a clean resting pose: the face that points down becomes exactly flat on the ground.
+  function trySettle(b) {
+    let restY = b.R;
+    b.q0 = b.q.clone(); b.q1 = b.q.clone();
+    if (b.shape === 'box') {
+      let best = -1, bestAbs = 0, sign = 1;
+      for (let k = 0; k < 3; k++) {
+        _a.set(k === 0 ? 1 : 0, k === 1 ? 1 : 0, k === 2 ? 1 : 0).applyQuaternion(b.q);
+        const ay = Math.abs(_a.y);
+        if (ay > bestAbs) { bestAbs = ay; best = k; sign = _a.y >= 0 ? 1 : -1; _b.copy(_a).multiplyScalar(sign); }
+      }
+      if (bestAbs < 0.82 && b.age < 7) { b.rest = -0.4; return false; }   // propped on an edge: keep simulating
+      _qs.setFromUnitVectors(_b, UP);
+      b.q1.copy(_qs).multiply(b.q).normalize();
+      restY = best === 0 ? b.he.x : (best === 1 ? b.he.y : b.he.z);
+    }
+    b.v.set(0, 0, 0); b.w.set(0, 0, 0);
+    b.asleep = true;
+    b.restY = restY;
+    b.y0 = b.p.y; b.y1 = restY;
+    b.settleT = 0; b.settleDur = 0.16;
+    return true;
+  }
+
+  function syncHolder(b) {
+    b.holder.position.copy(b.p);
+    b.holder.quaternion.copy(b.q);
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------- disposal
+  function probeOf(assetName) {
+    let pr = probes[assetName];
+    if (pr) return pr;
+    pr = { mats: new Set(), geos: new Set() };
+    probes[assetName] = pr;
+    guard(function () {
+      const g = window.Assets && Assets.get ? Assets.get(assetName, { raw: true }) : null;
+      if (!g) return;
+      g.traverse(function (o) {
+        if (!o.isMesh) return;
+        if (o.geometry) pr.geos.add(o.geometry);
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m) { if (m) pr.mats.add(m); });
+      });
+    }, 'probe');
+    return pr;
+  }
+
+  // names of the Assets wrappers inside a prop (Assets.get() tags each wrapper with userData.asset)
+  function assetNames(prop) {
+    const names = [];
+    prop.traverse(function (o) { const a = o.userData && o.userData.asset; if (a && names.indexOf(a) < 0) names.push(a); });
+    return names;
+  }
+
+  // dispose what the prop owns exclusively (per-instance materials / geometry). Resources shared with the Assets cache stay.
+  function disposeProp(b) {
+    const probesOf = b.assets.map(probeOf);
+    const shared = function (set, x) { for (let i = 0; i < probesOf.length; i++) if (probesOf[i][set].has(x)) return true; return false; };
+    b.prop.traverse(function (o) {
+      if (!o.isMesh) return;
+      if (o.geometry && !shared('geos', o.geometry)) o.geometry.dispose();
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m) {
+        if (m && !shared('mats', m)) m.dispose();
+      });
+    });
+  }
+
+  function removeBody(b) {
+    if (b.holder.parent) b.holder.parent.remove(b.holder);
+    b.holder.remove(b.prop);
+    disposeProp(b);
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------- update
+  function installDebug() {
+    if (dbgInstalled || !window.__dbg) return;
+    dbgInstalled = true;
+    window.__dbg.combat = {
+      stats: function () { return stats(); },
+      props: function () {
+        return props.map(function (b) {
+          return { kind: b.kind, p: [b.p.x, b.p.y, b.p.z].map(function (x) { return Math.round(x * 1000) / 1000; }),
+            speed: Math.round(b.v.length() * 1000) / 1000, spin: Math.round(b.w.length() * 1000) / 1000, asleep: b.asleep,
+            age: Math.round(b.age * 100) / 100, he: [b.he.x, b.he.y, b.he.z].map(function (x) { return Math.round(x * 1000) / 1000; }) };
+        });
+      }
+    };
+  }
+
+  function update(dt) {
+    if (!(dt > 0)) return;
+    if (dt > 0.1) dt = 0.1;
+    if (!dbgInstalled) installDebug();
+
+    if (kbWatch.size) stepKnockback(dt);
+
+    for (let i = tasks.length - 1; i >= 0; i--) {
+      const t = tasks[i];
+      t.t -= dt;
+      if (t.t <= 0) { tasks.splice(i, 1); guard(t.fn, 'delayed effect'); }
+    }
+
+    for (let i = props.length - 1; i >= 0; i--) {
+      const b = props[i];
+      b.age += dt;
+      if (!b.asleep) {
+        b.acc += dt;
+        let steps = 0;
+        while (b.acc >= STEP && steps < MAX_STEPS && !b.asleep) { stepBody(b, STEP); b.acc -= STEP; steps++; }
+        if (steps >= MAX_STEPS) b.acc = 0;
+      } else if (b.settleT < b.settleDur) {                 // short ease into the exact resting pose
+        b.settleT = Math.min(b.settleDur, b.settleT + dt);
+        const k = b.settleT / b.settleDur, e = k * k * (3 - 2 * k);
+        b.q.copy(b.q0).slerp(b.q1, e);
+        b.p.y = b.y0 + (b.y1 - b.y0) * e;
+      }
+      let done = false;
+      if (b.age > LIFE) {                                   // lifetime over: sink into the grass, then remove
+        if (!b.asleep) { b.v.set(0, 0, 0); b.w.set(0, 0, 0); b.asleep = true; b.settleT = b.settleDur; b.restY = b.p.y; }
+        b.sink += dt * (b.fast ? 4 : 1) / SINK_TIME;
+        if (b.sink >= 1) done = true;
+        else { const k = b.sink; b.holder.position.set(b.p.x, b.p.y - b.sinkTotal * k * k * (3 - 2 * k), b.p.z); b.holder.quaternion.copy(b.q); continue; }
+      }
+      if (done) { removeBody(b); props.splice(i, 1); continue; }
+      syncHolder(b);
+    }
+  }
+
+  function clear() {
+    for (let i = 0; i < props.length; i++) removeBody(props[i]);
+    props.length = 0;
+    tasks.length = 0;
+    kbWatch.clear();
+  }
+
+  function stats() {
+    let awake = 0;
+    for (let i = 0; i < props.length; i++) if (!props[i].asleep) awake++;
+    return { props: props.length, awake: awake, tasks: tasks.length, spawned: propsSpawned };
+  }
+
+  // world-space description of the zones of an enemy (debug / QA drawing)
+  function zoneShapes(enemy) {
+    const rig = rigOf(enemy);
+    const out = { s: rig.s, H: rig.H, bones: rig.bones, head: null, torso: null, arms: [], legs: [], pelvisY: null };
+    if (!rig.bones) return out;
+    const s = rig.s;
+    worldPos(rig.head, _a);
+    if (rig.neck && rig.neck !== rig.head) { worldPos(rig.neck, _b); _up.subVectors(_a, _b); } else _up.set(0, 0, 0);
+    if (_up.lengthSq() < 1e-6) _up.set(0, 1, 0); else _up.normalize();
+    out.head = { c: _hc.copy(_a).addScaledVector(_up, HEAD_UP * s).toArray(), r: HEAD_R * s };
+    worldPos(rig.hips, _c);
+    const top = (rig.neck && rig.neck !== rig.hips) ? worldPos(rig.neck, _d) : _a;
+    out.torso = { a: _c.toArray(), b: top.toArray(), r: TORSO_R * s };
+    out.pelvisY = _c.y - PELVIS_DROP * s;
+    rig.arms.forEach(function (ch) { out.arms.push({ pts: ch.map(function (o) { return worldPos(o, new V3()).toArray(); }), r: ARM_R * s }); });
+    rig.legs.forEach(function (ch) { out.legs.push({ pts: ch.map(function (o) { return worldPos(o, new V3()).toArray(); }), r: LEG_R * s }); });
+    return out;
+  }
+
   window.Combat = {
-    update: function (dt) {}
+    zoneFor: zoneFor,
+    damageFor: damageFor,
+    onHit: function (enemy, hit, dir) { return guard(function () { return onHit(enemy, hit, dir); }, 'onHit') || 'hit'; },
+    onKill: function (enemy, hit, dir) { return guard(function () { return onKill(enemy, hit, dir); }, 'onKill') || 'kill'; },
+    update: update,
+    clear: clear,
+    stats: stats,
+    zoneShapes: zoneShapes,
+    props: props,
+    DAMAGE: DAMAGE
   };
 })();
 //# sourceURL=src/js/combat.js
 </script>
 <script>
-/* enemies.js — window.Knight, window.Enemies (extracted verbatim from the single-file build)
-   Boss lives in boss.js, wave flow in waves.js. */
-function cosTest(facing, toPlayer) { const n = toPlayer.clone().normalize(); return facing.x*n.x + facing.y*n.y + facing.z*n.z; }
-(() => {
+/* enemies.js — window.Knight, window.Enemies  (Worker C1, docs/FIX_PLAN.md "Knight and Enemies", diagnosis 1.2 / 1.3 / 1.6)
 
-    // Knight enemy class
-    class Knight {
-        constructor() {
-            this.mesh = window.Assets.get('knight');
-            this.mesh.userData = { hp: 40, type: 'knight' };
-            const _bb = new THREE.Box3().setFromObject(this.mesh);
-            this._top = _bb.max.y; this._mid = (_bb.max.y + _bb.min.y) / 2;
-          
-            // Helmet
-            const helmet = window.Assets.get('knight_helmet1');
-            helmet.scale.set(0.9, 0.9, 0.9);
-            helmet.position.set(0, this._top * 0.92, 0);
-            this.mesh.add(helmet);
-            this.helmet = helmet;
-            
-            // Shield
-            const shield = window.Assets.get('knight_shield');
-            shield.scale.set(0.8, 0.8, 0.8);
-            shield.position.set(-this._top * 0.32, this._mid, 0);
-            shield.rotation.z = Math.PI / 2;
-            this.mesh.add(shield);
-            this.shield = shield;
-            
-            // Sword
-            const sword = window.Assets.get('knight_sword');
-            sword.scale.set(0.8, 0.8, 0.8);
-            sword.position.set(this._top * 0.32, this._mid, 0);
-            sword.rotation.z = -Math.PI / 2;
-            this.mesh.add(sword);
-            this.sword = sword;
-            
-            // Movement and state
-            this.speed = 2.2;
-            this.isAttacking = false;
-            this.isStrafing = false;
-            this.strafeTime = 0;
-            this.attackTime = 0;
-            this.swingCooldown = 0;
-            this.state = 'walking';
-            this.lastStrafe = 0;
-            this.lookAt = new THREE.Vector3();
-            this.shieldUp = true;
-            this.hasSwung = false;
-            this._phase0 = Math.random() * 6.28;
+   Animated knights: a skinned Assets.get('knight') clone driven by a THREE.AnimationMixer, with the helmet / sword / shield
+   mounted ON BONES (Head, Palm.R, LowerArm.L), a small state machine, steering around World.colliders, and a death lifecycle.
+
+   ---- class Knight (window.Knight; boss.js extends it) -------------------------------------------------------------------
+   new Knight(opts?)   opts (all optional):
+        scale         height multiplier of the 1.8 m knight (default 1). Gear, speeds, ranges and hit zones follow it.
+        hp / maxHp    default 100
+        tint          THREE.Color-able, multiplied into this knight's own copy of the 'Armor' material (default: slight random shade)
+        speedScale    multiplier of the walk / run speed
+        damage        player damage per sword hit (default 15), range / reach scale with `scale`
+        helmet:false  no helmet;  gear:{helmet|sword|shield:{asset, scale, pos, rot, bone}}  overrides the fit (see GEAR below)
+        type          'knight' (default)
+   Fields: mesh (root Group in the scene, mesh.userData.enemy = this), model (the Assets wrapper), type, hp, maxHp, dead, state,
+        currentClip, height, bones {head,torso,hips,handR,handL,armL,armR,legL,legR}, helmet, sword, shield (Assets wrappers
+        parented to bones), mixer, actions{} (upper/full-body actions by clip name), lowerActions{} (lower-body layer),
+        knockback (Vector3, m/s), knockbackScale.
+   States: approach | combatIdle | windup | attack | recover | stagger | dead.
+   Animation is layered: the LOWER body (hips, legs, feet) and the UPPER body (spine, head, arms, hands) each crossfade (0.25 s)
+        on their own, so a knight stands planted (Idle_swordRight legs) while its upper body plays Run_swordAttack.
+   Hooks for subclasses (Boss): override any of
+        updateAI(dt, ctx)        state machine tick (ctx = {dist, dx, dz, nx, nz, wave})
+        onEnter(state, prev)     called after every setState()
+        startWindup()/startStrike()/onDamageFrame(): the damage frame, default = sword reach test + Player.hurt(damage, this)
+        speedFor(dist, wave)     {gait:'Walking'|'Run', speed} while approaching
+        die(hit) / takeHit(hit)  call super
+   Public: takeHit({damage, zone, point, dir}), die(hit), hurt(damage) (legacy), applyImpulse(Vector3), setState(name),
+        update(dt, playerPos, waveNumber), dispose().
+   Knockback protocol with combat.js: Combat calls enemy.applyImpulse(Vector3) (m/s); the knight owns decay and movement.
+   Loose gear: combat.js re-parents helmet / sword / shield into physics holders on death (userData.loose = true); after that this
+        module never touches them again.
+
+   ---- Enemies --------------------------------------------------------------------------------------------------------------
+   list, add(e), update(dt, playerPos), rayTargets(), aliveCount(), findByObject(obj), clear(), remove(e), hurt(obj, dmg, point)
+   Debug (?debug=1, installed lazily): __dbg.knight.pose(i, state, progress), .gear(i), .info(i).
+*/
+(() => {
+  'use strict';
+
+  const V3 = THREE.Vector3;
+  const Q = THREE.Quaternion;
+  const TAU = Math.PI * 2;
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const smooth = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+  const angDiff = (a, b) => { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU; else if (d < -Math.PI) d += TAU; return d; };
+
+  // ------------------------------------------------------------------------------------------------------------------------
+  // tuning
+  // ------------------------------------------------------------------------------------------------------------------------
+  const MODEL_HEIGHT = 1.8;
+  const FADE = 0.25;                                  // crossfade between clips (s)
+  const ATTACK_CLIP = 'Run_swordAttack';
+  const IDLE_CLIP = 'Idle_swordRight';
+  // ground speed (m/s) of the clip at the 1.8 m model, measured from the planted foot: matching it stops the feet from skating
+  const CLIP_SPEED = { Walking: 0.92, Run: 3.6 };
+  // clip time (s) of the sword attack: raised sword -> strike -> end. The telegraph pose is the raised sword (t ~ 0.15).
+  const ATK_RAISE = 0.17, ATK_DAMAGE_T = 0.36, ATK_STRIKE_END = 0.52, ATK_END = 0.82;
+  const LINGER = 8, SINK = 2, SINK_DEPTH = 0.55;      // corpse: stays 8 s, sinks for 2 s, then is removed
+  const BODY_R = 0.42;                                // collision radius of a 1.8 m knight
+  const ARENA = 58;
+
+  // Gear fit, measured on the 1.8 m knight. pos is in METRES inside the bone's own axes (x, y, z of the bone), rot in radians
+  // (bone-local), scale in metres per native glTF unit. Everything is multiplied by the knight's scale at mount time.
+  //   Head      axes ~ world axes at rest, helmet front (+Z, nasal bar) = face direction; head box (0.38 x 0.48 x 0.44 m).
+  //   Palm.R    local X is the fist's long axis (the four fingers stack along it): the grip axis. Blade out of the fist = -X.
+  //   LowerArm.L local Y runs along the forearm, +Z points away from the body at rest, so the shield face (+Z) faces outward;
+  //             it is turned 0.75 rad about the forearm so the face also looks forward and reads from the front.
+  const GEAR = {
+    helmet: { asset: 'knight_helmet1', bone: 'Head', pos: [0, 0.235, -0.032], rot: [0, 0, 0], scale: 0.29 },
+    sword: { asset: 'knight_sword', bone: 'Palm.R', pos: [0.04, 0.025, -0.02], rot: [0, 0, Math.PI / 2], scale: 0.30 },
+    shield: { asset: 'knight_shield', bone: 'LowerArm.L', pos: [0.06, 0.17, 0.17], rot: [0, 0.75, 0], scale: 0.30 },
+  };
+
+  // upper-body tracks: spine, head, arms, hands, fingers. Everything else (Body, legs, feet) is the lower body.
+  const UPPER_RE = /^(Abdomen|Torso|Neck|Head|Shoulder|UpperArm|LowerArm|Palm|MiddleHand|Fingers|Thumb)/;
+
+  // scratch
+  const _v1 = new V3(), _v2 = new V3(), _q1 = new Q(), _q2 = new Q();
+  const AX = new V3(1, 0, 0), AZ = new V3(0, 0, 1);
+
+  // Split every clip once into a lower and an upper body clip (clips are shared by all knights).
+  let clipSets = null;
+  function getClipSets() {
+    if (clipSets) return clipSets;
+    clipSets = {};
+    for (const c of Assets.clips('knight')) {
+      const up = c.tracks.filter((t) => UPPER_RE.test(t.name));
+      const lo = c.tracks.filter((t) => !UPPER_RE.test(t.name));
+      clipSets[c.name] = {
+        full: c,
+        upper: new THREE.AnimationClip(c.name + '.upper', c.duration, up),
+        lower: new THREE.AnimationClip(c.name + '.lower', c.duration, lo),
+      };
+    }
+    return clipSets;
+  }
+
+  function sceneOf() {
+    return (window.Game && Game.scene) || (window.Main && Main.scene) || null;
+  }
+
+  // ------------------------------------------------------------------------------------------------------------------------
+  // Knight
+  // ------------------------------------------------------------------------------------------------------------------------
+  class Knight {
+    constructor(opts) {
+      opts = opts || {};
+      this.opts = opts;
+      this.type = opts.type || 'knight';
+      this.sizeScale = opts.scale > 0 ? opts.scale : 1;
+      this.height = MODEL_HEIGHT * this.sizeScale;
+      this.maxHp = opts.maxHp > 0 ? opts.maxHp : (opts.hp > 0 ? opts.hp : 100);
+      this.hp = opts.hp > 0 ? opts.hp : this.maxHp;
+      this.dead = false;
+      this.damage = opts.damage > 0 ? opts.damage : 15;
+      this.speedScale = opts.speedScale > 0 ? opts.speedScale : 1;
+      this.knockbackScale = typeof opts.knockbackScale === 'number' ? opts.knockbackScale : 1;
+      this.knockback = new V3();
+      this.waveNumber = 1;
+      this.displayName = opts.displayName || null;
+
+      // timings (s) and ranges (m); subclasses may change them after super()
+      this.windupTime = 0.7;                      // telegraph: the sword rises and holds (>= 0.45 s)
+      this.strikeTime = 0.38;
+      this.recoverTime = 0.45;
+      this.attackStart = 2.1 * this.sizeScale;    // distance (to the player) that starts a windup
+      this.attackReach = 2.5 * this.sizeScale;    // distance at the damage frame that still connects (the strike lunges ~0.5 m)
+      this.lungeSpeed = 2.6 * this.sizeScale;     // m/s forward during the first part of the strike
+      this.attackCone = 0.35;                     // cos of the half angle in front of the knight that connects
+      this.stopDist = 1.55 * this.sizeScale;      // never walk closer than this
+      this.turnRate = 6.0;                        // rad/s while moving
+      this.turnRateAttack = 2.6;                  // rad/s during windup / strike
+
+      // randomised so a crowd does not move in lockstep
+      this._speedVar = 0.92 + Math.random() * 0.16;
+      this._idleWait = 0.25 + Math.random() * 0.3;
+
+      // ---- scene graph ---------------------------------------------------------------------------------------------
+      this.mesh = new THREE.Group();
+      this.mesh.name = 'knight';
+      this.mesh.userData.enemy = this;
+      this.mesh.userData.type = this.type;
+      const model = Assets.get('knight', { height: this.height, cloneMaterials: true });
+      if (!model) throw new Error('Knight: asset "knight" is not available (Assets.load() not finished?)');
+      this.model = model;
+      this.mesh.add(model);
+
+      this._owned = new Set();                    // materials cloned for this knight (disposed with it)
+      this._skinned = [];
+      model.traverse((o) => {
+        if (o.isMesh) {
+          (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => this._owned.add(m));
+          if (o.isSkinnedMesh) this._skinned.push(o);
         }
-        
-        update(dt, playerPos, waveNumber) {
-            this.swingCooldown -= dt;
-            const speed = waveNumber % 2 === 0 ? 3.4 : 2.2;
-            this.attackTime += dt;
-            
-            if (this.isAttacking) {
-                if (this.attackTime > 0.8) {
-                    this.state = 'attack';
-                }
-                if (this.attackTime > 1.6) {
-                    this.isAttacking = false;
-                    this.attackTime = 0;
-                    this.state = 'walking';
-                    this.shieldUp = true;
-                    this.hasSwung = false;
-            this._phase0 = Math.random() * 6.28;
-                }
-            } else {
-                // Strafing logic
-                if (this.lastStrafe < 2 || this.lastStrafe > 4) {
-                    this.isStrafing = true;
-                    this.strafeTime += dt;
-                    if (this.strafeTime > 1) {
-                        this.isStrafing = false;
-                        this.strafeTime = 0;
-                        this.lastStrafe = 0;
-                    }
-                } else {
-                    this.lastStrafe += dt;
-                }
-                
-                const dist = this.mesh.position.distanceTo(playerPos);
-                if (dist < 2.4) {
-                    this.isAttacking = true;
-                    this.attackTime = 0;
-                    this.hasSwung = false;
-                    this.state = 'telegraph';
-                } else {
-                    this.state = 'walking';
-                }
-            }
-            
-            // Look at the player
-            this.lookAt.copy(playerPos).sub(this.mesh.position).normalize();
-            this.mesh.lookAt(playerPos);
-            
-            // Movement — keep melee separation
-            const gap = this.mesh.position.distanceTo(playerPos);
-            if (gap > 1.4) {
-                const moveDir = this.lookAt.clone().multiplyScalar(Math.min(speed * dt, gap - 1.4));
-                this.mesh.position.add(moveDir);
-            }
-            
-            // procedural march: bob
-            const _t = performance.now() / 1000;
-            this.mesh.position.y = Math.abs(Math.sin(_t * 6 + (this._phase0 || 0))) * 0.05;
-            // Shield animation
-            if (this.state === 'walking' || this.isStrafing) {
-                this.shield.rotation.x = 0.7;
-                this.sword.rotation.x = 0.3;
-            } else if (this.state === 'telegraph') {
-                this.shield.rotation.x = 1.5;
-                this.sword.rotation.x = 1.0;
-            } else if (this.state === 'attack') {
-                this.shield.rotation.x = 1.5;
-                this.sword.rotation.x = -0.8;
-            }
-            
-            // Striking logic
-            if (this.state === 'attack' && this.attackTime > 1.2 && !this.hasSwung) {
-                this.hasSwung = true;
-                this.swing();
-            }
-        }
-        
-        swing() {
-            window.Sfx.swing();
-            const playerPos = window.Game.playerObj.position;
-            const from = new THREE.Vector3(this.mesh.position.x, this._mid, this.mesh.position.z);
-            const toPlayer = playerPos.clone().sub(from);
-            const dist = toPlayer.length();
-            if (dist < 3.2 && cosTest(this.lookAt, toPlayer) > 0.2) {
-                window.Player.hurt(15);
-            }
-        }
-        
-        hurt(damage) {
-            this.mesh.userData.hp -= damage;
-            if (this.mesh.userData.hp <= 0) {
-                this.die();
-            }
-        }
-        
-        die() {
-            // Ragdoll lite effect
-            this.mesh.rotation.x = Math.PI / 2;
-            this.mesh.rotation.z = Math.PI / 4;
-            this.mesh.userData.dying = true;
-            this.mesh.userData.fade = 1.0;
-            this.mesh.userData.fadeSpeed = 0.02;
-        }
+      });
+      this._tintArmor(opts.tint);
+
+      const B = Assets.bones(model);
+      this._bonesByName = B;
+      this.bones = {
+        head: B['Head'], torso: B['Torso'], hips: B['Hips'], handR: B['Palm.R'], handL: B['Palm.L'],
+        armL: B['LowerArm.L'], armR: B['LowerArm.R'], legL: B['UpperLeg.L'], legR: B['UpperLeg.R'],
+      };
+
+      // gear is mounted on bones while the model is at the origin (its bone matrices are valid, scale 1)
+      this.mesh.updateMatrixWorld(true);
+      this.helmet = opts.helmet === false ? null : this._mount('helmet');
+      this.sword = this._mount('sword');
+      this.shield = this._mount('shield');
+
+      // ---- animation -----------------------------------------------------------------------------------------------
+      this._buildAnimation();
+
+      // ---- state ---------------------------------------------------------------------------------------------------
+      this.state = 'approach';
+      this.prevState = null;
+      this.stateT = 0;
+      this.gait = 'Walking';
+      this.currentClip = 'Walking';
+      this.hold = false;                          // debug: AI + movement frozen, animation keeps running
+      this._cool = 0;                             // seconds before the next windup is allowed
+      this._hitDone = false;
+      this._flinch = 0;                           // procedural hit reaction 1 -> 0
+      this._flinchDir = new V3();
+      this._flinchPow = 0.4;
+      this._vel = new V3();
+      this._speed = 0;
+      this._yaw = 0;
+      this._stepPhase = 0;
+      this._t = 0;
+      this._deadT = 0;
+      this._removed = false;
+      this._targetYaw = null;
+      this._ctx = { dist: 99, dx: 0, dz: 1, nx: 0, nz: 1, wave: 1, dy: 0 };
+      this._playStateAnim('approach', 0);
     }
 
-    window.Knight = Knight;
+    // -------------------------------------------------------------------------------------------------------------------
+    // construction helpers
+    // -------------------------------------------------------------------------------------------------------------------
+    _tintArmor(tint) {
+      const shade = 0.9 + Math.random() * 0.2;
+      const col = tint !== undefined && tint !== null ? new THREE.Color(tint) : null;
+      this._owned.forEach((m) => {
+        if (m.name !== 'Armor' || !m.color) return;
+        if (col) m.color.multiply(col); else m.color.multiplyScalar(shade);
+      });
+    }
 
-    // Enemies manager
-    window.Enemies = {
-        list: [],
-        add(knight) {
-            // ROOT CAUSE FIX: a knight JS object existing in the list is NOT enough —
-            // the renderer only draws mesh objects actually parented to the scene graph.
-            // Before this fix the list filled up forever (all raycasts, bboxes, HP reads
-            // worked) but the renderer NEVER painted a single pixel of any knight, because
-            // no one ever called scene.add(knight.mesh). Use window.Game.scene which
-            // init() stored — no need to thread 'scene' through this closure.
-            window.Game.scene.add(knight.mesh);
-            this.list.push(knight);
-        },
-        update(dt, playerPos) {
-            for (let i = this.list.length - 1; i >= 0; i--) {
-                const enemy = this.list[i];
-                if (enemy.mesh.userData.dying) {
-                    enemy.mesh.userData.fade -= enemy.mesh.userData.fadeSpeed;
-                    if (enemy.mesh.userData.fade <= 0) {
-                        this.list.splice(i, 1);
-                    }
-                } else {
-                    enemy.update(dt, playerPos, window.Waves.current);
-                }
-            }
-        },
-        rayTargets() {
-            return this.list.map(e => e.mesh).filter(m => !m.userData.dying);
-        },
-        hurt(obj, damage) {
-            if (obj.userData.hp !== undefined) {
-                obj.userData.hp -= damage;
-                if (obj.userData.hp <= 0) {
-                    const enemy = this.list.find(e => e.mesh === obj);
-                    if (enemy && !enemy.mesh.userData.dying) enemy.die();
-                }
-                if (this.list.every(e => e.mesh.userData.dying) && window.Waves && window.Waves.complete) {
-                    window.Waves.complete();
-                }
-            }
+    _bone(name) {
+      return this._bonesByName[name] || Assets.bone(this.model, name);
+    }
+
+    // Place a gear asset on a bone. Spec values are metres at the 1.8 m size; bone-local units are converted through the bone's
+    // world scale (the glTF armature node carries x100, the wrapper ~0.32 on top), so the gear keeps its size in the world.
+    _mount(kind) {
+      const spec = Object.assign({}, GEAR[kind], this.opts.gear && this.opts.gear[kind]);
+      const bone = this._bone(spec.bone);
+      if (!bone) { console.warn('[Knight] no bone "' + spec.bone + '" for the ' + kind); return null; }
+      const obj = Assets.get(spec.asset, { raw: true });
+      if (!obj) return null;
+      obj.name = kind;
+      bone.getWorldScale(_v1);
+      const k = this.sizeScale / _v1.x;           // bone-local units per metre of a 1.8 m knight
+      obj.position.set(spec.pos[0] * k, spec.pos[1] * k, spec.pos[2] * k);
+      obj.rotation.set(spec.rot[0], spec.rot[1], spec.rot[2]);
+      obj.scale.setScalar(spec.scale * k);
+      bone.add(obj);
+      obj.userData.gearKind = kind;
+      return obj;
+    }
+
+    _buildAnimation() {
+      const sets = getClipSets();
+      this.mixer = new THREE.AnimationMixer(this.model);
+      this.actions = {};                          // upper body (or full body for Death), keyed by clip name
+      this.lowerActions = {};                     // lower body layer
+      this._cur = { upper: null, lower: null };
+      for (const name of ['Walking', 'Run', IDLE_CLIP, ATTACK_CLIP, 'Death']) {
+        const set = sets[name];
+        if (!set) { console.warn('[Knight] missing clip ' + name); continue; }
+        const full = name === 'Death';
+        const up = this.mixer.clipAction(full ? set.full : set.upper);
+        const lo = full ? null : this.mixer.clipAction(set.lower);
+        const once = name === ATTACK_CLIP || full;
+        for (const a of [up, lo]) {
+          if (!a) continue;
+          a.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
+          a.clampWhenFinished = once;
         }
-    };
+        this.actions[name] = up;
+        if (lo) this.lowerActions[name] = lo;
+      }
+    }
 
+    // Start `name` on one layer, crossfading from whatever played there. Returns the action.
+    _play(layer, name, fade) {
+      const table = layer === 'lower' ? this.lowerActions : this.actions;
+      const a = table[name];
+      if (!a) return null;
+      const cur = this._cur[layer];
+      if (cur === a) return a;
+      a.enabled = true;
+      a.reset();
+      a.setEffectiveTimeScale(1);
+      a.setEffectiveWeight(1);
+      if (cur && fade > 0) a.crossFadeFrom(cur, fade, false);
+      else { if (cur) cur.stop(); }
+      a.play();
+      this._cur[layer] = a;
+      return a;
+    }
+
+    _playBoth(name, fade) {
+      this._play('lower', name, fade);
+      return this._play('upper', name, fade);
+    }
+
+    // Choose the clips of a state (called from setState()).
+    _playStateAnim(state, fade) {
+      switch (state) {
+        case 'approach': this._playBoth(this.gait, fade); this.currentClip = this.gait; break;
+        case 'combatIdle': case 'stagger': this._playBoth(IDLE_CLIP, fade); this.currentClip = IDLE_CLIP; break;
+        case 'windup': {
+          this._play('lower', IDLE_CLIP, fade);
+          const a = this._play('upper', ATTACK_CLIP, fade);
+          if (a) a.setEffectiveTimeScale(0);      // its time is driven by the state timer (telegraph / strike / recover)
+          this.currentClip = ATTACK_CLIP;
+          break;
+        }
+        case 'dead': {
+          const d = this.actions['Death'];
+          if (!d) break;
+          const l = this._cur.lower, u = this._cur.upper;
+          d.enabled = true; d.reset(); d.setEffectiveTimeScale(1); d.setEffectiveWeight(1);
+          d.fadeIn(0.12); d.play();
+          if (l) l.fadeOut(0.12);
+          if (u) u.fadeOut(0.12);
+          this._cur.lower = d; this._cur.upper = d;
+          this.currentClip = 'Death';
+          break;
+        }
+        default: break;
+      }
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------
+    // state machine
+    // -------------------------------------------------------------------------------------------------------------------
+    setState(name) {
+      if (this.dead && name !== 'dead') return;
+      const prev = this.state;
+      this.prevState = prev;
+      this.state = name;
+      this.stateT = 0;
+      if (name === 'windup') { this._hitDone = false; }
+      if (name === 'approach') this._playStateAnim('approach', FADE);
+      else if (name === 'combatIdle' || name === 'stagger') this._playStateAnim(name, FADE);
+      else if (name === 'windup') this._playStateAnim('windup', FADE * 0.8);
+      else if ((name === 'attack' || name === 'recover') && this._cur.upper !== this.actions[ATTACK_CLIP]) this._playStateAnim('windup', 0.1);   // jumped in (debug / subclass)
+      else if (name === 'dead') this._playStateAnim('dead', 0.12);
+      this.onEnter(name, prev);
+    }
+
+    onEnter(state, prev) { /* hook for subclasses */ }
+
+    // gait + speed (m/s) while approaching
+    speedFor(dist, wave) {
+      const w = Math.max(1, wave || 1);
+      const k = this._speedVar * this.speedScale;
+      const walk = (1.25 + 0.12 * (w - 1)) * k;
+      const run = (2.9 + 0.2 * (w - 1)) * k;
+      const runDist = w >= 3 ? 3.4 * this.sizeScale : (w === 2 ? 9 : 11) * this.sizeScale;
+      // hysteresis so the clip does not flicker around the threshold
+      const wantRun = this.gait === 'Run' ? dist > runDist * 0.75 : dist > runDist;
+      const slow = clamp((dist - this.stopDist) / (1.6 * this.sizeScale), 0.45, 1);
+      return wantRun ? { gait: 'Run', speed: run * slow } : { gait: 'Walking', speed: walk * Math.min(1, slow + 0.25) };
+    }
+
+    updateAI(dt, ctx) {
+      const st = this.state;
+      this._cool -= dt;
+      const dist = ctx.dist;
+      switch (st) {
+        case 'approach': {
+          if (dist <= this.attackStart) { this._idleWait = 0.2 + Math.random() * 0.35; this.setState('combatIdle'); }
+          break;
+        }
+        case 'combatIdle': {
+          if (dist > this.attackStart * 1.35) { this.setState('approach'); break; }
+          if (this.stateT >= this._idleWait && this._cool <= 0 && this._facingError(ctx) < 0.6) this.startWindup();
+          break;
+        }
+        case 'windup': {
+          if (this.stateT >= this.windupTime) this.startStrike();
+          break;
+        }
+        case 'attack': {
+          const t = this._attackClipT();
+          if (!this._hitDone && t >= ATK_DAMAGE_T) { this._hitDone = true; this.onDamageFrame(ctx); }
+          if (this.stateT >= this.strikeTime) this.setState('recover');
+          break;
+        }
+        case 'recover': {
+          if (this.stateT >= this.recoverTime) { this._cool = 0.25 + Math.random() * 0.5; this._idleWait = 0.1; this.setState('combatIdle'); }
+          break;
+        }
+        case 'stagger': {
+          if (this.stateT >= 0.3) {
+            this._cool = Math.max(this._cool, 0.3);
+            this.setState(dist <= this.attackStart * 1.2 ? 'combatIdle' : 'approach');
+          }
+          break;
+        }
+        default: break;
+      }
+    }
+
+    startWindup() {
+      this.windupTime = Math.max(0.5, 0.72 - 0.04 * (Math.max(1, this.waveNumber) - 1));
+      this.setState('windup');
+    }
+
+    startStrike() {
+      this.setState('attack');
+      if (window.Sfx && Sfx.swing) { try { Sfx.swing(); } catch (e) { /* ignore */ } }
+    }
+
+    // Damage frame of the sword swing: only when the player is in front and within reach.
+    onDamageFrame(ctx) {
+      const pp = window.Game && Game.playerObj ? Game.playerObj.position : null;
+      if (!pp || !window.Player || !Player.hurt) return;
+      const p = this.mesh.position;
+      const dx = pp.x - p.x, dz = pp.z - p.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > this.attackReach) return;
+      const fx = Math.sin(this._yaw), fz = Math.cos(this._yaw);
+      const cos = dist > 1e-4 ? (fx * dx + fz * dz) / dist : 1;
+      if (cos < this.attackCone) return;
+      if (window.Sfx && Sfx.clang && Math.random() < 0.5) { try { Sfx.clang(); } catch (e) { /* ignore */ } }
+      Player.hurt(this.damage, this);
+    }
+
+    // Clip time (s) of the attack animation for the current state / timer.
+    _attackClipT() {
+      switch (this.state) {
+        case 'windup': {
+          const u = clamp(this.stateT / this.windupTime, 0, 1);
+          // rise quickly to the raised sword, then creep a little further (tension) until the strike
+          return u < 0.4 ? lerp(0.0, 0.15, smooth(u / 0.4)) : lerp(0.15, ATK_RAISE, (u - 0.4) / 0.6);
+        }
+        case 'attack': {
+          const u = clamp(this.stateT / this.strikeTime, 0, 1);
+          return lerp(ATK_RAISE, ATK_STRIKE_END, Math.pow(u, 1.25));
+        }
+        case 'recover': {
+          const u = clamp(this.stateT / this.recoverTime, 0, 1);
+          return lerp(ATK_STRIKE_END, ATK_END, smooth(u));
+        }
+        default: return 0;
+      }
+    }
+
+    _facingError(ctx) {
+      return Math.abs(angDiff(this._yaw, Math.atan2(ctx.dx, ctx.dz)));
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------
+    // per-frame update
+    // -------------------------------------------------------------------------------------------------------------------
+    update(dt, playerPos, waveNumber) {
+      if (this._removed) return;
+      if (waveNumber) this.waveNumber = waveNumber;
+      this._t += dt;
+      if (this.dead) { this._updateDead(dt); return; }
+
+      const p = this.mesh.position;
+      const ctx = this._ctx;
+      if (playerPos) {
+        ctx.dx = playerPos.x - p.x; ctx.dz = playerPos.z - p.z; ctx.dy = playerPos.y - p.y;
+        ctx.dist = Math.hypot(ctx.dx, ctx.dz);
+        if (ctx.dist > 1e-5) { ctx.nx = ctx.dx / ctx.dist; ctx.nz = ctx.dz / ctx.dist; }
+      }
+      ctx.wave = this.waveNumber;
+
+      if (!this.hold) {
+        this.stateT += dt;
+        this.updateAI(dt, ctx);
+        this._move(dt, ctx);
+        this._turn(dt, ctx);
+      } else {
+        this._decayKnockback(dt);
+      }
+      this._animate(dt, ctx);
+    }
+
+    _turn(dt, ctx) {
+      if (ctx.dist < 1e-3) return;
+      const rate = (this.state === 'windup' || this.state === 'attack' || this.state === 'recover') ? this.turnRateAttack : this.turnRate;
+      const err = angDiff(this._yaw, Math.atan2(ctx.dx, ctx.dz));
+      this._yaw += clamp(err, -rate * dt, rate * dt);
+      this.mesh.rotation.y = this._yaw;
+    }
+
+    _decayKnockback(dt) {
+      const k = Math.exp(-6 * dt);
+      this.knockback.x *= k; this.knockback.z *= k;
+      if (Math.abs(this.knockback.x) < 1e-3) this.knockback.x = 0;
+      if (Math.abs(this.knockback.z) < 1e-3) this.knockback.z = 0;
+    }
+
+    // steering (approach only) + knockback + collisions
+    _move(dt, ctx) {
+      const p = this.mesh.position;
+      const S = this.sizeScale;
+      const R = BODY_R * S;
+      let tx = 0, tz = 0;
+
+      if (this.state === 'approach') {
+        const sp = this.speedFor(ctx.dist, this.waveNumber);
+        if (sp.gait !== this.gait) { this.gait = sp.gait; this._playBoth(this.gait, FADE); this.currentClip = this.gait; }
+        this._speed = sp.speed;
+        let dx = ctx.nx, dz = ctx.nz;
+        const cols = window.World && World.colliders;
+        // trees and rocks: steer around the ones in the way (tangent away from the obstacle, on the side of the target)
+        if (cols) {
+          for (let i = 0; i < cols.length; i++) {
+            const c = cols[i];
+            const ox = p.x - c.x, oz = p.z - c.z;
+            const d = Math.hypot(ox, oz);
+            const reach = c.r + R + 1.3 * S;
+            if (d >= reach || d < 1e-4) continue;
+            const nx = ox / d, nz = oz / d;
+            const ahead = -(nx * ctx.nx + nz * ctx.nz);      // > 0: the obstacle lies between us and the player
+            if (ahead < -0.25) continue;
+            let tgx = -nz, tgz = nx;
+            if (tgx * ctx.nx + tgz * ctx.nz < 0) { tgx = -tgx; tgz = -tgz; }
+            const w = clamp(1 - (d - c.r - R) / (1.3 * S), 0, 1);
+            dx += (tgx * 1.4 + nx * 0.7) * w;
+            dz += (tgz * 1.4 + nz * 0.7) * w;
+          }
+        }
+        // other knights: keep apart
+        const list = window.Enemies ? Enemies.list : null;
+        if (list) {
+          const sep = 1.25 * S;
+          for (let i = 0; i < list.length; i++) {
+            const o = list[i];
+            if (o === this || o.dead || !o.mesh) continue;
+            const ox = p.x - o.mesh.position.x, oz = p.z - o.mesh.position.z;
+            const d = Math.hypot(ox, oz);
+            const so = sep * 0.5 * (1 + (o.sizeScale || 1));
+            if (d >= so || d < 1e-4) continue;
+            const w = (so - d) / so * 1.6;
+            dx += ox / d * w; dz += oz / d * w;
+          }
+        }
+        const l = Math.hypot(dx, dz);
+        if (l > 1e-5) { dx /= l; dz /= l; }
+        tx = dx * this._speed; tz = dz * this._speed;
+        // feet: playback rate follows the ground speed, so the stride matches the movement
+        const ts = this._speed / (CLIP_SPEED[this.gait] * S);
+        if (this._cur.lower) this._cur.lower.setEffectiveTimeScale(ts);
+        if (this._cur.upper) this._cur.upper.setEffectiveTimeScale(ts);
+      } else {
+        this._speed = 0;
+        if (this.state === 'attack' && ctx.dist > this.stopDist * 1.05) {
+          // a short step into the swing so the blade actually reaches the player
+          const f = clamp(1 - this.stateT / (this.strikeTime * 0.7), 0, 1);
+          tx = ctx.nx * this.lungeSpeed * f; tz = ctx.nz * this.lungeSpeed * f;
+        }
+      }
+
+      // velocity eases toward the target (no jerks when the state changes)
+      const a = 1 - Math.exp(-9 * dt);
+      this._vel.x += (tx - this._vel.x) * a;
+      this._vel.z += (tz - this._vel.z) * a;
+
+      p.x += (this._vel.x + this.knockback.x) * dt;
+      p.z += (this._vel.z + this.knockback.z) * dt;
+      this._decayKnockback(dt);
+
+      // collisions: colliders, other knights, the player, the arena edge
+      this._resolve(p, R, ctx);
+      p.y = 0;
+    }
+
+    _resolve(p, R, ctx) {
+      const S = this.sizeScale;
+      const cols = window.World && World.colliders;
+      if (cols) {
+        for (let i = 0; i < cols.length; i++) {
+          const c = cols[i];
+          const ox = p.x - c.x, oz = p.z - c.z;
+          const d = Math.hypot(ox, oz);
+          const min = c.r + R;
+          if (d < min) {
+            const k = d > 1e-5 ? (min - d) / d : 0;
+            if (d > 1e-5) { p.x += ox * k; p.z += oz * k; } else { p.x += min; }
+          }
+        }
+      }
+      const list = window.Enemies ? Enemies.list : null;
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const o = list[i];
+          if (o === this || o.dead || !o.mesh) continue;
+          const op = o.mesh.position;
+          const ox = p.x - op.x, oz = p.z - op.z;
+          const d = Math.hypot(ox, oz);
+          const min = (BODY_R * S + BODY_R * (o.sizeScale || 1)) * 0.85;
+          if (d < min && d > 1e-5) { const k = (min - d) / d * 0.5; p.x += ox * k; p.z += oz * k; }
+        }
+      }
+      // do not walk into the camera
+      if (ctx.dist < this.stopDist * 0.7 && ctx.dist > 1e-4) {
+        const k = (this.stopDist * 0.7 - ctx.dist);
+        p.x -= ctx.nx * k; p.z -= ctx.nz * k;
+      }
+      p.x = clamp(p.x, -ARENA, ARENA);
+      p.z = clamp(p.z, -ARENA, ARENA);
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------
+    // animation + procedural reactions (after the mixer)
+    // -------------------------------------------------------------------------------------------------------------------
+    _animate(dt, ctx) {
+      // time-driven attack layer
+      if (this.state === 'windup' || this.state === 'attack' || this.state === 'recover') {
+        const a = this.actions[ATTACK_CLIP];
+        if (a && this._cur.upper === a) a.time = this._attackClipT();
+        // the recovery hands the upper body back to the idle pose
+        if (this.state === 'recover' && this.stateT > this.recoverTime * 0.45 && !this.hold) this._play('upper', IDLE_CLIP, 0.3);
+        // attack layer timing must not advance on its own
+        if (a) a.setEffectiveTimeScale(0);
+      }
+      this.mixer.update(dt);
+      this._proceduralPose(dt);
+      this._footsteps(ctx);
+    }
+
+    _proceduralPose(dt) {
+      if (this._flinch <= 0.001) { this._flinch = 0; return; }
+      this._flinch = Math.max(0, this._flinch - dt / 0.32);
+      const k = Math.sin(clamp(this._flinch, 0, 1) * Math.PI * 0.5);   // 1 -> 0 ease
+      const amt = k * this._flinchPow;
+      const torso = this.bones.torso, head = this.bones.head;
+      const d = this._flinchDir;
+      if (torso) {
+        // push along the bullet direction (knight-local x / z): about X tilts toward +Z, about Z toward -X
+        _q1.setFromAxisAngle(AX, amt * d.z);
+        _q2.setFromAxisAngle(AZ, -amt * d.x);
+        torso.quaternion.multiply(_q1).multiply(_q2);
+      }
+      if (head) {
+        _q1.setFromAxisAngle(AX, amt * 0.7 * d.z);
+        _q2.setFromAxisAngle(AZ, -amt * 0.7 * d.x);
+        head.quaternion.multiply(_q1).multiply(_q2);
+      }
+    }
+
+    // a boot-on-ground sound once per half stride, only close by and rate limited
+    _footsteps(ctx) {
+      if (this.state !== 'approach' || !window.Sfx || !Sfx.footstep || ctx.dist > 12) return;
+      const a = this._cur.lower;
+      if (!a) return;
+      const clip = a.getClip();
+      const ph = (a.time / clip.duration) * 2;
+      const step = Math.floor(ph);
+      if (step !== this._stepPhase) {
+        this._stepPhase = step;
+        const E = window.Enemies;
+        if (E && Math.abs(E._clock - E._lastStepAt) < 0.16) return;      // one boot sound at a time
+        if (E) E._lastStepAt = E._clock;
+        try { Sfx.footstep('knight'); } catch (e) { /* ignore */ }
+      }
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------
+    // damage
+    // -------------------------------------------------------------------------------------------------------------------
+    applyImpulse(v) {
+      if (!v) return;
+      this.knockback.x += v.x; this.knockback.z += v.z;
+      const l = Math.hypot(this.knockback.x, this.knockback.z);
+      if (l > 7) { this.knockback.x *= 7 / l; this.knockback.z *= 7 / l; }
+    }
+
+    // hit = { damage, zone, point, dir }. Sets `dead` synchronously when the knight drops to 0 HP.
+    takeHit(hit) {
+      if (this.dead || this._removed) return false;
+      hit = hit || {};
+      const dmg = typeof hit.damage === 'number' && isFinite(hit.damage) ? hit.damage : 0;
+      this.hp -= dmg;
+      if (this.hp <= 0) {
+        this.hp = 0;
+        this.dead = true;
+        this.die(hit);
+        return true;
+      }
+      this._reactToHit(hit);
+      return false;
+    }
+
+    // legacy entry point (Enemies.hurt / old callers)
+    hurt(damage) {
+      return this.takeHit({ damage: damage, zone: 'torso', dir: new V3(0, 0, -1) });
+    }
+
+    _reactToHit(hit) {
+      const zone = hit.zone || 'torso';
+      // procedural torso pitch, in the knight's own frame
+      const d = hit.dir;
+      if (d) {
+        const sy = Math.sin(this._yaw), cy = Math.cos(this._yaw);
+        // world -> local (yaw about Y): local x = dx*cy - dz*sy, local z = dx*sy + dz*cy
+        _v1.set(d.x * cy - d.z * sy, 0, d.x * sy + d.z * cy);
+        if (_v1.lengthSq() > 1e-6) _v1.normalize(); else _v1.set(0, 0, -1);
+        this._flinchDir.copy(_v1);
+      } else this._flinchDir.set(0, 0, -1);
+      this._flinch = 1;
+      this._flinchPow = zone === 'head' ? 0.55 : (zone === 'limb' ? 0.3 : 0.42);
+      // a hit while winding up breaks the telegraph; the strike itself is not interrupted
+      if (this.state === 'attack' || this.state === 'recover') return;
+      if (this.state !== 'stagger') this.setState('stagger');
+      else this.stateT = 0;
+    }
+
+    die(hit) {
+      this.dead = true;
+      hit = hit || {};
+      if (this.state !== 'dead') {
+        this.state = 'dead';
+        this.stateT = 0;
+        this._playStateAnim('dead', 0.12);
+      }
+      this._deadT = 0;
+      // fall the way the bullet was travelling: the Death clip topples toward the model's +Z
+      const d = hit.dir;
+      if (d && (Math.abs(d.x) + Math.abs(d.z)) > 1e-3) this._targetYaw = Math.atan2(d.x, d.z);
+      this._flinch = 0;
+      if (!this._killFx && window.Combat && Combat.onKill) {
+        try { Combat.onKill(this, hit, hit.dir); } catch (e) { console.error('[Knight] Combat.onKill', e); }
+      }
+      if (window.Waves && Waves.onEnemyKilled) {
+        try { Waves.onEnemyKilled(this); } catch (e) { console.error('[Knight] Waves.onEnemyKilled', e); }
+      }
+      this.onDeath(hit);
+    }
+
+    onDeath(hit) { /* hook for subclasses */ }
+
+    _updateDead(dt) {
+      this._deadT += dt;
+      // turn to the fall direction during the first part of the Death clip
+      if (this._targetYaw !== null) {
+        const err = angDiff(this._yaw, this._targetYaw);
+        this._yaw += clamp(err, -9 * dt, 9 * dt);
+        this.mesh.rotation.y = this._yaw;
+        if (Math.abs(err) < 0.01) this._targetYaw = null;
+      }
+      const p = this.mesh.position;
+      if (this.knockback.x !== 0 || this.knockback.z !== 0) {
+        p.x += this.knockback.x * dt; p.z += this.knockback.z * dt;
+        this._decayKnockback(dt);
+      }
+      this.mixer.update(dt);
+      if (this._deadT > LINGER) {
+        const u = clamp((this._deadT - LINGER) / SINK, 0, 1);
+        p.y = -SINK_DEPTH * this.sizeScale * u * u * (3 - 2 * u);
+        if (u >= 1) this._remove();
+      }
+    }
+
+    _remove() {
+      if (this._removed) return;
+      if (window.Enemies && Enemies.remove) Enemies.remove(this);
+      else this.dispose();
+    }
+
+    // free what this knight owns: its cloned materials and the mixer. Shared geometry and the shared gear materials stay.
+    dispose() {
+      if (this._removed) return;
+      this._removed = true;
+      try { this.mixer.stopAllAction(); this.mixer.uncacheRoot(this.model); } catch (e) { /* ignore */ }
+      for (let i = 0; i < this._skinned.length; i++) { try { this._skinned[i].skeleton.dispose(); } catch (e) { /* ignore */ } }
+      this._owned.forEach((m) => { try { m.dispose(); } catch (e) { /* ignore */ } });
+      this._owned.clear();
+      if (this.mesh.parent) this.mesh.parent.remove(this.mesh);
+    }
+  }
+
+  // reference data for subclasses / tuning (the Boss may override gear: new Knight({ gear: { shield: { asset: 'knight_boss_shield', scale: ... } } }))
+  Knight.GEAR = GEAR;
+  Knight.CLIP_SPEED = CLIP_SPEED;
+  Knight.getClipSets = getClipSets;
+  window.Knight = Knight;
+
+  // ------------------------------------------------------------------------------------------------------------------------
+  // Enemies manager
+  // ------------------------------------------------------------------------------------------------------------------------
+  window.Enemies = {
+    list: [],
+    _clock: 0,
+    _lastStepAt: -1,
+
+    add(e) {
+      const scene = sceneOf();
+      if (!scene) throw new Error('Enemies.add: no scene (Game.init has not run)');
+      scene.add(e.mesh);                           // the renderer only draws what is parented to the scene
+      this.list.push(e);
+      // face the player and show the first animation frame right away (also for a frozen / paused AI)
+      const pp = window.Game && Game.playerObj ? Game.playerObj.position : null;
+      if (pp) {
+        e._yaw = Math.atan2(pp.x - e.mesh.position.x, pp.z - e.mesh.position.z);
+        e.mesh.rotation.y = e._yaw;
+      }
+      try { e.mixer.update(0); } catch (err) { /* ignore */ }
+      installDebug();
+      return e;
+    },
+
+    update(dt, playerPos) {
+      this._clock += dt;
+      const wave = window.Waves && typeof Waves.current === 'number' ? Waves.current : 1;
+      for (let i = this.list.length - 1; i >= 0; i--) {
+        const e = this.list[i];
+        if (!e) continue;
+        try {
+          e.update(dt, playerPos, wave);
+        } catch (err) {
+          e._errs = (e._errs || 0) + 1;
+          if (e._errs <= 3) console.error('[Enemies] update failed', err);
+        }
+      }
+    },
+
+    rayTargets() {
+      const out = [];
+      for (let i = 0; i < this.list.length; i++) {
+        const e = this.list[i];
+        if (!e.dead && e.mesh) out.push(e.mesh);
+      }
+      return out;
+    },
+
+    aliveCount() {
+      let n = 0;
+      for (let i = 0; i < this.list.length; i++) if (!this.list[i].dead) n++;
+      return n;
+    },
+
+    findByObject(obj) {
+      for (let o = obj; o; o = o.parent) {
+        if (o.userData && o.userData.enemy) return o.userData.enemy;
+      }
+      return null;
+    },
+
+    // take an enemy out of the list and the scene and free its resources
+    remove(e) {
+      const i = this.list.indexOf(e);
+      if (i >= 0) this.list.splice(i, 1);
+      if (e.dispose) e.dispose();
+      else if (e.mesh && e.mesh.parent) e.mesh.parent.remove(e.mesh);
+    },
+
+    clear() {
+      const all = this.list.slice();
+      this.list.length = 0;
+      for (let i = 0; i < all.length; i++) {
+        const e = all[i];
+        if (e.dispose) e.dispose();
+        else if (e.mesh && e.mesh.parent) e.mesh.parent.remove(e.mesh);
+      }
+    },
+
+    // legacy fallback used by game.js / waves.js when an enemy has no takeHit
+    hurt(obj, damage, point) {
+      const e = this.findByObject(obj);
+      if (!e) return;
+      if (e.takeHit) e.takeHit({ damage: damage, zone: 'torso', point: point || null, dir: new V3(0, 0, -1) });
+      else if (e.hurt) e.hurt(damage);
+    },
+  };
+
+  // ------------------------------------------------------------------------------------------------------------------------
+  // QA helpers (only with ?debug=1; installed when the first enemy is added, debug.js has run by then)
+  // ------------------------------------------------------------------------------------------------------------------------
+  let dbgDone = false;
+  function installDebug() {
+    if (dbgDone || !window.__dbg) return;
+    dbgDone = true;
+    const round = (v) => Math.round(v * 1000) / 1000;
+    const get = (i) => Enemies.list[i];
+    window.__dbg.knight = {
+      // freeze the AI of knight i in `state` at `progress` (0..1 of that state's duration); animation keeps running.
+      // yaw (optional, radians): turn the knight (0 = facing +Z, PI/2 = its right side toward +Z)
+      pose(i, state, progress, yaw) {
+        const k = get(i);
+        if (!k) return null;
+        k.hold = true;
+        if (typeof yaw === 'number') { k._yaw = yaw; k.mesh.rotation.y = yaw; }
+        k.setState(state);
+        const dur = { windup: k.windupTime, attack: k.strikeTime, recover: k.recoverTime, stagger: 0.3 }[state] || 1;
+        k.stateT = (progress || 0) * dur;
+        return { state: k.state, stateT: round(k.stateT) };
+      },
+      release(i) { const k = get(i); if (k) k.hold = false; return !!k; },
+      // distance of every gear piece from the bone it should ride on (constant while attached) + world positions
+      gear(i) {
+        const k = get(i);
+        if (!k) return null;
+        k.mesh.updateMatrixWorld(true);
+        const out = {};
+        for (const [kind, bone] of [['helmet', 'Head'], ['sword', 'Palm.R'], ['shield', 'LowerArm.L']]) {
+          const g = k[kind];
+          if (!g) { out[kind] = null; continue; }
+          const b = Assets.bone(k.model, bone);
+          const gp = g.getWorldPosition(new V3()), bp = b.getWorldPosition(new V3());
+          out[kind] = { parent: g.parent && (g.parent.userData.name || g.parent.name), dist: round(gp.distanceTo(bp)), pos: gp.toArray().map(round), loose: !!g.userData.loose };
+        }
+        return out;
+      },
+      info(i) {
+        const k = get(i);
+        if (!k) return null;
+        return { state: k.state, clip: k.currentClip, hp: k.hp, dead: k.dead, speed: round(k._speed || 0), yaw: round(k._yaw), stateT: round(k.stateT),
+          pos: k.mesh.position.toArray().map(round), cool: round(k._cool), flinch: round(k._flinch) };
+      },
+    };
+  }
 })();
 //# sourceURL=src/js/enemies.js
 </script>
