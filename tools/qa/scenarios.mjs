@@ -827,6 +827,639 @@ export const scenarios = {
     },
   },
 
+  // ---- D2 (glue: main.js / game.js / waves.js / hud.js / debug.js / template) -------------------------------------------
+  'd2-start-screen': {
+    desc: 'D2: title screen with the accurate controls list (WASD / Shift / mouse / click / R / Esc) and the goal line.',
+    start: false,
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.wait(300);
+      await h.shot();
+      const info = await page.evaluate(() => ({ text: document.getElementById('lock').innerText.replace(/\s+/g, ' ').trim(), btn: document.getElementById('startBtn').textContent }));
+      // small windows: nothing may be clipped (the START button must stay reachable) -> d2-start-screen-<w>x<h>.png
+      info.fits = {};
+      for (const [w, hh] of [[640, 360], [480, 270], [360, 640]]) {
+        await page.setViewportSize({ width: w, height: hh });
+        await h.wait(200);
+        await h.shot(w + 'x' + hh);
+        info.fits[w + 'x' + hh] = await page.evaluate(() => { const r = document.getElementById('startBtn').getBoundingClientRect(), l = document.getElementById('lock');
+          return { btnInView: r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth, scrolls: l.scrollHeight > l.clientHeight + 1, hScroll: l.scrollWidth > l.clientWidth + 1 }; });
+      }
+      return info;
+    },
+  },
+
+  'd2-damage-arc': {
+    desc: 'D2: Player.hurt(dmg, attacker) draws the damage arc towards the attacker: knight on the left => arc on the left; then all four sides, then after turning the view.',
+    god: false,
+    viewport: { width: 800, height: 450 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.pause();
+      // four frozen knights 6 m from the player: left, right, behind, ahead
+      await page.evaluate(() => { for (const a of [-90, 90, 180, 0]) __dbg.spawn('knight', 6, a); });
+      await h.advance(100, 50);
+      const arcs = () => page.evaluate(() => [...document.querySelectorAll('#dmgDirs .dmg-arc')]
+        .filter((el) => el.style.visibility === 'visible' && +el.style.opacity > 0.05)
+        .map((el) => +(/rotate\((-?[\d.]+)deg/.exec(el.style.transform) || [0, NaN])[1]));
+      const hurt = (...idx) => page.evaluate((ix) => { for (const i of ix) Player.hurt(8, Enemies.list[i]); return Game.playerHP; }, idx);
+      const out = {};
+      const near = (a, b) => Math.abs(((a - b + 540) % 360) - 180) < 8;   // degrees, wrap-safe
+      // 1) attacker on the left
+      await hurt(0);
+      await h.advance(120, 60);
+      out.left = await arcs();
+      await h.shot('left');
+      await h.advance(1400, 350);
+      // 2) all four sides at once
+      await hurt(1, 2, 3, 0);
+      await h.advance(120, 60);
+      out.all = await arcs();
+      await h.shot('all');
+      await h.advance(1400, 350);
+      // 3) turn the view 90 degrees to the left (towards the left knight): that knight is now ahead, the one that was ahead is on the right
+      await page.evaluate(() => { const p = Enemies.list[0].mesh.position; __dbg.lookAt(p.x, 1.7, p.z); });
+      await h.frames(3);
+      await hurt(0, 3);
+      await h.advance(120, 60);
+      out.turned = await arcs();
+      await h.shot('turned');
+      out.hp = await page.evaluate(() => Game.playerHP);
+      // 4) a REAL attack: a live knight 2.2 m to the left, AI running, view straight ahead: its sword hit must draw the arc on the left
+      await h.advance(1400, 350);
+      await h.clean();
+      await h.resetView();
+      await h.freezeAI(false);
+      await page.evaluate(() => { __dbg.spawn('knight', 2.2, -90); });
+      out.live = await page.evaluate(() => {
+        const hp0 = Game.playerHP; let t = 0;
+        while (Game.playerHP === hp0 && t < 25) { Main.step(1 / 30); t += 1 / 30; }
+        const k = Enemies.list[0];
+        return { hurtAfterSec: +t.toFixed(1), hp: [hp0, Game.playerHP], knight: [+k.mesh.position.x.toFixed(2), +k.mesh.position.z.toFixed(2)], state: k.state };
+      });
+      await h.advance(150, 75);
+      out.liveArcs = await arcs();
+      await h.shot('live-left');
+      // assertions: -90 = left, +90 = right, 180 = behind, 0 = ahead
+      const has = (list, a) => list.some((x) => near(x, a));
+      const fail = [];
+      if (!(out.left.length === 1 && has(out.left, -90))) fail.push('left knight did not give exactly one arc at -90deg: ' + JSON.stringify(out.left));
+      for (const a of [-90, 90, 180, 0]) if (!has(out.all, a)) fail.push('missing arc at ' + a + ' in ' + JSON.stringify(out.all));
+      if (!(has(out.turned, 0) && has(out.turned, 90))) fail.push('after turning left: expected arcs at 0 and +90, got ' + JSON.stringify(out.turned));
+      if (!(out.live.hp[1] < out.live.hp[0])) fail.push('the live knight never hurt the player: ' + JSON.stringify(out.live));
+      if (!(out.liveArcs.length >= 1 && has(out.liveArcs, -90))) fail.push('live attack from the left did not draw an arc at -90deg: ' + JSON.stringify(out.liveArcs) + ' ' + JSON.stringify(out.live));
+      if (fail.length) throw new Error('damage arc check failed: ' + fail.join(' | '));
+      return out;
+    },
+  },
+
+  'd2-pause': {
+    desc: 'D2: losing the pointer lock mid-game pauses the simulation (overlay + frozen enemies); clicking the overlay resumes.',
+    viewport: { width: 640, height: 360 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.freezeAI(false);
+      await h.pause();
+      await page.evaluate(() => { Main.autoPause = true; __dbg.spawn('knight', 12, 0); if (document.pointerLockElement) document.exitPointerLock(); });
+      await h.advance(300, 50);
+      await page.evaluate(() => { if (Main.isPaused()) Main.resume(); });   // a real lock exit (headless granted the lock) may have paused already
+      const pos = () => page.evaluate(() => { const e = Enemies.list[0]; return [e.mesh.position.x, e.mesh.position.z].map((v) => +v.toFixed(3)); });
+      const p0 = await pos();
+      await h.advance(500, 50);
+      const p1 = await pos();
+      // simulate "lock lost": the handler reads document.pointerLockElement (null by now) on any pointerlockchange
+      await page.evaluate(() => document.dispatchEvent(new Event('pointerlockchange')));
+      await h.advance(100, 50);
+      const paused = await page.evaluate(() => ({ paused: Main.isPaused(), shown: getComputedStyle(document.getElementById('pauseScreen')).display }));
+      await h.shot('paused');
+      const p2 = await pos();
+      await h.advance(800, 50);
+      const p3 = await pos();
+      await page.evaluate(() => { Main.renderer.domElement.requestPointerLock = () => undefined; });   // the lock is neither granted nor refused: a click must still resume
+      await page.evaluate(() => document.getElementById('pauseScreen').click());
+      await h.advance(500, 50);
+      const p4 = await pos();
+      const after = await page.evaluate(() => ({ paused: Main.isPaused(), shown: getComputedStyle(document.getElementById('pauseScreen')).display }));
+      // the browser refuses the re-lock (Chrome blocks it for ~1 s after Esc): the rejected request must bring the overlay back
+      await page.evaluate(() => document.dispatchEvent(new Event('pointerlockchange')));
+      await h.advance(100, 50);
+      await page.evaluate(() => { Main.renderer.domElement.requestPointerLock = () => Promise.resolve(); });
+      await page.evaluate(() => document.getElementById('pauseScreen').click());
+      await h.advance(100, 50);
+      const resumed2 = await page.evaluate(() => Main.isPaused());
+      await page.evaluate(() => document.dispatchEvent(new Event('pointerlockchange')));   // paused again
+      await h.advance(100, 50);
+      await page.evaluate(() => { Main.renderer.domElement.requestPointerLock = () => Promise.reject(new DOMException('refused', 'SecurityError')); });
+      await page.evaluate(() => document.getElementById('pauseScreen').click());
+      await h.advance(100, 50);
+      const refused = await page.evaluate(() => ({ paused: Main.isPaused(), shown: getComputedStyle(document.getElementById('pauseScreen')).display }));
+      await page.evaluate(() => { Main.renderer.domElement.requestPointerLock = () => undefined; });
+      await page.evaluate(() => document.getElementById('pauseScreen').click());
+      await h.advance(100, 50);
+      const resumed3 = await page.evaluate(() => Main.isPaused());
+      const moved = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) > 0.05;
+      const fail = [];
+      if (!moved(p0, p1)) fail.push('knight did not move before the pause');
+      if (!paused.paused || paused.shown !== 'flex') fail.push('not paused: ' + JSON.stringify(paused));
+      if (moved(p2, p3)) fail.push('knight moved while paused');
+      if (after.paused || after.shown !== 'none') fail.push('did not resume: ' + JSON.stringify(after));
+      if (!moved(p3, p4)) fail.push('knight did not move after resume');
+      if (resumed2) fail.push('second click did not resume');
+      if (!refused.paused || refused.shown !== 'flex') fail.push('a refused re-lock did not bring the pause overlay back: ' + JSON.stringify(refused));
+      if (resumed3) fail.push('third click did not resume');
+      if (fail.length) throw new Error('pause check failed: ' + fail.join(' | '));
+      return { p0, p1, p2, p3, p4, paused, after, resumed2, refused, resumed3 };
+    },
+  },
+
+  'd2-gameover': {
+    desc: 'D2: the player dies (two Player.hurt hits while wave 1 runs): game-over screen with stats, no pause overlay although the pointer lock is released, simulation stops (enemies freeze).',
+    god: false,
+    viewport: { width: 640, height: 360 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.freezeAI(false);
+      await h.pause();
+      await page.evaluate(() => { Main.autoPause = true; __dbg.spawn('knight', 14, 30); });
+      await h.advance(300, 50);
+      await page.evaluate(() => { Player.hurt(60, Enemies.list[0]); });
+      await h.advance(100, 50);
+      const alive = await page.evaluate(() => ({ dead: Game.dead, hp: Game.playerHP, go: getComputedStyle(document.getElementById('gameOverScreen')).display }));
+      await page.evaluate(() => { Player.hurt(60, Enemies.list[0]); });
+      await h.advance(300, 50);
+      const pos = () => page.evaluate(() => { const e = Enemies.list[0]; return [e.mesh.position.x, e.mesh.position.z].map((v) => +v.toFixed(3)); });
+      const p0 = await pos();
+      await h.advance(600, 50);
+      const p1 = await pos();
+      await h.shot('over');
+      const end = await page.evaluate(() => ({ dead: Game.dead, hp: Game.playerHP, paused: Main.isPaused(), go: getComputedStyle(document.getElementById('gameOverScreen')).display,
+        text: document.getElementById('gameOverScreen').innerText.replace(/\s+/g, ' ').trim(), restart: !!document.getElementById('restartButton') }));
+      const fail = [];
+      if (alive.dead || alive.go !== 'none') fail.push('dead / game over after the first hit: ' + JSON.stringify(alive));
+      if (!end.dead || end.hp !== 0) fail.push('player not dead: ' + JSON.stringify(end));
+      if (end.go === 'none') fail.push('game over screen not shown');
+      if (end.paused) fail.push('pause overlay shown on top of the game over screen');
+      if (Math.hypot(p0[0] - p1[0], p0[1] - p1[1]) > 0.01) fail.push('enemies kept moving after the player died');
+      if (!/wave/i.test(end.text)) fail.push('no wave in the stats: ' + end.text);
+      if (h.errors.length) fail.push('console errors: ' + h.errors.slice(0, 2).join(' || ').slice(0, 400));
+      if (fail.length) throw new Error('game over check failed: ' + fail.join(' | '));
+      return { alive, end, p0, p1 };
+    },
+  },
+
+  'd2-boss-fight': {
+    desc: 'D2: wave 5 only (skipToWave(5), godMode): the real Boss is shot dead with aimed shots; the boss bar, minions and victory timing are logged; victory must only show after the boss died.',
+    viewport: { width: 640, height: 360 },
+    run: async (page, h) => {
+      const problems = [];
+      const drive = (opts) => page.evaluate(d2Drive, opts);
+      const snap = () => page.evaluate(() => { const b = Waves.boss, pp = Game.playerObj.position;
+        return { ws: Waves.state, kills: Waves.kills, boss: b && { hp: b.hp, st: b.state, atk: b.atk, ph: b.phase, dead: b.dead, d: +Math.hypot(b.mesh.position.x - pp.x, b.mesh.position.z - pp.z).toFixed(1) },
+          minions: Enemies.list.filter((e) => !e.dead && e !== b).length, left: document.getElementById('enemiesLeft').textContent, bar: getComputedStyle(document.getElementById('bossBar')).display,
+          victory: getComputedStyle(document.getElementById('victoryScreen')).display, shots: Game.shots, hits: Game.hits, ammo: Game.ammo }; });
+      await h.pause();
+      await h.resetView();
+      await page.evaluate(() => __dbg.skipToWave(5));
+      await h.advance(300, 100);
+      await h.shot('intro');
+      await drive({ maxSec: 20, stop: 'boss', shoot: false });
+      await h.advance(200, 100);
+      const log = [{ at: 'boss spawned', ...(await snap()) }];
+      await h.shot('boss');
+      let reached = false;
+      for (let i = 0; i < 50 && !reached; i++) {
+        const r = await drive({ maxSec: 4, stop: 'bossDead', shoot: true, bossFirst: true });
+        reached = r.reached;
+        if (r.victoryEarly) problems.push('victory screen shown while the boss lived');
+        if (i % 2 === 1 || reached) log.push({ at: 'fight +' + (i + 1) * 4 + 's', ...(await snap()) });
+        if (i === 3 && !reached) { await h.advance(200, 100); await h.shot('fight'); }
+      }
+      if (!reached) problems.push('boss was not killed by shots within 200 s of game time');
+      log.push({ at: 'boss dead', ...(await snap()) });
+      if (log[log.length - 1].victory !== 'none') problems.push('victory visible at the moment of death');
+      await h.advance(600, 150);
+      await h.shot('dying');
+      const rv = await drive({ maxSec: 15, stop: 'victory', shoot: false });
+      if (!rv.reached) problems.push('no victory after the boss died');
+      await h.advance(400, 100);
+      await h.shot('victory');
+      log.push({ at: 'victory', ...(await snap()) });
+      if (h.errors.length) problems.push('console errors: ' + h.errors.slice(0, 2).join(' || ').slice(0, 500));
+      if (problems.length) throw new Error('d2-boss-fight: ' + problems.join(' | ') + ' LOG ' + JSON.stringify(log).slice(0, 1500));
+      return log;
+    },
+  },
+
+  'd2-full-run': {
+    desc: 'D2: scripted playthrough (?debug=1, godMode): waves 1-4 killed with real revolver shots (head aim, R to reload), wave 5 boss until it dies, victory only after that; __dbg.state() logged at every step, zero console errors required.',
+    viewport: { width: 640, height: 360 },
+    run: async (page, h) => {
+      const t0 = Date.now();
+      const log = [];
+      const problems = [];
+      const brief = (label, extra) => page.evaluate((lab) => {
+        const s = __dbg.state();
+        return { label: lab, wave: s.wave, ws: s.waves && s.waves.state, pend: s.pending, alive: s.alive, listLen: s.enemies.length,
+          kills: s.kills, shots: s.shots, ammo: s.ammo, hp: s.hp, boss: s.waves && s.waves.boss, bossKilled: s.waves && s.waves.bossKilled,
+          victoryShown: s.screens.victory, gameOverShown: s.screens.gameOver, godMode: s.godMode };
+      }, label).then((r) => { const o = Object.assign(r, extra || {}); log.push(o); h.log(JSON.stringify(o)); return o; });
+      const drive = (opts) => page.evaluate(d2Drive, opts);
+
+      await h.pause();
+      await h.resetView();
+      await brief('start');
+      await h.advance(600, 150);
+      await h.shot('w1-banner');
+
+      // ---- waves 1-4: knights killed by aimed shots
+      for (let n = 1; n <= 4; n++) {
+        const r1 = await drive({ maxSec: 7, stop: 'never', shoot: true });
+        await h.advance(200, 100);
+        if (n === 1 || n === 3) await h.shot('w' + n + '-fight');
+        await brief('w' + n + ' fighting', { stepShots: r1.shots, killedByShots: r1.killedByShots });
+        const r2 = await drive({ maxSec: 150, stop: 'countdown', shoot: true });
+        if (!r2.reached) {
+          const why = await page.evaluate(() => ({ w: Waves.snapshot(), ammo: Game.ammo, reloadTimer: Game.reloadTimer, shots: Game.shots, hits: Game.hits,
+            enemies: Enemies.list.map((e) => ({ st: e.state, hp: e.hp, dead: e.dead, pos: e.mesh.position.toArray().map((x) => +x.toFixed(1)) })) }));
+          problems.push('wave ' + n + ' did not clear by shots within 150 s of game time (fallback killAll): ' + JSON.stringify(why).slice(0, 700));
+          await h.killAll(); await drive({ maxSec: 30, stop: 'countdown', shoot: false });
+        }
+        if (r1.victoryEarly || r2.victoryEarly) problems.push('victory screen shown early in wave ' + n);
+        await brief('w' + n + ' cleared', { shotsUsed: r1.shots + r2.shots, byShots: r1.killedByShots + r2.killedByShots, reloadsByKey: r1.reloadKeys + r2.reloadKeys, mouseDown: r1.viaMouse + r2.viaMouse, direct: r1.viaDirect + r2.viaDirect, wallMs: Date.now() - t0 });
+        await h.advance(300, 150);
+        await h.shot('w' + n + '-cleared');
+        // countdown -> next wave starts by itself
+        const r3 = await drive({ maxSec: 12, stop: 'wave:' + (n + 1), shoot: false });
+        if (!r3.reached) problems.push('wave ' + (n + 1) + ' did not start after the countdown');
+        if (r3.victoryEarly) problems.push('victory screen during countdown ' + n);
+      }
+
+      // ---- wave 5: boss
+      await brief('w5 started');
+      await h.advance(200, 100);
+      await h.shot('w5-intro');
+      const rb = await drive({ maxSec: 20, stop: 'boss', shoot: false });
+      if (!rb.reached) problems.push('the boss never appeared');
+      await h.advance(200, 100);
+      const bossInfo = await page.evaluate(() => { const b = Waves.boss; return b ? { ctor: b.constructor.name, type: b.type, hp: b.hp, maxHp: b.maxHp, name: b.displayName || null, fallback: Waves.bossFallback, err: Waves.bossError, scale: b.mesh.scale.x } : null; });
+      await brief('w5 boss on the field', { bossInfo });
+      await h.shot('w5-boss');
+      if (bossInfo && bossInfo.fallback) h.warn('boss is the STAND-IN knight: ' + bossInfo.err);
+
+      let r = await drive({ maxSec: 90, stop: 'bossHalf', shoot: true, bossFirst: true });
+      await h.advance(200, 100);
+      await h.shot('w5-boss-half');
+      await brief('w5 boss <= 50% hp', { reached: r.reached, stepShots: r.shots, minionsAlive: await page.evaluate(() => Enemies.list.filter((e) => !e.dead && e !== Waves.boss).length) });
+      if (r.victoryEarly) problems.push('victory screen shown while the boss lived (<=50%)');
+      r = await drive({ maxSec: 150, stop: 'bossDead', shoot: true, bossFirst: true });
+      if (!r.reached) {
+        const why = await page.evaluate(() => { const b = Waves.boss, pp = Game.playerObj.position; return { boss: b && { hp: b.hp, st: b.state, atk: b.atk, ph: b.phase, dead: b.dead, pos: b.mesh.position.toArray().map((x) => +x.toFixed(1)), dist: +Math.hypot(b.mesh.position.x - pp.x, b.mesh.position.z - pp.z).toFixed(1) },
+          player: pp.toArray().map((x) => +x.toFixed(1)), ammo: Game.ammo, reloadTimer: Game.reloadTimer, shots: Game.shots, hits: Game.hits,
+          last: window.__lastHitInfo && { zone: window.__lastHitInfo.zone, dist: window.__lastHitInfo.distance, killed: window.__lastHitInfo.killed, enemy: window.__lastHitInfo.enemy && window.__lastHitInfo.enemy.type },
+          list: Enemies.list.map((e) => ({ t: e.type, st: e.state, hp: e.hp, dead: e.dead })) }; });
+        problems.push('boss not killed by shots within 150 s (fallback killAll): ' + JSON.stringify(why).slice(0, 900));
+        await h.shot('w5-boss-stuck');
+        await h.killAll(); await drive({ maxSec: 5, stop: 'bossDead', shoot: false });
+      }
+      if (r.victoryEarly) problems.push('victory screen shown before the boss died');
+      const atDeath = await brief('w5 boss dead (death animation)');
+      if (atDeath.victoryShown) problems.push('victory screen is already up at the moment the boss died (expected a short delay)');
+      if (atDeath.ws !== 'victory-wait') problems.push('Waves.state at boss death is ' + atDeath.ws + ' (expected victory-wait)');
+      await h.advance(600, 150);
+      await h.shot('w5-boss-dying');
+      const rv = await drive({ maxSec: 15, stop: 'victory', shoot: false });
+      if (!rv.reached) problems.push('victory never came after the boss died');
+      await h.advance(400, 100);
+      await h.shot('victory');
+      const end = await brief('victory', { wallMs: Date.now() - t0 });
+      if (!end.victoryShown) problems.push('victory screen not visible at the end');
+      if (end.ws !== 'victory') problems.push('final Waves.state ' + end.ws);
+      if (end.kills < 5 + 7 + 9 + 11 + 1) problems.push('kills ' + end.kills + ' < 33');
+
+      const errs = h.errors.slice();
+      if (errs.length) problems.push('console/page errors: ' + errs.slice(0, 3).join(' || ').slice(0, 600));
+      try {
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const { OUT_DIR } = await import('./lib.mjs');
+        fs.mkdirSync(OUT_DIR, { recursive: true });
+        fs.writeFileSync(path.join(OUT_DIR, 'd2-full-run.json'), JSON.stringify({ problems, errors: errs, log }, null, 1));
+      } catch (e) { h.log('could not write the log: ' + e.message); }
+      const summary = { ok: problems.length === 0, problems, errors: errs.length, steps: log.length, last: log[log.length - 1], wallSec: Math.round((Date.now() - t0) / 1000) };
+      if (problems.length) throw new Error('d2-full-run problems: ' + JSON.stringify(summary).slice(0, 1500));
+      return summary;
+    },
+  },
+  // ---- D1 (boss.js). The boss is staged with __dbg.boss.* (force an attack, jump to a phase, freeze a clip pose); long stretches are
+  // fast-forwarded in the page (d1Until, no rendering) because swiftshader is slow, rendered frames use h.advance on the virtual clock.
+  'd1-boss-intro': {
+    desc: 'D1: wave 5 via skipToWave(5): the Boss wave banner, then the boss on the arena ring (4.9 m giant, golden, horned) with the boss bar, then walking in.',
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.resetView();
+      await h.pause();
+      await h.skipToWave(5);
+      await h.advance(800, 50);
+      await h.shot('banner');
+      await h.advance(1800, 50);
+      const at = () => page.evaluate(() => { const b = Enemies.list.find((e) => e.type === 'boss'), pp = Game.playerObj.position;
+        return b ? { x: +b.mesh.position.x.toFixed(1), z: +b.mesh.position.z.toFixed(1), dist: +Math.hypot(b.mesh.position.x - pp.x, b.mesh.position.z - pp.z).toFixed(1), state: b.state, atk: b.atk, hp: b.hp,
+          bar: getComputedStyle(document.getElementById('bossBar')).display, barName: document.getElementById('bossName').textContent, barPct: document.getElementById('bossPct').textContent } : null; });
+      const a1 = await at();
+      if (!a1) throw new Error('d1-boss-intro: the boss did not appear');
+      await h.aimAt({ x: a1.x, y: 0, z: a1.z }, 2.4);
+      await h.advance(200, 50);
+      await h.shot('arrival');
+      // it walks in: 7 s later it is much closer
+      await page.evaluate(c1FastForward, { sec: 6, step: 1 / 30 });
+      const a2 = await at();
+      await h.aimAt({ x: a2.x, y: 0, z: a2.z }, 2.4);
+      await h.advance(100, 50);
+      await h.shot('approach');
+      return { arrival: a1, approach: a2, wave: await page.evaluate(() => Waves.snapshot()), state: await h.state() };
+    },
+  },
+
+  'd1-boss-gear': {
+    desc: 'D1: the boss next to a knight (size), then front / right / left / back and a head close-up: helmet + horns on the head, greatsword in the right fist, tower shield on the left forearm, pauldrons.',
+    viewport: { width: 800, height: 450 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await page.evaluate(() => window.Weapon && Weapon.setVisible && Weapon.setVisible(false));
+      await h.spawn('knight', 7.5, 12);
+      await h.spawn('boss', 9, -6);
+      await page.evaluate(() => { for (const e of Enemies.list) { e.hold = true; } const b = Enemies.list.find((e) => e.type === 'boss'); b.setState('combatIdle'); });
+      await h.aimAt({ x: -1, y: 0, z: -9 }, 2.0);
+      await h.pause();
+      await h.advance(300, 50);
+      await h.shot('size');
+      await page.evaluate(() => { const b = Enemies.list.find((e) => e.type === 'boss'); b.mesh.position.set(0, 0, -8); b._yaw = 0; b.mesh.rotation.y = 0; Enemies.list.find((e) => e.type === 'knight').mesh.position.set(40, 0, 40); });
+      await h.aimAt({ x: 0, y: 0, z: -8 }, 2.6);
+      await h.advance(150, 50);
+      await h.shot('front');
+      for (const [lab, yaw] of [['right', Math.PI / 2], ['left', -Math.PI / 2], ['back', Math.PI]]) {
+        await page.evaluate((y) => { const b = Enemies.list.find((e) => e.type === 'boss'); b._yaw = y; b.mesh.rotation.y = y; }, yaw);
+        await h.advance(100, 50);
+        await h.shot(lab);
+      }
+      await page.evaluate(() => { const b = Enemies.list.find((e) => e.type === 'boss'); b.mesh.position.set(0, 0, -5); b._yaw = 0; b.mesh.rotation.y = 0; });
+      await h.aimAt({ x: 0, y: 0, z: -5 }, 3.6);
+      await h.advance(100, 50);
+      await h.shot('head');
+      return { gear: await page.evaluate(() => __dbg.boss.gear()), info: await page.evaluate(() => __dbg.boss.info()) };
+    },
+  },
+
+  'd1-boss-sweep-windup': {
+    desc: 'D1: the sweep telegraph: the sword rises and holds while a red fan (the exact hit area) fills up on the ground; frames at 0.25 / 0.6 / 1.0 s of the windup and at the swing; then (no rendering) the damage is logged: Player.hurt only at the swing frame.',
+    viewport: { width: 800, height: 450 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.spawn('boss', 8.5, 0);
+      await page.evaluate(() => { const b = Enemies.list[0]; b.atk = null; b.setState('combatIdle'); b._gap = 0; __dbg.boss.force('sweep'); });
+      await h.aimAt({ x: 0, y: 0, z: -8.5 }, 2.0);
+      await h.freezeAI(false);
+      await h.pause();
+      const info = () => page.evaluate(() => __dbg.boss.info());
+      const out = {};
+      await h.advance(250, 33); await h.shot('windup-25'); out.t25 = await info();
+      await h.advance(350, 33); await h.shot('windup-60'); out.t60 = await info();
+      await h.advance(380, 33); await h.shot('windup-100'); out.t100 = await info();
+      out.tele = await page.evaluate(() => __dbg.boss.tele());
+      await h.advance(300, 33); await h.shot('strike'); out.strike = await info();
+      // damage timing, not rendered: the player stands 5.5 m in front of the boss and takes the sweep (god mode off)
+      await h.clean();
+      await page.evaluate(() => { __dbg.godMode(false); Game.godMode = false; Game.playerHP = 100; });
+      await h.spawn('boss', 5.5, 0);
+      await page.evaluate(() => { const b = Enemies.list[0]; b.atk = null; b.setState('combatIdle'); b._gap = 0; b._leapCd = 99; __dbg.boss.force('sweep'); });
+      out.dmg = await page.evaluate(d1Until, { sec: 4, until: "b.state==='combatIdle'" });
+      await page.evaluate(() => { __dbg.godMode(true); });
+      return out;
+    },
+  },
+
+  'd1-boss-leap-land': {
+    desc: 'D1: the leap slam: ring on the ground at the landing spot (the exact AoE) while the boss crouches, the boss in the air, the landing (shockwave ring, dust ring, shake), then the stunned recovery; viewed from the side. Then (not rendered) the damage: only on the landing frame.',
+    viewport: { width: 800, height: 450 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await page.evaluate(() => window.Weapon && Weapon.setVisible && Weapon.setVisible(false));
+      await h.spawn('boss', 17, 0);
+      await page.evaluate(() => { const b = Enemies.list[0]; b.atk = null; b.setState('combatIdle'); b._gap = 0; __dbg.boss.force('leap'); });
+      await h.freezeAI(false);
+      await h.pause();
+      const out = {};
+      await h.advance(520, 33);                                   // the landing spot is locked now: step aside to watch from the side
+      await page.evaluate(() => { __dbg.teleport(11, -8); __dbg.lookAt(0, 2.2, -8); });
+      await h.advance(380, 33); await h.shot('crouch');           // t = 0.9 s
+      out.crouch = await page.evaluate(() => __dbg.boss.info());
+      await h.advance(520, 33); await h.shot('air');              // t = 1.42 s
+      out.air = await page.evaluate(() => __dbg.boss.info());
+      await h.advance(520, 33); await h.shot('land');             // t = 1.94 s: just landed
+      out.land = await page.evaluate(() => __dbg.boss.info());
+      await h.advance(500, 33); await h.shot('after');
+      out.tele = await page.evaluate(() => __dbg.boss.tele());
+      // damage timing, not rendered: the player stays where the boss locks on (god mode off)
+      await h.clean();
+      await page.evaluate(() => { __dbg.teleport(0, 0, 0); __dbg.godMode(false); Game.godMode = false; Game.playerHP = 100; });
+      await h.spawn('boss', 17, 0);
+      await page.evaluate(() => { const b = Enemies.list[0]; b.atk = null; b.setState('combatIdle'); b._gap = 0; __dbg.boss.force('leap'); });
+      out.dmg = await page.evaluate(d1Until, { sec: 5, until: "b.state==='combatIdle'" });
+      await page.evaluate(() => { __dbg.godMode(true); });
+      return out;
+    },
+  },
+
+  'd1-boss-charge': {
+    desc: 'D1: the charge (phase 2): red strip along the locked run line while the sword is raised, the straight run, the stumble afterwards; then the damage log (a player who stays in the line is hit once, a player who steps out is not).',
+    viewport: { width: 800, height: 450 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await page.evaluate(() => window.Weapon && Weapon.setVisible && Weapon.setVisible(false));
+      await h.spawn('boss', 20, 0);
+      await page.evaluate(() => { const b = Enemies.list[0]; b.phase = 2; b.atk = null; b.setState('combatIdle'); b._gap = 0; __dbg.boss.force('charge'); });
+      await h.freezeAI(false);
+      await h.pause();
+      const out = {};
+      await h.advance(700, 33); await h.shot('windup'); out.windup = await page.evaluate(() => __dbg.boss.info());
+      out.tele = await page.evaluate(() => __dbg.boss.tele());
+      await page.evaluate(() => { __dbg.teleport(7, -8); __dbg.lookAt(0, 1.6, -8); });   // step out of the line and watch from the side
+      await h.advance(560, 33); await h.shot('run'); out.run = await page.evaluate(() => __dbg.boss.info());
+      await h.advance(500, 33); await h.shot('through');
+      await page.evaluate(c1FastForward, { sec: 0.6 });
+      await h.advance(100, 33); await h.shot('stumble'); out.stumble = await page.evaluate(() => __dbg.boss.info());
+      // damage log (not rendered): in the line -> one hit; stepped aside -> none
+      for (const aside of [false, true]) {
+        await h.clean();
+        await page.evaluate(() => { __dbg.teleport(0, 0, 0); __dbg.godMode(false); Game.godMode = false; Game.playerHP = 100; });
+        await h.spawn('boss', 20, 0);
+        await page.evaluate(() => { const b = Enemies.list[0]; b.phase = 2; b.atk = null; b.setState('combatIdle'); b._gap = 0; __dbg.boss.force('charge'); });
+        await page.evaluate(d1Until, { sec: 0.8, until: "b.state==='charge'" });
+        if (aside) await page.evaluate(() => { Game.playerObj.position.x += 6; });
+        out[aside ? 'dmgAside' : 'dmgInLine'] = await page.evaluate(d1Until, { sec: 4, until: "b.state==='combatIdle'" });
+      }
+      await page.evaluate(() => { __dbg.godMode(true); });
+      return out;
+    },
+  },
+
+  'd1-boss-phase2': {
+    desc: 'D1: crossing 66 % HP: the roar (sword up, shockwave ring, glow), 2 minions appear on the arena ring (not on the boss) and run in; crossing 33 % adds 2 more (max 4 alive) and the glow gets stronger.',
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.spawn('boss', 13, 0);
+      await h.freezeAI(false);
+      await h.pause();
+      const info = () => page.evaluate(() => __dbg.boss.info());
+      const out = {};
+      await page.evaluate(d1Until, { sec: 2, until: "b.state==='combatIdle'" });             // the arrival roar is over
+      out.before = await info();
+      await page.evaluate(() => __dbg.boss.phase(2));
+      await page.evaluate(d1Until, { sec: 1, until: "b.state==='windup'&&b.atk==='roar'" });
+      await h.aimAt(await page.evaluate(() => { const p = Enemies.list[0].mesh.position; return { x: p.x, y: 0, z: p.z }; }), 3.0);
+      await h.advance(520, 33); await h.shot('roar');
+      out.roar = await info();
+      out.minionsAt = await page.evaluate(() => Enemies.list.filter((e) => e.isMinion).map((e) => ({ x: +e.mesh.position.x.toFixed(1), z: +e.mesh.position.z.toFixed(1), fromBoss: +Math.hypot(e.mesh.position.x - Enemies.list[0].mesh.position.x, e.mesh.position.z - Enemies.list[0].mesh.position.z).toFixed(1) })));
+      // the first minion where it appeared on the arena ring, then close to the player
+      await h.aimAt(await page.evaluate(() => { const m = Enemies.list.find((e) => e.isMinion); const p = m.mesh.position; return { x: p.x, y: 0, z: p.z }; }), 1.0);
+      await h.advance(200, 33); await h.shot('minion-spawn');
+      await page.evaluate(d1Until, { sec: 8 });
+      await h.aimAt(await page.evaluate(() => { const ms = Enemies.list.filter((e) => e.isMinion && !e.dead); const p = Game.playerObj.position;
+        ms.sort((a, b) => Math.hypot(a.mesh.position.x - p.x, a.mesh.position.z - p.z) - Math.hypot(b.mesh.position.x - p.x, b.mesh.position.z - p.z)); const q = ms[0].mesh.position; return { x: q.x, y: 0, z: q.z }; }), 1.1);
+      await h.advance(100, 33); await h.shot('minion-arrives');
+      out.afterPhase2 = await info();
+      await page.evaluate(() => __dbg.boss.phase(3));
+      await page.evaluate(d1Until, { sec: 2.2, until: "b.state==='windup'&&b.atk==='roar'&&b.stateT>0.6" });
+      await h.aimAt(await page.evaluate(() => { const p = Enemies.list[0].mesh.position; return { x: p.x, y: 0, z: p.z }; }), 3.0);
+      await h.advance(120, 33); await h.shot('phase3');
+      out.afterPhase3 = await info();
+      await page.evaluate(d1Until, { sec: 2.5 });
+      out.final = await info();
+      out.state = await h.state();
+      return out;
+    },
+  },
+
+  'd1-boss-death': {
+    desc: 'D1: wave 5, the boss is killed (takeHit): the Death clip at 0.6x speed, burst at 0.5 s, the thud at ~1.6 s, the state at 3 s; the boss bar hides, Waves counts one kill, victory comes after the delay.',
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.resetView();
+      await h.pause();
+      await h.skipToWave(5);
+      await h.advance(2300, 50);
+      await page.evaluate(() => { const b = Enemies.list.find((e) => e.type === 'boss'); b.mesh.position.set(0, 0, -10); b._yaw = 0; b.mesh.rotation.y = 0; });
+      await page.evaluate(c1FastForward, { sec: 2.2 });                 // the arrival roar is over, it is walking in
+      const snap = () => page.evaluate(() => { const b = Waves.boss; return { boss: { hp: b.hp, dead: b.dead, state: b.state, clip: b.currentClip, inList: Enemies.list.includes(b), loose: ['helmet', 'sword', 'shield'].map((k) => !!(b[k] && b[k].userData.loose)) },
+        waves: Waves.snapshot(), kills: Game.kills, bar: getComputedStyle(document.getElementById('bossBar')).display, victory: getComputedStyle(document.getElementById('victoryScreen')).display }; });
+      const out = { before: await snap() };
+      await page.evaluate(() => { const b = Enemies.list.find((e) => e.type === 'boss'); const p = b.mesh.position; b.takeHit({ damage: 1e6, zone: 'torso', point: new THREE.Vector3(p.x, 3, p.z + 1), dir: new THREE.Vector3(0, 0, -1) }); });
+      out.at0 = await snap();
+      await page.evaluate(() => { const p = Waves.boss.mesh.position; __dbg.lookAt(p.x, 2.0, p.z); });
+      await h.advance(500, 33); await h.shot('0.5s');
+      out.at05 = await snap();
+      await h.advance(1100, 33); await h.shot('1.6s');
+      await page.evaluate(c1FastForward, { sec: 1.3 });
+      await h.advance(100, 33); await h.shot('3s');
+      out.at3 = await snap();
+      await h.advance(1400, 100); await h.shot('victory');
+      out.end = await snap();
+      out.state = await h.state();
+      return out;
+    },
+  },
+
+  'd1-boss-soak': {
+    desc: 'D1: AI soak without rendering (60 s of game time per run, player HP topped up each frame): a player who stands still, one who kites on a circle (r 14 m and r 26 m), and phase 3 from the start; logs how often each attack ran, the damage per attack, the longest time spent in each state (no stuck states), min / max boss distance and that the boss stays inside the arena.',
+    viewport: { width: 480, height: 270 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.pause();
+      const runs = {};
+      for (const [name, cfg] of [['still', { sec: 60 }], ['kite14', { sec: 60, kite: 14 }], ['kite26', { sec: 60, kite: 26 }], ['phase3-still', { sec: 40, hp: 0.3 }], ['phase3-kite14', { sec: 40, hp: 0.3, kite: 14 }]]) {
+        await h.clean();
+        await page.evaluate(() => { __dbg.teleport(0, 0, 0); __dbg.godMode(false); Game.godMode = false; });
+        await h.spawn('boss', 14, 0);
+        runs[name] = await page.evaluate(d1Soak, cfg);
+      }
+      await page.evaluate(() => { __dbg.godMode(true); Game.playerHP = 100; });
+      await h.advance(60, 30);
+      await h.shot();
+      return runs;
+    },
+  },
+
+  'd1-boss-shots': {
+    desc: 'D1: real revolver shots at the boss: hit zones on the giant body (head / torso / limb), damage per zone and the shot counts to kill (logged).',
+    viewport: { width: 800, height: 450 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.spawn('boss', 12, 0);
+      await page.evaluate(() => { const b = Enemies.list[0]; b.hold = true; b.setState('combatIdle'); });
+      await h.pause();
+      const rows = [];
+      for (const [label, hgt, dx] of [['head', 4.1, 0], ['chest', 2.8, 0], ['belly', 2.0, 0], ['thigh', 0.9, 0.3], ['shin', 0.35, 0.55]]) {
+        await h.lookAt(dx, hgt, -12);
+        await h.frames(2);
+        const hp0 = await page.evaluate(() => Enemies.list[0].hp);
+        await page.evaluate(() => { Game.fireCooldown = 0; Game.reloadTimer = 0; Game.ammo = 6; });
+        await h.fire();
+        await h.advance(120, 30);
+        rows.push(await page.evaluate(([label, hp0]) => { const i = window.__lastHitInfo || {}; return { aim: label, zone: i.zone, dmg: i.damage, hpAfter: Enemies.list[0].hp, lost: hp0 - Enemies.list[0].hp }; }, [label, hp0]));
+      }
+      await h.shot();
+      const dmg = { head: 150, torso: 40, limb: 28 };
+      return { rows, hp: 1500, torsoShotsToKill: Math.ceil(1500 / dmg.torso), headShotsToKill: Math.ceil(1500 / dmg.head), mixed25pctHeads: Math.ceil(1500 / (0.25 * dmg.head + 0.75 * dmg.torso)) };
+    },
+  },
+
+  'd1-boss-lifecycle': {
+    desc: 'D1: no rendering. Clearing the arena while the boss telegraphs (no leftover telegraph meshes, bar hidden), then a boss that is killed: the corpse lingers, sinks and is removed from the scene and the list, nothing stays in the scene, the boss bar stays hidden; minion cap (never more than 4 alive, 2 per phase change).',
+    viewport: { width: 480, height: 270 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.pause();
+      const count = () => page.evaluate(() => { let tele = 0, boss = 0; Game.scene.traverse((o) => { if (o.name && o.name.indexOf('boss-tele:') === 0) tele++; if (o.userData && o.userData.enemy && o.userData.enemy.type === 'boss') boss++; });
+        return { tele, boss, list: Enemies.list.length, bar: getComputedStyle(document.getElementById('bossBar')).display }; });
+      const out = { start: await count() };
+      await h.spawn('boss', 14, 0);
+      await page.evaluate(d1Until, { sec: 2.2, until: "b.state==='combatIdle'" });
+      await page.evaluate(() => { __dbg.boss.force('sweep'); });
+      await page.evaluate(d1Until, { sec: 0.6 });
+      out.telegraphing = await count();
+      await page.evaluate(() => Enemies.clear());
+      out.afterClear = await count();
+      // a second boss: phases (minion cap), then death and removal
+      await h.spawn('boss', 14, 0);
+      await page.evaluate(d1Until, { sec: 2.2, until: "b.state==='combatIdle'" });
+      const minions = [];
+      for (const ph of [2, 3]) {
+        await page.evaluate((n) => __dbg.boss.phase(n), ph);
+        await page.evaluate(d1Until, { sec: 3 });
+        minions.push(await page.evaluate(() => ({ alive: Enemies.list.filter((e) => e.isMinion && !e.dead).length, total: Enemies.list.filter((e) => e.isMinion).length })));
+      }
+      out.minions = minions;
+      await page.evaluate(() => { const b = Enemies.list.find((e) => e.type === 'boss'); const p = b.mesh.position; b.takeHit({ damage: 1e6, zone: 'head', point: new THREE.Vector3(p.x, 4, p.z + 1), dir: new THREE.Vector3(0, 0, -1) }); });
+      out.dead = await count();
+      await page.evaluate(d1Until, { sec: 0.1 });
+      await page.evaluate(() => { const pp = Game.playerObj.position; for (let t = 0; t < 14; t += 1 / 30) { Enemies.update(1 / 30, pp.clone()); Combat.update(1 / 30); FX.update(1 / 30); } });
+      out.after14s = await count();
+      out.helmetLoose = await page.evaluate(() => { let n = 0; Game.scene.traverse((o) => { if (o.userData && o.userData.loose) n++; }); return n; });
+      return out;
+    },
+  },
+
 };
 
 // C1 helper: advance the game simulation by `sec` seconds WITHOUT rendering (the same per-frame calls main.js makes).
@@ -956,4 +1589,147 @@ function c2SpawnMock(opts) {
   }
   const p = mesh.position;
   return { i: Enemies.list.length - 1, x: p.x, y: p.y, z: p.z, hp: e.hp, dist: opts.dist, mock: true };
+}
+
+// D2 helper (runs in the page, serialised by page.evaluate): drive the REAL frame (Main.step) without rendering and play the
+// game with a bot: aim the camera at the head of a live enemy, fire through the real input path (a mousedown on the canvas when the
+// pointer is locked, else Game.tryFire), press R (a real keydown) to reload. The virtual clock must be paused so the page's own loop
+// does not step in between. a: { maxSec, dt?, shoot, bossFirst, stop: 'never'|'countdown'|'wave:N'|'boss'|'bossHalf'|'bossDead'|'victory' }
+function d2Drive(a) {
+  const dt = a.dt || 1 / 30;
+  const G = Game, cam = G.camera;
+  const S = (window.__d2 = window.__d2 || { blocked: new Map(), t: 0 });
+  const out = { reached: false, steps: 0, shots: 0, killedByShots: 0, reloadKeys: 0, viaMouse: 0, viaDirect: 0, victoryEarly: false };
+  const v = new THREE.Vector3();
+  const victoryShown = () => getComputedStyle(document.getElementById('victoryScreen')).display !== 'none';
+  const done = () => {
+    const w = Waves, b = w.boss;
+    switch (a.stop) {
+      case 'countdown': return w.state === 'countdown';
+      case 'boss': return !!b;
+      case 'bossHalf': return !!b && typeof b.hp === 'number' && b.hp <= b.maxHp * 0.5;
+      case 'bossDead': return w.bossKilled === true;
+      case 'victory': return w.state === 'victory';
+      default:
+        if (typeof a.stop === 'string' && a.stop.startsWith('wave:')) return w.current === +a.stop.slice(5) && w.state === 'fighting';
+        return false;
+    }
+  };
+  const aimPoint = (e, out3) => {
+    const sc = e.sizeScale || 1;
+    if (e.bones && e.bones.head) { e.bones.head.getWorldPosition(out3); out3.y += 0.235 * sc; }
+    else { out3.copy(e.mesh.position); out3.y += (e.height || 1.8) * 0.85; }
+    return out3;
+  };
+  const bot = () => {
+    if (G.dead) return;
+    const pp = G.playerObj.position;
+    // reload when empty (or when idle and not full)
+    if (G.reloadTimer <= 0 && G.ammo <= 0) {
+      document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyR', bubbles: true }));
+      document.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyR', bubbles: true }));
+      out.reloadKeys++;
+      return;
+    }
+    if (G.reloadTimer > 0 || G.fireCooldown > 0) return;
+    let target = null, best = Infinity;
+    for (const e of Enemies.list) {
+      if (e.dead || !e.mesh || !e.mesh.parent) continue;
+      const bu = S.blocked.get(e);
+      if (bu && S.t < bu) continue;
+      let d = Math.hypot(e.mesh.position.x - pp.x, e.mesh.position.z - pp.z);
+      if (a.bossFirst && e === Waves.boss) d -= 1000;
+      if (d < best) { best = d; target = e; }
+    }
+    if (!target) return;
+    target.mesh.updateMatrixWorld(true);        // the aim point reads bone world matrices (fast-forward does not render)
+    aimPoint(target, v);
+    cam.lookAt(v);
+    cam.updateMatrixWorld(true);
+    const shots0 = G.shots, hits0 = G.hits, kills0 = Waves.kills;
+    let hit;
+    if (document.pointerLockElement) {
+      const c = document.querySelector('canvas');
+      c.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, bubbles: true, cancelable: true, view: window }));
+      c.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, bubbles: true, cancelable: true, view: window }));
+      if (G.shots !== shots0) out.viaMouse++;
+    }
+    if (G.shots === shots0) { hit = G.tryFire(); if (G.shots !== shots0) out.viaDirect++; }
+    if (G.shots !== shots0) {
+      out.shots++;
+      if (G.hits === hits0) S.blocked.set(target, S.t + 1.0);          // a tree / rock was in the way: pick someone else for a moment
+      else if (window.__lastHitInfo && window.__lastHitInfo.killed) out.killedByShots++;
+    }
+  };
+  while (out.steps < Math.ceil(a.maxSec / dt)) {
+    if (a.shoot) bot();
+    Main.step(dt);
+    S.t += dt;
+    out.steps++;
+    if (!Waves.bossKilled && victoryShown()) out.victoryEarly = true;
+    if (done()) { out.reached = true; break; }
+  }
+  out.t = +S.t.toFixed(1);
+  return out;
+}
+
+// D1 helper: run the simulation WITHOUT rendering until `until` (an expression on b = the boss) holds or `sec` elapsed.
+// Logs every state / atk / phase / player-HP change: a = { sec, step = 1/30, until? }. Runs inside the page (serialised by page.evaluate).
+function d1Until(a) {
+  const step = a.step || 1 / 30;
+  const pp = Game.playerObj.position;
+  const b = Enemies.list.find((e) => e.type === 'boss');
+  const f = a.until ? new Function('b', 'return (' + a.until + ');') : null;
+  const log = [];
+  let last = '', t = 0;
+  for (; t < a.sec - 1e-9; t += step) {
+    Enemies.update(step, pp.clone());
+    if (window.Combat && Combat.update) Combat.update(step);
+    if (window.FX && FX.update) FX.update(step);
+    const key = b.state + '|' + b.atk + '|' + b.phase + '|' + Game.playerHP;
+    if (key !== last) {
+      last = key;
+      log.push({ t: +t.toFixed(2), st: b.state, atk: b.atk, ph: b.phase, playerHP: Game.playerHP, dist: +Math.hypot(b.mesh.position.x - pp.x, b.mesh.position.z - pp.z).toFixed(1), y: +b.mesh.position.y.toFixed(2), stateT: +b.stateT.toFixed(2) });
+    }
+    if (f && t > 0.05 && f(b)) { t += step; break; }
+  }
+  return { simulated: +t.toFixed(2), log, info: __dbg.boss.info() };
+}
+
+// D1 helper: AI soak (no rendering). a = { sec, kite?: radius (the player runs a circle at 6 m/s), hp?: boss HP fraction to start with }.
+function d1Soak(a) {
+  const dt = 1 / 30;
+  const pp = Game.playerObj.position;
+  const b = Enemies.list.find((e) => e.type === 'boss');
+  if (a.hp) { b.hp = Math.round(b.maxHp * a.hp); b._checkPhase(); }
+  const cnt = { sweep: 0, sweepCombo2: 0, leap: 0, charge: 0, roar: 0 }, dmg = { sweep: 0, leap: 0, charge: 0, other: 0 };
+  const stateT = {}, maxState = {};
+  let last = '', ang = 0, minD = 99, maxD = 0, worstXZ = 0, hits = 0;
+  const kinds = {};
+  let prevAtk = null;
+  for (let t = 0; t < a.sec; t += dt) {
+    if (a.kite) { ang += 6 / a.kite * dt; pp.x = Math.sin(ang) * a.kite; pp.z = Math.cos(ang) * a.kite; pp.y = 1.7; }
+    const hp0 = Game.playerHP;
+    Enemies.update(dt, pp.clone());
+    if (window.Combat && Combat.update) Combat.update(dt);
+    if (window.FX && FX.update) FX.update(dt);
+    const key = b.state + '|' + b.atk;
+    if (key !== last) {
+      if (b.state === 'windup' && b.atk === 'sweep') cnt.sweep++;
+      else if (b.state === 'windup' && b.atk === 'roar') cnt.roar++;
+      else if (b.state === 'leapWind') cnt.leap++;
+      else if (b.state === 'chargeWind') cnt.charge++;
+      last = key; stateT[key] = 0;
+    }
+    stateT[key] += dt; maxState[key] = Math.max(maxState[key] || 0, stateT[key]);
+    const d = hp0 - Game.playerHP;
+    if (d > 0) { hits++; const k = b.atk === 'sweep' ? 'sweep' : b.atk === 'leap' ? 'leap' : b.atk === 'charge' ? 'charge' : 'other'; dmg[k] += d; }
+    Game.playerHP = 100;
+    const dist = Math.hypot(b.mesh.position.x - pp.x, b.mesh.position.z - pp.z);
+    minD = Math.min(minD, dist); maxD = Math.max(maxD, dist);
+    worstXZ = Math.max(worstXZ, Math.abs(b.mesh.position.x), Math.abs(b.mesh.position.z));
+  }
+  const r = (x) => Math.round(x * 100) / 100;
+  const ms = {}; for (const k of Object.keys(maxState)) ms[k] = r(maxState[k]);
+  return { sec: a.sec, attacks: cnt, damageToPlayer: dmg, hits, longestInState: ms, minDist: r(minD), maxDist: r(maxD), maxAbsCoord: r(worstXZ), phase: b.phase, minions: Enemies.list.filter((e) => e.isMinion && !e.dead).length, listLen: Enemies.list.length };
 }
