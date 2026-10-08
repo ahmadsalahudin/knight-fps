@@ -89,6 +89,58 @@ export const scenarios = {
     },
   },
 
+  'knight-rush': {
+    desc: 'A knight 12 m ahead starts its shield rush: the red strip on the ground shows the line (wind-up), then it charges along it.',
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.freezeAI(false);
+      await h.resetView();
+      await h.pause();
+      await h.spawn('knight', 12, 0);
+      await page.evaluate(() => { const k = Enemies.list[0]; k.thrower = false; k.rusher = false; __dbg.knightRush(0); });
+      await h.advance(560, 33);
+      await h.shot('wind');
+      await h.advance(560, 33);
+      await h.shot('charge');
+      return page.evaluate(() => { const k = Enemies.list[0]; return { state: k.state, dist: +Math.hypot(k.mesh.position.x, k.mesh.position.z).toFixed(1) }; });
+    },
+  },
+
+  'grenade-blast': {
+    desc: 'A grenade thrown at three knights goes off on contact: fireball, shock ring, dust and knights thrown back.',
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.freezeAI(false);
+      await h.resetView();
+      await h.pause();
+      for (const a of [-12, 0, 14]) await h.spawn('knight', 9, a);
+      await page.evaluate(() => { Enemies.list.forEach((k) => { k.hold = true; k.thrower = false; k.rusher = false; }); __dbg.grenade.give(2); __dbg.grenade.throw(); });
+      let steps = 0;
+      while (steps++ < 60) { await h.advance(33, 33); if (await page.evaluate(() => Grenade.state().fx > 0)) break; }
+      await h.advance(110, 33);
+      await h.shot('blast');
+      await h.advance(700, 33);
+      await h.shot('after');
+      return page.evaluate(() => ({ grenade: Grenade.state(), knights: Enemies.list.map((k) => ({ hp: Math.round(k.hp), dead: k.dead })) }));
+    },
+  },
+
+  'grenade-hud': {
+    desc: 'HUD with a kill streak in progress and grenades in hand (bonus weapon).',
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.pause();
+      await page.evaluate(() => { __dbg.grenade.give(3); Grenade.streak = 2; Grenade._streakT = 5.5; Grenade._hud(); });
+      await h.advance(200, 33);
+      await h.shot();
+      return page.evaluate(() => Grenade.state());
+    },
+  },
+
   'gun-idle': {
     desc: 'First-person view with the revolver at rest, arena cleared, level view.',
     run: async (page, h) => {

@@ -71,3 +71,10 @@ title screen, START by tap, the floating stick (analog speed, edge = sprint, str
 (tap, and aiming while held), RELOAD, the SPRINT latch, stick + look + fire at once, mute, pause / tap to resume, the portrait pause and
 "turn your device" screen, and that a desktop session shows no touch UI. Saves `out/touch-title.png`, `out/touch-hud.png` and
 `out/touch-active.png`. Prints a PASS/FAIL table and exits 1 on any failure. It cannot judge how the controls *feel* on a real phone.
+
+## Mobile check (`mobile-check.mjs`, `npm run mobile`)
+Seven emulated devices (iPhone 13 / SE / 15 Pro Max, Pixel 7, Galaxy S9, a 640x360 low-end Android, iPad mini), each started with a real touch on START
+(no `?touch=1`): mobile viewport width, touch mode auto-detected, every control and HUD element on screen, touch targets >= 44 px, no control overlapping another control
+or the HUD (boss bar, streak box and grenade button included), stick + FIRE work, the frame is not black, no console errors. Plus the portrait "turn your device" screen and the
+adaptive resolution (without `?debug=1` the slow software renderer must make the pixel ratio step down). It is Chromium emulating phones: no Safari / WebKit, no real GPU, no
+notch. `--only=iphone13` runs one device.

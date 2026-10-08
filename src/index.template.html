@@ -54,7 +54,7 @@
 
   /* ---- touch controls (src/js/touch.js; shown only with body.touch while playing) ---- */
   #touchUI{display:none;position:fixed;inset:0;z-index:15;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
-           --stick:min(34vmin,150px);--fire:min(25vmin,104px);--btn:min(15vmin,64px);--top:min(11vmin,44px);
+           --stick:min(34vmin,150px);--fire:min(25vmin,104px);--btn:clamp(48px,15vmin,64px);--top:clamp(44px,11vmin,48px);
            --padL:max(22px,env(safe-area-inset-left));--padR:max(22px,env(safe-area-inset-right));--padB:max(22px,env(safe-area-inset-bottom))}
   body.touch.playing #touchUI{display:block}
   #touchUI *{touch-action:none;-webkit-tap-highlight-color:transparent}
@@ -78,9 +78,14 @@
   #tMute{right:calc(var(--padR) + var(--top) + 10px)}
   #tMute.on{background:rgba(190,50,40,.6);border-color:#ffb0a0;text-decoration:line-through}
   /* HUD in touch mode: the corners the thumbs use are left free */
+  #tGrenade{display:none;flex-direction:column;gap:2px;right:calc(var(--padR) + (var(--fire) - var(--btn)) / 2);bottom:calc(var(--padB) + 8px + var(--fire) + 12px);
+            width:var(--btn);height:var(--btn);font-size:10px;background:rgba(80,100,40,.6);border-color:rgba(200,230,140,.85)}
+  #tGrenade b{font-size:14px;letter-spacing:0}
+  body.touch #grenadeBox{display:none !important}
+  body.touch #streakBox{right:auto;left:max(16px,env(safe-area-inset-left));bottom:auto;top:40px;width:120px;text-align:left}
   body.touch #hpBox{left:max(16px,env(safe-area-inset-left));bottom:auto;top:12px}
   body.touch #hpTrack{width:min(30vw,170px)}
-  body.touch #muteHint{left:max(16px,env(safe-area-inset-left));top:40px}
+  body.touch #muteHint{left:max(16px,env(safe-area-inset-left));top:76px}
   body.touch #killBox{right:calc(max(22px,env(safe-area-inset-right)) + var(--top,44px) * 2 + 24px);top:10px}
   body.touch #ammoBox{right:max(16px,env(safe-area-inset-right));bottom:auto;top:calc(var(--top,44px) + 26px)}
   body.touch #bossBar{top:58px}
@@ -109,6 +114,14 @@
   #waveInfo .diff{margin-left:.6em;font-size:12px;letter-spacing:.2em;opacity:.9;vertical-align:middle;color:#cfe3c4}
   #waveInfo .diff.easy{color:#9fe0a0}
   #waveInfo .diff.hard{color:#ff9a6a}
+  /* bonus weapon: grenades earned by a kill streak (grenade.js) */
+  #grenadeBox{position:absolute;right:24px;bottom:62px;display:none;align-items:center;gap:8px;text-shadow:var(--ui-shadow);font-size:12px;font-weight:700;letter-spacing:.18em}
+  #grenadeBox .key{padding:1px 6px;border:1px solid rgba(255,255,255,.6);border-radius:4px;font-size:11px}
+  #grenadePips{display:flex;gap:5px}
+  .nade-pip{display:block;width:13px;height:17px;border-radius:7px 7px 5px 5px;background:linear-gradient(#8aa05a,#3f4d28);border:1px solid rgba(0,0,0,.6);box-shadow:0 1px 3px rgba(0,0,0,.7)}
+  #streakBox{position:absolute;right:24px;bottom:92px;display:none;width:150px;text-align:right;text-shadow:var(--ui-shadow);font-size:11px;font-weight:700;letter-spacing:.2em;color:#ffd24a}
+  #streakBar{margin-top:4px;height:4px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.3);border-radius:3px;overflow:hidden}
+  #streakFill{height:100%;width:100%;background:#ffd24a}
   #muteHint{position:absolute;left:24px;top:14px;font-size:12px;font-weight:700;letter-spacing:.22em;color:#ffd24a;text-shadow:var(--ui-shadow)}
   #enemiesLeft{margin-top:2px;font-size:13px;letter-spacing:.14em;color:#d8e6d0;opacity:.9}
 
@@ -206,13 +219,14 @@
 <body>
 <div id="lock">
   <h1>Knights of the Meadow</h1>
-  <p class="goal">Hold the meadow against four waves of armoured knights, then defeat the Iron Warlord.</p>
+  <p class="goal">Hold the meadow against waves of armoured knights, then defeat the Iron Warlord. Harder difficulties bring more waves.</p>
   <div class="controls kbHelp">
     <div><b>W A S D / arrows</b><span>Move</span></div>
     <div><b>Shift</b><span>Sprint</span></div>
     <div><b>Mouse</b><span>Aim</span></div>
     <div><b>Left click</b><span>Fire</span></div>
     <div><b>R</b><span>Reload</span></div>
+    <div><b>G</b><span>Throw a bonus grenade (earned by a kill streak)</span></div>
     <div><b>M</b><span>Mute / unmute</span></div>
     <div><b>Esc</b><span>Release the mouse (pauses the game)</span></div>
   </div>
@@ -221,6 +235,7 @@
     <div><b>Right thumb</b><span>Drag to aim</span></div>
     <div><b>FIRE</b><span>Shoot (hold it and drag to aim while shooting)</span></div>
     <div><b>RELOAD / SPRINT</b><span>Reload / latch sprint</span></div>
+    <div><b>GRENADE</b><span>Bonus grenade from a kill streak</span></div>
     <div><b>Top right</b><span>Pause and mute</span></div>
   </div>
   <div class="opts">
@@ -247,6 +262,7 @@
   <button class="tBtn" id="tSprint" type="button">SPRINT</button>
   <button class="tBtn" id="tReload" type="button">RELOAD</button>
   <button class="tBtn" id="tFire" type="button">FIRE</button>
+  <button class="tBtn" id="tGrenade" type="button"><span>GRENADE</span><b>x0</b></button>
   <button class="tBtn" id="tMute" type="button" aria-label="Mute">&#9835;</button>
   <button class="tBtn" id="tPause" type="button" aria-label="Pause">&#10074;&#10074;</button>
 </div>
@@ -289,6 +305,9 @@
     <div id="hpTrack"><div id="hpGhost"></div><div id="hpFill"></div></div>
     <span id="hpText">100</span>
   </div>
+
+  <div id="streakBox"><div id="streakText">STREAK 0 / 4</div><div id="streakBar"><div id="streakFill"></div></div></div>
+  <div id="grenadeBox"><span>GRENADES</span><span id="grenadePips"></span><span class="key">G</span></div>
 
   <div id="ammoBox">
     <div id="reloadSpinner">RELOADING</div>

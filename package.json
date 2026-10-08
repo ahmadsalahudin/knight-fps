@@ -9,7 +9,8 @@
     "shots": "node tools/qa/shoot.mjs",
     "test": "node tools/qa/smoke.mjs",
     "audio": "node tools/qa/audio-check.mjs",
-    "touch": "node tools/qa/touch-check.mjs"
+    "touch": "node tools/qa/touch-check.mjs",
+    "mobile": "node tools/qa/mobile-check.mjs"
   },
   "keywords": [],
   "type": "commonjs",

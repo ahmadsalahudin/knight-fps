@@ -31,6 +31,11 @@
    Thrown daggers: a share of the knights (Difficulty.throwers: Easy 20 %, Normal 35 %, Hard 50 %; chosen at spawn, never the boss) throw
         a dagger when they are 6-16 m from the player, walking, and their 5-8 s throw cooldown is ready: they stop, wind up ~0.6 s
         (the sword-raise windup) and release. Enemies.daggers holds the projectiles (see "Daggers" below); knight.thrower / ._throwCd.
+   Shield rush: a share of the knights (Difficulty.rushers: Easy 10 %, Normal 20 %, Hard 35 %; never a thrower, never the boss) charge in a
+        straight line when they are 7-18 m away and their 9-13 s cooldown is ready. States: rushWind (0.85 s: they stop, face you, a red strip
+        on the ground shows the line, it locks 0.3 s before the charge) -> rush (8 m/s along the locked line, 1.5 m to hit: 16 damage x
+        difficulty and a shove) -> stumble (1.4 s after a miss or a crash into a tree / rock, 0.5 s after a hit; takes 1.5x damage).
+        Shooting a knight during rushWind breaks the charge. Debug: __dbg.knightRush(i?).
    Difficulty (waves.js): knight HP / speed / damage / windup time scale with window.Difficulty; the boss applies its own (boss.js).
    Loose gear: combat.js re-parents helmet / sword / shield into physics holders on death (userData.loose = true); after that this
         module never touches them again.
@@ -39,6 +44,7 @@
    list, add(e), update(dt, playerPos), rayTargets(), aliveCount(), findByObject(obj), clear(), remove(e)
    daggers[], throwDagger(thrower, target?), _tickDaggers(dt)   (ticked by update(), emptied by clear())
    Debug (?debug=1, installed lazily): __dbg.knight.pose(i, state, progress), .gear(i), .info(i),
+        __dbg.knightRush(i?)  the knight (default: the nearest living one) starts its shield rush wind-up at once,
         __dbg.knightThrow(i?, flightSec?)  the knight (default: the nearest living one) throws at once, no windup / cooldown / range check;
         flightSec advances the dagger that long right away (use it with a frozen AI), __dbg.daggers() lists the daggers in flight.
 */
@@ -75,7 +81,11 @@
   const DAGGER_SIZE = 0.5, DAGGER_SPIN = 17;          // m, rad/s end over end
   const DAGGER_DAMAGE = 10, DAGGER_HIT_R = 0.6;       // base damage (x Difficulty.dmg), and the reach of the player's body
   const DAGGER_LIE = 5, DAGGER_MAX = 12;              // s a landed dagger stays; most daggers alive at once
-  const NEUTRAL = { dmg: 1, hp: 1, windup: 1, speed: 1, reach: 1, throwers: 0.35 };
+  // shield rush
+  const RUSH_MIN = 7, RUSH_MAX = 18, RUSH_WIND = 0.85, RUSH_LOCK = 0.3;     // distance window (m), telegraph (s), line locks this long before the charge
+  const RUSH_SPEED = 8, RUSH_HIT_R = 1.5, RUSH_DAMAGE = 16, RUSH_SHOVE = 9;  // m/s, m, base damage, m/s given to the player
+  const RUSH_STUMBLE_MISS = 1.4, RUSH_STUMBLE_HIT = 0.5, STUMBLE_DAMAGE = 1.5;
+  const NEUTRAL = { dmg: 1, hp: 1, windup: 1, speed: 1, reach: 1, throwers: 0.35, rushers: 0.2 };
   const diff = () => (window.Difficulty && Difficulty.get()) || NEUTRAL;
 
   // Gear fit, measured on the 1.8 m knight. pos is in METRES inside the bone's own axes (x, y, z of the bone), rot in radians
@@ -153,10 +163,16 @@
         this.speedScale *= D.speed;
       }
       // dagger throwers are chosen at spawn
-      this.thrower = this.type === 'knight' && Math.random() < D.throwers;
+      const roll = Math.random();                 // one roll: throwers, then rushers, then plain swordsmen (the shares are exact and exclusive)
+      this.thrower = this.type === 'knight' && roll < D.throwers;
       this._throwCd = 5 + Math.random() * 3;      // s until the next throw is allowed (5-8 s, random per knight)
       this._throwing = false;                     // the current windup / recover is a throw, not a sword swing
       this._thrown = false;
+      // shield rushers are another share of the knights (never a thrower), also chosen at spawn
+      this.rusher = this.type === 'knight' && !this.thrower && roll < D.throwers + (D.rushers || 0);
+      this._rushCd = 6 + Math.random() * 4;       // s until the first rush may start
+      this._rushDir = new V3(0, 0, 1);
+      this._rushLen = 12; this._rushed = 0; this._rushHit = false; this._strip = null;
       this.knockbackScale = typeof opts.knockbackScale === 'number' ? opts.knockbackScale : 1;
       this.knockback = new V3();
       this.waveNumber = 1;
@@ -223,6 +239,7 @@
       this.hold = false;                          // debug: AI + movement frozen, animation keeps running
       this._cool = 0;                             // seconds before the next windup is allowed
       this._hitDone = false;
+      this._stumbleT = 1;                         // s the current stumble lasts
       this._flinch = 0;                           // procedural hit reaction 1 -> 0
       this._flinchDir = new V3();
       this._flinchPow = 0.4;
@@ -359,8 +376,11 @@
       this.stateT = 0;
       if (name === 'windup') { this._hitDone = false; }
       if (name !== 'windup' && name !== 'recover') this._throwing = false;
+      if (name !== 'rushWind') this._stripOff();
       if (name === 'approach') this._playStateAnim('approach', FADE);
       else if (name === 'combatIdle' || name === 'stagger') this._playStateAnim(name, FADE);
+      else if (name === 'rushWind' || name === 'stumble') this._playStateAnim('combatIdle', FADE);
+      else if (name === 'rush') { this.gait = 'Run'; this._playBoth('Run', 0.15); this.currentClip = 'Run'; }
       else if (name === 'windup') this._playStateAnim('windup', FADE * 0.8);
       else if ((name === 'attack' || name === 'recover') && this._cur.upper !== this.actions[ATTACK_CLIP]) this._playStateAnim('windup', 0.1);   // jumped in (debug / subclass)
       else if (name === 'dead') this._playStateAnim('dead', 0.12);
@@ -386,12 +406,14 @@
       const st = this.state;
       this._cool -= dt;
       this._throwCd -= dt;
+      this._rushCd -= dt;
       const dist = ctx.dist;
       switch (st) {
         case 'approach': {
           if (dist <= this.attackStart) { this._idleWait = 0.2 + Math.random() * 0.35; this.setState('combatIdle'); }
           else if (this.thrower && this._throwCd <= 0 && dist >= THROW_MIN && dist <= THROW_MAX && this._facingError(ctx) < 0.7
             && Enemies.daggers.length < DAGGER_MAX) this.startThrow();
+          else if (this.rusher && this._rushCd <= 0 && dist >= RUSH_MIN && dist <= RUSH_MAX && this._facingError(ctx) < 0.5 && this._rushPathClear(ctx)) this.startRush();
           break;
         }
         case 'combatIdle': {
@@ -416,6 +438,18 @@
             break;
           }
           if (this.stateT >= this.recoverTime) { this._cool = 0.25 + Math.random() * 0.5; this._idleWait = 0.1; this.setState('combatIdle'); }
+          break;
+        }
+        case 'rushWind': {
+          // the strip follows the player until it locks 0.3 s before the charge
+          if (this.stateT < RUSH_WIND - RUSH_LOCK) this._rushDir.set(ctx.nx, 0, ctx.nz);
+          this._stripUpdate(this.stateT / RUSH_WIND, this.stateT >= RUSH_WIND - RUSH_LOCK);
+          if (this.stateT >= RUSH_WIND) this._launchRush(ctx);
+          break;
+        }
+        case 'rush': this._rushTick(dt, ctx); break;
+        case 'stumble': {
+          if (this.stateT >= this._stumbleT) { this._cool = 0.3; this.setState(dist <= this.attackStart * 1.2 ? 'combatIdle' : 'approach'); }
           break;
         }
         case 'stagger': {
@@ -443,6 +477,97 @@
       this._throwCd = 5 + Math.random() * 3;
       this.windupTime = Math.max(0.45, THROW_WINDUP * diff().windup);
       this.setState('windup');
+    }
+
+    // ---- shield rush ----------------------------------------------------------------------------------------------------
+    // the straight line to the player must be free of trees and rocks (they would end the charge at once)
+    _rushPathClear(ctx) {
+      const cols = window.World && World.colliders;
+      if (!cols) return true;
+      const len = Math.min(ctx.dist + 2, 20), p = this.mesh.position;
+      for (let i = 0; i < cols.length; i++) {
+        const c = cols[i];
+        const ox = c.x - p.x, oz = c.z - p.z;
+        const along = ox * ctx.nx + oz * ctx.nz;
+        if (along < 0 || along > len) continue;
+        if (Math.abs(ox * ctx.nz - oz * ctx.nx) < c.r + 0.9) return false;
+      }
+      return true;
+    }
+
+    startRush() {
+      this._rushCd = 9 + Math.random() * 4;
+      this._rushHit = false; this._rushed = 0;
+      this.setState('rushWind');
+      sfx('rushCry', soundAt(this));
+    }
+
+    _stripOn() {
+      if (!this._strip) {
+        const g = new THREE.PlaneGeometry(1, 1); g.rotateX(-Math.PI / 2);
+        const m = new THREE.MeshBasicMaterial({ color: 0xff3a22, transparent: true, opacity: 0.3, depthWrite: false });
+        const mesh = new THREE.Mesh(g, m);
+        mesh.renderOrder = 4; mesh.frustumCulled = false; mesh.visible = false;
+        this._strip = mesh;
+      }
+      const scene = sceneOf();
+      if (scene && !this._strip.parent) scene.add(this._strip);
+      this._strip.visible = true;
+    }
+    _stripUpdate(u, locked) {
+      this._stripOn();
+      const s = this._strip, p = this.mesh.position, d = this._rushDir;
+      const len = this._rushLength();
+      s.position.set(p.x + d.x * len / 2, 0.06, p.z + d.z * len / 2);
+      s.rotation.y = Math.atan2(d.x, d.z);
+      s.scale.set(RUSH_HIT_R * 2 * this.sizeScale, 1, len);
+      s.material.opacity = locked ? 0.7 + 0.2 * Math.sin(this._t * 40) : 0.38 + 0.3 * clamp(u, 0, 1);
+      s.material.color.setHex(locked ? 0xff0a00 : 0xd00000);
+    }
+    _rushLength() { return clamp((this._ctx.dist || 10) + 4, 9, 22); }
+    _stripOff() { if (this._strip) { this._strip.visible = false; if (this._strip.parent) this._strip.parent.remove(this._strip); } }
+
+    _launchRush(ctx) {
+      this._rushLen = this._rushLength();
+      this._yaw = Math.atan2(this._rushDir.x, this._rushDir.z);
+      this.mesh.rotation.y = this._yaw;
+      this.setState('rush');
+      sfx('swing', true, soundAt(this));
+    }
+
+    _rushTick(dt, ctx) {
+      this._rushed += RUSH_SPEED * dt;
+      const p = this.mesh.position;
+      // hit: the player is within reach of the shield
+      if (!this._rushHit && ctx.dist < RUSH_HIT_R * this.sizeScale) {
+        this._rushHit = true;
+        const d = this._rushDir;
+        if (window.Player && Player.hurt) Player.hurt(Math.max(1, Math.round(RUSH_DAMAGE * diff().dmg)), this);
+        if (window.Game && Game.shove) Game.shove(d.x * RUSH_SHOVE, d.z * RUSH_SHOVE);
+        if (window.FX && FX.sparks) { try { FX.sparks(_sp.set(p.x + d.x * 0.8, 1.1, p.z + d.z * 0.8), _qv.set(-d.x, 0.3, -d.z), 10); } catch (e) { /* ignore */ } }
+        sfx('clang', soundAt(this));
+        this._endRush(RUSH_STUMBLE_HIT);
+        return;
+      }
+      // crash: a tree or rock, or the end of the line
+      let crash = this._rushed >= this._rushLen;
+      const cols = window.World && World.colliders;
+      if (!crash && cols) {
+        const R = BODY_R * this.sizeScale + 0.35;
+        for (let i = 0; i < cols.length; i++) {
+          const c = cols[i];
+          if (Math.hypot(p.x - c.x, p.z - c.z) < c.r + R) { crash = true; break; }
+        }
+      }
+      if (crash) {
+        if (this._rushed < this._rushLen && window.FX && FX.dust) { try { FX.dust(_sp.set(p.x, 0.05, p.z), new V3(0, 1, 0), 0.6); } catch (e) { /* ignore */ } sfx('clang', soundAt(this)); }
+        this._endRush(RUSH_STUMBLE_MISS);
+      }
+    }
+
+    _endRush(stumble) {
+      this._stumbleT = stumble;
+      this.setState('stumble');
     }
 
     // Release a dagger from the right hand at where the player is now (the range / cooldown checks are in updateAI).
@@ -528,8 +653,8 @@
     }
 
     _turn(dt, ctx) {
-      if (ctx.dist < 1e-3) return;
-      const rate = (this.state === 'windup' || this.state === 'attack' || this.state === 'recover') ? this.turnRateAttack : this.turnRate;
+      if (ctx.dist < 1e-3 || this.state === 'rush') return;                 // a charging knight keeps its line
+      const rate = (this.state === 'windup' || this.state === 'attack' || this.state === 'recover' || this.state === 'rushWind') ? this.turnRateAttack : this.turnRate;
       const err = angDiff(this._yaw, Math.atan2(ctx.dx, ctx.dz));
       this._yaw += clamp(err, -rate * dt, rate * dt);
       this.mesh.rotation.y = this._yaw;
@@ -593,6 +718,12 @@
         tx = dx * this._speed; tz = dz * this._speed;
         // feet: playback rate follows the ground speed, so the stride matches the movement
         const ts = this._speed / (CLIP_SPEED[this.gait] * S);
+        if (this._cur.lower) this._cur.lower.setEffectiveTimeScale(ts);
+        if (this._cur.upper) this._cur.upper.setEffectiveTimeScale(ts);
+      } else if (this.state === 'rush') {
+        this._speed = RUSH_SPEED * Math.min(1.2, this.speedScale);
+        tx = this._rushDir.x * this._speed; tz = this._rushDir.z * this._speed;
+        const ts = this._speed / (CLIP_SPEED.Run * S);
         if (this._cur.lower) this._cur.lower.setEffectiveTimeScale(ts);
         if (this._cur.upper) this._cur.upper.setEffectiveTimeScale(ts);
       } else {
@@ -712,7 +843,7 @@
 
     // a boot-on-ground sound (with an armour jingle) once per half stride, positional, audible up to ~32 m, lightly rate limited
     _footsteps(ctx) {
-      if (this.state !== 'approach' || !window.Sfx || !Sfx.footstep || ctx.dist > 32) return;
+      if ((this.state !== 'approach' && this.state !== 'rush') || !window.Sfx || !Sfx.footstep || ctx.dist > 32) return;
       const a = this._cur.lower;
       if (!a) return;
       const clip = a.getClip();
@@ -741,7 +872,8 @@
     takeHit(hit) {
       if (this.dead || this._removed) return false;
       hit = hit || {};
-      const dmg = typeof hit.damage === 'number' && isFinite(hit.damage) ? hit.damage : 0;
+      let dmg = typeof hit.damage === 'number' && isFinite(hit.damage) ? hit.damage : 0;
+      if (this.state === 'stumble') dmg *= STUMBLE_DAMAGE;                 // off balance after a missed charge
       this.hp -= dmg;
       if (this.hp <= 0) {
         this.hp = 0;
@@ -767,7 +899,7 @@
       this._flinch = 1;
       this._flinchPow = zone === 'head' ? 0.55 : (zone === 'limb' ? 0.3 : 0.42);       // peak torso pitch (rad); the head adds 0.7x of it on top
       // a hit while winding up breaks the telegraph; the strike itself is not interrupted
-      if (this.state === 'attack' || this.state === 'recover') return;
+      if (this.state === 'attack' || this.state === 'recover' || this.state === 'rush' || this.state === 'stumble') return;
       if (this.state !== 'stagger') this.setState('stagger');
       else this.stateT = 0;
     }
@@ -775,6 +907,7 @@
     die(hit) {
       this.dead = true;
       hit = hit || {};
+      this._stripOff();
       if (this.state !== 'dead') {
         this.state = 'dead';
         this.stateT = 0;
@@ -833,6 +966,7 @@
     dispose() {
       if (this._removed) return;
       this._removed = true;
+      if (this._strip) { this._stripOff(); try { this._strip.geometry.dispose(); this._strip.material.dispose(); } catch (e) { /* ignore */ } this._strip = null; }
       try { this.mixer.stopAllAction(); this.mixer.uncacheRoot(this.model); } catch (e) { /* ignore */ }
       for (let i = 0; i < this._skinned.length; i++) { try { this._skinned[i].skeleton.dispose(); } catch (e) { /* ignore */ } }
       this._owned.forEach((m) => { try { m.dispose(); } catch (e) { /* ignore */ } });
@@ -1080,6 +1214,23 @@
       const d = k.throwDagger();
       if (d && flightSec > 0) Enemies._tickDaggers(flightSec);
       return d ? { pos: d.mesh.position.toArray().map(round), vel: d.vel.toArray().map(round), state: d.state } : null;
+    };
+    // the knight i (default: the nearest living one) starts its shield rush at once (no cooldown / range / path checks)
+    window.__dbg.knightRush = function (i) {
+      let k = typeof i === 'number' ? get(i) : null;
+      if (!k) {
+        const pp = Game.playerObj.position;
+        let best = 1e9;
+        for (const e of Enemies.list) {
+          if (e.dead || e.type !== 'knight') continue;
+          const dd = Math.hypot(e.mesh.position.x - pp.x, e.mesh.position.z - pp.z);
+          if (dd < best) { best = dd; k = e; }
+        }
+      }
+      if (!k) return null;
+      k.hold = false;
+      k.startRush();
+      return { state: k.state, dir: k._rushDir.toArray().map(round) };
     };
     window.__dbg.daggers = function () {
       return Enemies.daggers.map((d) => ({ state: d.state, pos: d.mesh.position.toArray().map(round), age: round(d.age), lie: round(d.lie) }));

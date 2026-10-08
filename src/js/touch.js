@@ -5,6 +5,7 @@
      right thumb   drag anywhere on the right to aim
      FIRE          fires (semi-auto, like the mouse button); keep the finger down and drag to aim while shooting
      RELOAD        reloads         SPRINT (above RELOAD)   toggles a latched sprint
+     GRENADE       (above FIRE, only while you hold grenades from a kill streak) lobs one
      top right     pause and mute (the touch versions of Esc and M)
    Touch mode switches on when the primary pointer is coarse, on the first real touch, or with ?touch=1 (QA / desktop testing; ?touch=0
    forces it off). Pressing START with a mouse switches it off again (a touch laptop). Nothing is drawn or handled while it is off.
@@ -168,9 +169,9 @@
   }
 
   function init() {
-    ['look', 'zone', 'base', 'knob', 'fire', 'reload', 'sprint', 'pause', 'mute'].forEach(function (k) {
+    ['look', 'zone', 'base', 'knob', 'fire', 'reload', 'sprint', 'grenade', 'pause', 'mute'].forEach(function (k) {
       E[k] = document.getElementById({ look: 'touchLook', zone: 'stickZone', base: 'stickBase', knob: 'stickKnob', fire: 'tFire', reload: 'tReload',
-        sprint: 'tSprint', pause: 'tPause', mute: 'tMute' }[k]);
+        sprint: 'tSprint', grenade: 'tGrenade', pause: 'tPause', mute: 'tMute' }[k]);
     });
     if (!E.look || !E.zone || !E.base || !E.fire) return;           // markup missing: touch controls are simply off
 
@@ -188,6 +189,7 @@
     E.fire.addEventListener('pointercancel', fireUp);
 
     press(E.reload, function () { if (window.Game && Game.tryReload) Game.tryReload(); });
+    if (E.grenade) press(E.grenade, function () { if (window.Grenade && Grenade.throwIt) Grenade.throwIt(); });
     press(E.sprint, function () {
       T.latch = !T.latch;
       E.sprint.classList.toggle('on', T.latch);

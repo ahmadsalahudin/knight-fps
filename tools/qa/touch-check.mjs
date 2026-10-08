@@ -132,6 +132,21 @@ try {
   const sOff = (await T()).sprint;
   row(sOn === true && sOff === false, 'SPRINT: latch toggles on and off', `on ${sOn}, off ${sOff}`);
 
+  // ---- GRENADE button: hidden until the kill streak earns grenades, then it throws one
+  const gHidden = await page.evaluate(() => getComputedStyle(document.getElementById('tGrenade')).display);
+  await page.evaluate(() => { __dbg.grenade.give(3); Grenade.streak = 2; Grenade._streakT = 6; Grenade._hud(); });
+  await h.advance(100, 33);
+  const gShown = await page.evaluate(() => ({ d: getComputedStyle(document.getElementById('tGrenade')).display, t: document.getElementById('tGrenade').textContent,
+    streak: getComputedStyle(document.getElementById('streakBox')).display, pipsBox: getComputedStyle(document.getElementById('grenadeBox')).display }));
+  row(gHidden === 'none' && gShown.d !== 'none' && gShown.t.includes('x3') && gShown.streak !== 'none' && gShown.pipsBox === 'none', 'GRENADE button appears with the bonus weapon', JSON.stringify(gShown));
+  await h.shot('grenade');
+  const gb = await centre('#tGrenade');
+  await finger.tap(gb.x, gb.y);
+  await h.advance(100, 33);
+  const gAfter = await page.evaluate(() => ({ count: Grenade.count, live: Grenade.live.length }));
+  row(gAfter.count === 2 && gAfter.live === 1, 'GRENADE button throws a grenade', JSON.stringify(gAfter));
+  await page.evaluate(() => Grenade.reset());
+
   // ---- three fingers at once: stick + look + fire
   const pM0 = await pose();
   await finger.down(1, stickX, stickY);

@@ -1,8 +1,8 @@
 # Knights of the Meadow: Browser FPS
 
 A first-person shooter built with three.js r147. You hold a meadow with a revolver
-against four waves of armoured, animated knights, then fight the Iron Warlord, a
-giant boss knight, on wave 5. The whole game ships as one self-contained file,
+against waves of armoured, animated knights (4, 5 or 6 waves depending on the difficulty), then fight the Iron Warlord, a
+giant boss knight, in the last one. The whole game ships as one self-contained file,
 `knights_out_final.html`. All models are embedded as base64 GLB, and three.js loads from the jsdelivr CDN.
 
 ## Play
@@ -20,6 +20,7 @@ python3 -m http.server 8877      # or: node tools/qa/serve.mjs 8877
 | Mouse | Aim |
 | Left click | Fire (6-shot revolver) |
 | R | Reload |
+| G | Throw a bonus grenade (earned by a kill streak) |
 | M | Mute / unmute (a small "MUTED" hint shows on the HUD) |
 | Esc | Release the mouse and pause |
 
@@ -32,6 +33,7 @@ On phones and tablets (and with `?touch=1` on a desktop browser for testing) the
 | Left thumb, anywhere on the left side | Floating stick: move at an analog speed, push it to the edge to sprint |
 | Right thumb, anywhere on the right | Drag to aim |
 | FIRE | Shoot (one shot per tap, like the mouse). Keep the finger on it and drag to aim while shooting |
+| GRENADE | Appears above FIRE while you hold bonus grenades |
 | RELOAD | Reload |
 | SPRINT | Latch sprint on / off |
 | Top right: pause, mute | The touch versions of Esc and M |
@@ -41,10 +43,15 @@ Touch screens have no pointer lock, so the game never asks for it there. It paus
 (tap the screen to resume), and tries fullscreen + landscape when you press START. The HUD moves out of the way of the thumbs.
 The module is `src/js/touch.js`.
 
+**Phones and tablets.** The game is plain WebGL + WebAudio and has no phone-specific build. On touch devices it renders lighter (pixel ratio capped at 1.75, a 1024 px
+shadow map, no MSAA on 2x+ screens) and steps the resolution down by itself if frames stay slow. `npm run mobile` checks seven phone / tablet profiles in emulation
+(sizes, pixel ratios, user agents, coarse pointer): the controls fit and do not overlap the HUD, touch targets are at least 44 px, and the game runs. Emulation
+runs in Chromium, so it does not replace trying it on a real iPhone (Safari) and a real Android phone.
+
 The title screen has a **difficulty** choice (Easy / Normal / Hard) and a **volume** slider. Both are remembered in the browser (`localStorage`).
 
-Waves 1 to 4 bring 5, 7, 9 and 11 knights on Normal, spawned one at a time from the edge of the arena. You heal 25 HP between waves and get fully healed before the boss.
-On wave 5 the boss arrives, with an HP bar, three telegraphed attacks (a sweep, a leap slam and a charge), two phase changes, and minions. Victory shows only after the boss dies.
+The knight waves bring 5, 7, 9, 11 and 13 knights on Normal, spawned one at a time from the edge of the arena. You heal 25 HP between waves and get fully healed before the boss.
+In the last wave (wave 5 on Normal) the boss arrives, with an HP bar, three telegraphed attacks (a sweep, a leap slam and a charge), two phase changes, and minions. Victory shows only after the boss dies.
 Head shots kill a knight outright. Torso shots take about 3 hits and limbs about 4.
 
 ### Difficulty
@@ -56,12 +63,15 @@ The chosen level shows next to the wave counter (`WAVE 2 / 5 HARD`) and on the g
 | Enemy damage | x0.6 | x1 | x1.4 |
 | Knight HP | x0.8 (80) | x1 (100) | x1.25 (125) |
 | Knight speed | x0.9 | x1 | x1.15 |
-| Knights per wave (waves 1-4) | 3 / 5 / 7 / 9 | 5 / 7 / 9 / 11 | 7 / 9 / 11 / 13 |
+| Waves in a run (the last is the boss) | 4 | 5 | 6 |
+| Knights per wave | 3 / 5 / 7 | 5 / 7 / 9 / 11 | 7 / 9 / 11 / 13 / 15 |
 | Knight windup (telegraph) | normal | normal | 20 % shorter |
 | Boss HP | x0.75 (1125) | x1 (1500) | x1.3 (1950) |
 | Boss reach (sweep, slam, attack distance) | x0.9 | x1 | x1.15 |
 | Heal after a wave | 40 HP | 25 HP | 15 HP |
 | Knights that throw daggers | 20 % | 35 % | 50 % |
+| Knights that do the shield rush | 10 % | 20 % | 35 % |
+| Kill streak that earns grenades | 3 kills: +3 | 4 kills: +2 | 5 kills: +2 |
 
 The table lives in `window.Difficulty` at the top of `src/js/waves.js`; the other modules read it when they spawn or hit.
 
@@ -72,6 +82,24 @@ toward you and off its 5-8 s cooldown stops, raises its sword for about 0.6 s, t
 moment. It flies at 18 m/s on a slight arc, so strafing dodges it. A hit within 0.6 m of your body costs 10 HP (x the difficulty damage
 multiplier) and shows the red damage arc toward the thrower. A dagger that misses sparks on a tree or rock, or kicks up dust on the ground, lies there
 for 5 s and is removed. Melee knights are unchanged.
+
+### Shield rush
+
+A share of the knights (chosen at spawn, never the boss, never a dagger thrower) have a third attack. A rusher 7-18 m away with a clear straight
+line to you stops, shouts, and a **red strip** on the ground shows where it will charge. The strip follows you until 0.3 s before the charge, then locks
+(it flashes). The knight then runs along the locked line at 8 m/s. If it reaches you it hits for 16 HP (x the difficulty damage multiplier) and shoves
+you back; **sidestep** it and the knight overshoots and **stumbles** for 1.4 s (also when it crashes into a tree or rock), during which it takes 1.5x
+damage. Shooting a rusher while the strip is showing breaks the charge. After a cooldown of 9-13 s it can do it again.
+Debug: `__dbg.knightRush(i?)`.
+
+### Bonus weapon: grenades
+
+Kill several knights in a row (each within 8 s of the last; 3 / 4 / 5 on Easy / Normal / Hard) and you are given grenades (3 / 2 / 2, at most 6 carried). The HUD
+shows the streak and its timer, and the grenades you hold. Press **G** (or tap **GRENADE** on a touch screen) to lob one in an arc: it bounces off the ground,
+trees and rocks, and goes off on touching a knight or when its 2 s fuse ends (the LED blinks faster as it burns down). The blast reaches 6.5 m with a falloff:
+a knight dies within about 2.5 m, the boss takes 35 %, knights are thrown back and flying daggers are destroyed. It also hurts **you** (up to 30 HP x the difficulty
+multiplier, plus a shove) inside 4.5 m, so throw it at something that is not standing on you. Kills by grenade keep the streak going.
+Debug: `__dbg.grenade.give(n) / .throw() / .state() / .tick(sec)`.
 
 ### Sound
 
@@ -99,11 +127,12 @@ src/js/hud.js             ammo, HP, wave and boss bars, banners, hitmarkers, dam
 src/js/fx.js              pooled particles, tracers, decals, blood pools, camera shake
 src/js/weapon.js          revolver viewmodel and hand (separate scene and camera), recoil, flash, reload
 src/js/combat.js          hit zones, damage, knockback, helmet pop, dropped gear physics
-src/js/enemies.js         animated Knight class (mixer, state machine, bone-attached gear, dagger throwing) + Enemies (incl. thrown daggers)
+src/js/enemies.js         animated Knight class (mixer, state machine, bone-attached gear, dagger throw, shield rush) + Enemies (incl. thrown daggers)
 src/js/boss.js            Boss extends Knight
-src/js/waves.js           Difficulty table, wave flow 1-4, boss wave 5, victory
+src/js/waves.js           Difficulty table, wave flow (4 / 5 / 6 waves, the last is the boss), victory
 src/js/game.js            player movement, hitscan firing, damage
-src/js/touch.js           on-screen touch controls (stick, aim drag, fire / reload / sprint / pause / mute)
+src/js/touch.js           on-screen touch controls (stick, aim drag, fire / reload / sprint / grenade / pause / mute)
+src/js/grenade.js         bonus weapon: kill-streak grenades (throw physics, blast, HUD)
 src/js/debug.js           __dbg helpers (only with ?debug=1)
 src/js/main.js            renderer, lights, async asset load, guarded main loop
 tools/build.mjs           embeds the used assets/*.glb + concatenates the modules into knights_out_final.html
@@ -119,6 +148,7 @@ npm run build
 npm run qa                                   # smoke test: prints SMOKE PASS/FAIL
 npm run audio                                # renders every sound offline and checks it is audible, bounded and positional
 npm run touch                                # drives the touch controls with real multi-touch events (844x390 landscape)
+npm run mobile                               # iPhone / Android / iPad profiles: layout, touch targets, overlaps, adaptive resolution
 npm run shots -- --list                      # named screenshot scenarios
 npm run shots -- d2-full-run e1-gun-fire     # PNGs -> tools/qa/out/
 ```

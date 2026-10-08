@@ -143,6 +143,14 @@ window.getInput = function () {
       if (window.HUD && HUD.updateHP) HUD.updateHP(this.playerHP);
     },
 
+    // an outside push on the player (m/s, decays in a fraction of a second): the shield rush shoves you back with it
+    shove: function (vx, vz) {
+      const s = this._shove || (this._shove = { x: 0, z: 0 });
+      s.x += vx; s.z += vz;
+      const l = Math.hypot(s.x, s.z);
+      if (l > 14) { s.x *= 14 / l; s.z *= 14 / l; }
+    },
+
     tryReload: function () {
       if (this.dead || this.reloadTimer > 0 || this.ammo === MAX_AMMO) return;
       this.reloadTimer = RELOAD_MS;
@@ -417,7 +425,8 @@ window.getInput = function () {
       this._applyKick(dt);
       this._leashEnemies();                                    // keeps strays inside the wall (see above); runs even without focus
 
-      if (!document.hasFocus()) {                              // pointer lock optional in QA (headless may not lock) — focus is what matters
+      // touch screens never have the pointer lock, and some mobile browsers report hasFocus() false while a finger is down: no guard there
+      if (!document.hasFocus() && !(window.TouchInput && TouchInput.active)) {                // pointer lock optional in QA (headless may not lock) — focus is what matters
         this.moving = false; this.sprinting = false;
         this._applyShake();
         return;
@@ -443,6 +452,14 @@ window.getInput = function () {
         if (input.backward) this.controls.moveForward(-step);
         if (input.left) this.controls.moveRight(-step);
         if (input.right) this.controls.moveRight(step);
+      }
+
+      const sv = this._shove;
+      if (sv && (sv.x || sv.z)) {
+        p.x += sv.x * dt; p.z += sv.z * dt;
+        const k = Math.exp(-7 * dt);
+        sv.x *= k; sv.z *= k;
+        if (Math.abs(sv.x) + Math.abs(sv.z) < 0.05) { sv.x = 0; sv.z = 0; }
       }
 
       // collider clamp: don't fight movement — only cancel penetration after the move

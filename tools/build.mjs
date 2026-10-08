@@ -36,7 +36,7 @@ const USED_ASSETS = [
 // Script order matters (docs/FIX_PLAN.md section 2).
 const MODULES = [
   'assets', 'world', 'sfx', 'hud', 'fx', 'weapon', 'combat',
-  'enemies', 'boss', 'waves', 'game', 'touch', 'debug', 'main',
+  'enemies', 'boss', 'waves', 'game', 'touch', 'grenade', 'debug', 'main',
 ];
 
 const PLACEHOLDERS = {
