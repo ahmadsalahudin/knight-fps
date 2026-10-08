@@ -63,3 +63,18 @@ Headless runs cannot be listened to, so every `Sfx` sound is rendered into an `O
 not silent, peak below 1.0, a 60-sound pile-up that does not clip, distance falloff, HRTF left/right placement, mute, volume + `localStorage`,
 and that nothing throws when `AudioContext` does not exist. Prints a PASS/FAIL table and exits 1 on any failure. It proves the sounds are
 present and bounded, not that they sound good.
+
+## Touch check (`touch-check.mjs`, `npm run touch`)
+Opens the game with `?touch=1` in an 844x390 landscape viewport and drives the on-screen controls with real multi-touch events
+(CDP `Input.dispatchTouchEvent`, which produces the same `pointerType: "touch"` pointer events as a phone). Checks the touch help on the
+title screen, START by tap, the floating stick (analog speed, edge = sprint, strafe, release), look drag (yaw and clamped pitch), FIRE
+(tap, and aiming while held), RELOAD, the SPRINT latch, stick + look + fire at once, mute, pause / tap to resume, the portrait pause and
+"turn your device" screen, and that a desktop session shows no touch UI. Saves `out/touch-title.png`, `out/touch-hud.png` and
+`out/touch-active.png`. Prints a PASS/FAIL table and exits 1 on any failure. It cannot judge how the controls *feel* on a real phone.
+
+## Mobile check (`mobile-check.mjs`, `npm run mobile`)
+Seven emulated devices (iPhone 13 / SE / 15 Pro Max, Pixel 7, Galaxy S9, a 640x360 low-end Android, iPad mini), each started with a real touch on START
+(no `?touch=1`): mobile viewport width, touch mode auto-detected, every control and HUD element on screen, touch targets >= 44 px, no control overlapping another control
+or the HUD (boss bar, streak box and grenade button included), stick + FIRE work, the frame is not black, no console errors. Plus the portrait "turn your device" screen and the
+adaptive resolution (without `?debug=1` the slow software renderer must make the pixel ratio step down). It is Chromium emulating phones: no Safari / WebKit, no real GPU, no
+notch. `--only=iphone13` runs one device.

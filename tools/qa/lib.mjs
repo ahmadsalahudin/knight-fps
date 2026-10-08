@@ -111,6 +111,7 @@ export async function launch(opts = {}) {
     seed = 1337,
     scenario = 'session',
     server: sharedServer = null,
+    contextOptions = {},          // e.g. { userAgent, isMobile, hasTouch, deviceScaleFactor } for device emulation
   } = opts;
 
   const pw = loadPlaywright();
@@ -124,7 +125,7 @@ export async function launch(opts = {}) {
     if (!exe) throw e;
     browser = await pw.chromium.launch({ ...launchOpts, executablePath: exe });
   }
-  const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
+  const context = await browser.newContext({ viewport, deviceScaleFactor: 1, ...contextOptions });
   if (seed !== null && seed !== undefined) await context.addInitScript(seedScript(seed));
   if (virtualClock) await context.addInitScript(CLOCK_SCRIPT);
   const page = await context.newPage();

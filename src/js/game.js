@@ -10,9 +10,10 @@
        always: FX.tracer(muzzle, point), FX.shake, Sfx.shoot, camera kick
    Every cross-module call is guarded, so any module can be missing.
    Kills: Waves owns the kill counter when Waves.onEnemyKilled exists; otherwise Game counts them itself.
-   Controls: WASD / arrow keys move, Shift sprints, mouse aims (pointer lock), left button fires, R reloads. */
+   Controls: WASD / arrow keys move, Shift sprints, mouse aims (pointer lock), left button fires, R reloads.
+   Touch (touch.js): window.TouchInput feeds an analog move vector (input.analog / ax / ay) and a sprint flag through getInput. */
 window.getInput = function () {
-  const input = { forward: false, backward: false, left: false, right: false, sprint: false };
+  const input = { forward: false, backward: false, left: false, right: false, sprint: false, analog: false, ax: 0, ay: 0 };
   const keys = {};
   document.addEventListener('keydown', function (e) {
     keys[e.code] = true;
@@ -28,6 +29,14 @@ window.getInput = function () {
     input.left = !!(keys['KeyA'] || keys['ArrowLeft']);
     input.right = !!(keys['KeyD'] || keys['ArrowRight']);
     input.sprint = !!(keys['ShiftLeft'] || keys['ShiftRight']);
+    input.analog = false; input.ax = 0; input.ay = 0;
+    // on-screen stick (touch.js): analog strafe / forward in -1..1; the keys win when one is held
+    const T = window.TouchInput;
+    if (T && T.active && (T.ax || T.ay) && !(input.forward || input.backward || input.left || input.right)) {
+      input.analog = true; input.ax = T.ax; input.ay = T.ay;
+      input.forward = T.ay > 0.15; input.backward = T.ay < -0.15; input.right = T.ax > 0.15; input.left = T.ax < -0.15;
+    }
+    if (T && T.active && T.sprint) input.sprint = true;
     return input;
   };
 };
@@ -132,6 +141,14 @@ window.getInput = function () {
       // HUD init
       if (window.HUD && HUD.updateAmmo) HUD.updateAmmo(this.ammo, MAX_AMMO, false);
       if (window.HUD && HUD.updateHP) HUD.updateHP(this.playerHP);
+    },
+
+    // an outside push on the player (m/s, decays in a fraction of a second): the shield rush shoves you back with it
+    shove: function (vx, vz) {
+      const s = this._shove || (this._shove = { x: 0, z: 0 });
+      s.x += vx; s.z += vz;
+      const l = Math.hypot(s.x, s.z);
+      if (l > 14) { s.x *= 14 / l; s.z *= 14 / l; }
     },
 
     tryReload: function () {
@@ -408,7 +425,8 @@ window.getInput = function () {
       this._applyKick(dt);
       this._leashEnemies();                                    // keeps strays inside the wall (see above); runs even without focus
 
-      if (!document.hasFocus()) {                              // pointer lock optional in QA (headless may not lock) — focus is what matters
+      // touch screens never have the pointer lock, and some mobile browsers report hasFocus() false while a finger is down: no guard there
+      if (!document.hasFocus() && !(window.TouchInput && TouchInput.active)) {                // pointer lock optional in QA (headless may not lock) — focus is what matters
         this.moving = false; this.sprinting = false;
         this._applyShake();
         return;
@@ -426,10 +444,23 @@ window.getInput = function () {
       // r147-native movement: moveForward/moveRight handle yaw-correct axes internally.
       // (never hand-rolled: my applyAxisAngle(yaw) version inverted A/D)
       const step = speed * dt;
-      if (input.forward) this.controls.moveForward(step);
-      if (input.backward) this.controls.moveForward(-step);
-      if (input.left) this.controls.moveRight(-step);
-      if (input.right) this.controls.moveRight(step);
+      if (input.analog) {                                      // touch stick: speed follows how far it is pushed
+        this.controls.moveForward(input.ay * step);
+        this.controls.moveRight(input.ax * step);
+      } else {
+        if (input.forward) this.controls.moveForward(step);
+        if (input.backward) this.controls.moveForward(-step);
+        if (input.left) this.controls.moveRight(-step);
+        if (input.right) this.controls.moveRight(step);
+      }
+
+      const sv = this._shove;
+      if (sv && (sv.x || sv.z)) {
+        p.x += sv.x * dt; p.z += sv.z * dt;
+        const k = Math.exp(-7 * dt);
+        sv.x *= k; sv.z *= k;
+        if (Math.abs(sv.x) + Math.abs(sv.z) < 0.05) { sv.x = 0; sv.z = 0; }
+      }
 
       // collider clamp: don't fight movement — only cancel penetration after the move
       for (const c of window.World.colliders) {

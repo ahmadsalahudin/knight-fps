@@ -2,10 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Knights of the Meadow</title>
 <style>
-  html,body{margin:0;height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-serif;background:#111}
+  html,body{margin:0;height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-serif;background:#111;overscroll-behavior:none}
+  body.touch{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;touch-action:none}
   canvas{display:block}
 
   /* ---- title screen ---- */
@@ -42,8 +43,57 @@
     #volSlider{width:130px}
     #lock .hint{margin:8px 0 10px;font-size:11px}
   }
+  #lock{touch-action:pan-y}
+  #lock .touchHelp{display:none}
+  body.touch #lock .kbHelp{display:none}
+  body.touch #lock .touchHelp{display:flex}
+  #lock .mobileNote{display:none;margin:2px 0 0;font-size:12px;opacity:.7}
+  body.touch #lock .mobileNote{display:block}
   #lock > :first-child{margin-top:auto}   /* centred when it fits, scrollable (not clipped) when the window is small */
   #lock > :last-child{margin-bottom:auto}
+
+  /* ---- touch controls (src/js/touch.js; shown only with body.touch while playing) ---- */
+  #touchUI{display:none;position:fixed;inset:0;z-index:15;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+           --stick:min(34vmin,150px);--fire:min(25vmin,104px);--btn:clamp(48px,15vmin,64px);--top:clamp(44px,11vmin,48px);
+           --padL:max(22px,env(safe-area-inset-left));--padR:max(22px,env(safe-area-inset-right));--padB:max(22px,env(safe-area-inset-bottom))}
+  body.touch.playing #touchUI{display:block}
+  #touchUI *{touch-action:none;-webkit-tap-highlight-color:transparent}
+  #touchLook{position:absolute;inset:0}
+  #stickZone{position:absolute;left:0;top:18%;bottom:0;width:44%}
+  #stickBase{position:absolute;left:var(--padL);bottom:var(--padB);width:var(--stick);height:var(--stick);border-radius:50%;pointer-events:none;
+             background:rgba(255,255,255,.07);border:2px solid rgba(255,255,255,.26);opacity:.75}
+  #stickBase.on{opacity:1;background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.5)}
+  #stickKnob{position:absolute;left:50%;top:50%;width:42%;height:42%;margin:-21% 0 0 -21%;border-radius:50%;
+             background:rgba(255,255,255,.3);border:2px solid rgba(255,255,255,.55)}
+  .tBtn{position:absolute;display:flex;align-items:center;justify-content:center;padding:0;border-radius:50%;pointer-events:auto;color:#fff;
+        border:2px solid rgba(255,255,255,.45);background:rgba(18,30,18,.5);font:700 12px/1 'Segoe UI',system-ui,sans-serif;letter-spacing:.08em;
+        text-shadow:0 1px 3px #000;cursor:pointer}
+  .tBtn.down,.tBtn.on{background:rgba(127,174,127,.65);border-color:#cfe8cf}
+  #tFire{right:var(--padR);bottom:calc(var(--padB) + 8px);width:var(--fire);height:var(--fire);font-size:15px;background:rgba(190,50,40,.5);border-color:rgba(255,170,150,.85)}
+  #tFire.down{background:rgba(230,70,55,.75)}
+  #tReload{right:calc(var(--padR) + var(--fire) + 14px);bottom:var(--padB);width:var(--btn);height:var(--btn)}
+  #tSprint{right:calc(var(--padR) + var(--fire) + 14px);bottom:calc(var(--padB) + var(--btn) + 12px);width:var(--btn);height:var(--btn)}
+  #tPause,#tMute{top:max(10px,env(safe-area-inset-top));width:var(--top);height:var(--top);font-size:15px;letter-spacing:0}
+  #tPause{right:var(--padR)}
+  #tMute{right:calc(var(--padR) + var(--top) + 10px)}
+  #tMute.on{background:rgba(190,50,40,.6);border-color:#ffb0a0;text-decoration:line-through}
+  /* HUD in touch mode: the corners the thumbs use are left free */
+  #tGrenade{display:none;flex-direction:column;gap:2px;right:calc(var(--padR) + (var(--fire) - var(--btn)) / 2);bottom:calc(var(--padB) + 8px + var(--fire) + 12px);
+            width:var(--btn);height:var(--btn);font-size:10px;background:rgba(80,100,40,.6);border-color:rgba(200,230,140,.85)}
+  #tGrenade b{font-size:14px;letter-spacing:0}
+  body.touch #grenadeBox{display:none !important}
+  body.touch #streakBox{right:auto;left:max(16px,env(safe-area-inset-left));bottom:auto;top:40px;width:120px;text-align:left}
+  body.touch #hpBox{left:max(16px,env(safe-area-inset-left));bottom:auto;top:12px}
+  body.touch #hpTrack{width:min(30vw,170px)}
+  body.touch #muteHint{left:max(16px,env(safe-area-inset-left));top:76px}
+  body.touch #killBox{right:calc(max(22px,env(safe-area-inset-right)) + var(--top,44px) * 2 + 24px);top:10px}
+  body.touch #ammoBox{right:max(16px,env(safe-area-inset-right));bottom:auto;top:calc(var(--top,44px) + 26px)}
+  body.touch #bossBar{top:58px}
+  body.touch #waveInfo{font-size:18px}
+  #rotateHint{display:none;position:fixed;inset:0;z-index:40;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+              background:#0b140b;color:#e8f0e0;text-align:center;font-size:20px;letter-spacing:.06em}
+  #rotateHint b{font-size:44px}
+  @media (orientation:portrait){ body.touch.playing #rotateHint{display:flex} }
 
   /* ---- pause overlay (main.js: shown when the mouse lock is lost mid-game) ---- */
   #pauseScreen{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;z-index:25;
@@ -64,6 +114,14 @@
   #waveInfo .diff{margin-left:.6em;font-size:12px;letter-spacing:.2em;opacity:.9;vertical-align:middle;color:#cfe3c4}
   #waveInfo .diff.easy{color:#9fe0a0}
   #waveInfo .diff.hard{color:#ff9a6a}
+  /* bonus weapon: grenades earned by a kill streak (grenade.js) */
+  #grenadeBox{position:absolute;right:24px;bottom:62px;display:none;align-items:center;gap:8px;text-shadow:var(--ui-shadow);font-size:12px;font-weight:700;letter-spacing:.18em}
+  #grenadeBox .key{padding:1px 6px;border:1px solid rgba(255,255,255,.6);border-radius:4px;font-size:11px}
+  #grenadePips{display:flex;gap:5px}
+  .nade-pip{display:block;width:13px;height:17px;border-radius:7px 7px 5px 5px;background:linear-gradient(#8aa05a,#3f4d28);border:1px solid rgba(0,0,0,.6);box-shadow:0 1px 3px rgba(0,0,0,.7)}
+  #streakBox{position:absolute;right:24px;bottom:92px;display:none;width:150px;text-align:right;text-shadow:var(--ui-shadow);font-size:11px;font-weight:700;letter-spacing:.2em;color:#ffd24a}
+  #streakBar{margin-top:4px;height:4px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.3);border-radius:3px;overflow:hidden}
+  #streakFill{height:100%;width:100%;background:#ffd24a}
   #muteHint{position:absolute;left:24px;top:14px;font-size:12px;font-weight:700;letter-spacing:.22em;color:#ffd24a;text-shadow:var(--ui-shadow)}
   #enemiesLeft{margin-top:2px;font-size:13px;letter-spacing:.14em;color:#d8e6d0;opacity:.9}
 
@@ -161,15 +219,24 @@
 <body>
 <div id="lock">
   <h1>Knights of the Meadow</h1>
-  <p class="goal">Hold the meadow against four waves of armoured knights, then defeat the Iron Warlord.</p>
-  <div class="controls">
+  <p class="goal">Hold the meadow against waves of armoured knights, then defeat the Iron Warlord. Harder difficulties bring more waves.</p>
+  <div class="controls kbHelp">
     <div><b>W A S D / arrows</b><span>Move</span></div>
     <div><b>Shift</b><span>Sprint</span></div>
     <div><b>Mouse</b><span>Aim</span></div>
     <div><b>Left click</b><span>Fire</span></div>
     <div><b>R</b><span>Reload</span></div>
+    <div><b>G</b><span>Throw a bonus grenade (earned by a kill streak)</span></div>
     <div><b>M</b><span>Mute / unmute</span></div>
     <div><b>Esc</b><span>Release the mouse (pauses the game)</span></div>
+  </div>
+  <div class="controls touchHelp">
+    <div><b>Left thumb</b><span>Move (push to the edge to sprint)</span></div>
+    <div><b>Right thumb</b><span>Drag to aim</span></div>
+    <div><b>FIRE</b><span>Shoot (hold it and drag to aim while shooting)</span></div>
+    <div><b>RELOAD / SPRINT</b><span>Reload / latch sprint</span></div>
+    <div><b>GRENADE</b><span>Bonus grenade from a kill streak</span></div>
+    <div><b>Top right</b><span>Pause and mute</span></div>
   </div>
   <div class="opts">
     <div class="row" role="group" aria-label="Difficulty"><span class="lbl">DIFFICULTY</span>
@@ -183,6 +250,21 @@
   </div>
   <button id="startBtn">START</button>
   <p class="hint">Click START to capture the mouse.</p>
+  <p class="mobileNote">Best played in landscape.</p>
+</div>
+
+<div id="rotateHint"><b>&#8635;</b><span>Turn your device sideways to play</span></div>
+
+<div id="touchUI" aria-hidden="true">
+  <div id="touchLook"></div>
+  <div id="stickZone"></div>
+  <div id="stickBase"><div id="stickKnob"></div></div>
+  <button class="tBtn" id="tSprint" type="button">SPRINT</button>
+  <button class="tBtn" id="tReload" type="button">RELOAD</button>
+  <button class="tBtn" id="tFire" type="button">FIRE</button>
+  <button class="tBtn" id="tGrenade" type="button"><span>GRENADE</span><b>x0</b></button>
+  <button class="tBtn" id="tMute" type="button" aria-label="Mute">&#9835;</button>
+  <button class="tBtn" id="tPause" type="button" aria-label="Pause">&#10074;&#10074;</button>
 </div>
 
 <div id="pauseScreen">
@@ -223,6 +305,9 @@
     <div id="hpTrack"><div id="hpGhost"></div><div id="hpFill"></div></div>
     <span id="hpText">100</span>
   </div>
+
+  <div id="streakBox"><div id="streakText">STREAK 0 / 4</div><div id="streakBar"><div id="streakFill"></div></div></div>
+  <div id="grenadeBox"><span>GRENADES</span><span id="grenadePips"></span><span class="key">G</span></div>
 
   <div id="ammoBox">
     <div id="reloadSpinner">RELOADING</div>

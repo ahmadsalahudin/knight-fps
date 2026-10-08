@@ -71,6 +71,12 @@ try {
       ['dagger: hit', (S) => S.dagger('hit', near), 0.6],
       ['bird', (S) => S.bird({ x: 10, y: 7, z: -15 }), 1.0],
       ['Sfx.at(pos).clang()', (S) => S.at(right).clang(), 1.4],
+      ['rushCry (positional)', (S) => S.rushCry({ x: 3, y: 1.5, z: -10 }), 1.0],
+      ['grenadeThrow', (S) => S.grenadeThrow(), 0.6],
+      ['grenadeBounce', (S) => S.grenadeBounce(near), 0.4],
+      ['grenadeBeep', (S) => S.grenadeBeep(near), 0.3],
+      ['explosion (8 m)', (S) => S.explosion({ x: 4, y: 0.5, z: -7 }), 2.6],
+      ['bonus chime', (S) => S.bonus(), 1.2],
       ['waveStart', (S) => S.waveStart(), 1.8],
       ['victory', (S) => S.victory(), 4.0],
       ['ambient (3 s of wind)', (S) => S.ambient(true), 3.0],
@@ -82,7 +88,8 @@ try {
     // pile-up: 60 sounds in one second, loud ones included
     R.extra.pileup = await render((S) => {
       const mix = [() => S.shoot(), () => S.kill(near), () => S.clang(right), () => S.armorHit(left), () => S.headshot(near),
-        () => S.bossRoar(near), () => S.footstep('boss', near), () => S.hurt(), () => S.dagger('clang', near)];
+        () => S.bossRoar(near), () => S.footstep('boss', near), () => S.hurt(), () => S.dagger('clang', near), () => S.explosion(near),
+        () => S.rushCry(near), () => S.bonus()];
       for (let i = 0; i < 60; i++) mix[i % mix.length]();
     }, 3.0);
 

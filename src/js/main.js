@@ -34,9 +34,13 @@
       scene.background = new THREE.Color(0xa8c8e8);
       scene.fog = new THREE.FogExp2(0x9fb98a, 0.018);
       const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 500);
-      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      // Phones and tablets get a lighter renderer: no MSAA on dense screens, a lower pixel ratio cap and a smaller shadow map, and the
+      // resolution steps down further by itself if frames stay slow (see adaptResolution). Desktop and ?debug=1 sessions keep full quality.
+      const lite = !!(window.TouchInput && TouchInput.active);
+      const maxRatio = Math.min(devicePixelRatio || 1, lite ? 1.75 : 2);
+      const renderer = new THREE.WebGLRenderer({ antialias: !(lite && (devicePixelRatio || 1) >= 2) });
       renderer.setSize(innerWidth, innerHeight);
-      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setPixelRatio(maxRatio);
       renderer.shadowMap.enabled = true;
       // glTF colours are linear: assets.js sets Assets.srgbOutput so the renderer converts to sRGB on output.
       if (window.Assets && window.Assets.srgbOutput) renderer.outputEncoding = THREE.sRGBEncoding;
@@ -49,7 +53,7 @@
       scene.add(new THREE.HemisphereLight(0xbfd6e4, 0x6a8f5a, 0.95));
       const sun = new THREE.DirectionalLight(0xfff3d6, 1.05);
       sun.position.set(40, 60, 20); sun.castShadow = true;
-      sun.shadow.mapSize.set(2048, 2048);
+      sun.shadow.mapSize.set(lite ? 1024 : 2048, lite ? 1024 : 2048);
       sun.shadow.camera.left = -80; sun.shadow.camera.right = 80;
       sun.shadow.camera.top = 80; sun.shadow.camera.bottom = -80;
       scene.add(sun);
@@ -59,6 +63,7 @@
       // Module init. World/Game are required, the rest are optional.
       window.World.build(scene);
       call('FX', 'init', scene, camera);
+      call('Grenade', 'init', scene);
       call('Weapon', 'init', camera, renderer);
       window.Game.init(scene, camera, renderer);
       call('HUD', 'init');
@@ -73,6 +78,7 @@
       // too soon after Esc, or the page is not focused). `onFail` runs on a rejection and on 'pointerlockerror'.
       let onLockFail = null;
       function requestLock(onFail) {
+        if (window.TouchInput && TouchInput.active) return;     // touch screens have no pointer lock: the sticks aim, nothing to request
         onLockFail = onFail || null;
         try {
           const p = renderer.domElement.requestPointerLock();
@@ -114,6 +120,7 @@
           call('Enemies', 'update', dt, window.Game.playerObj.position);
           call('Waves', 'update', dt);
         }
+        call('Grenade', 'update', dt);                       // grenades and blasts keep running while the AI is frozen (QA)
         call('Combat', 'update', dt);
         call('FX', 'update', dt);
         call('Weapon', 'update', dt, {
@@ -127,6 +134,7 @@
         scene: scene, camera: camera, renderer: renderer,
         begin: begin, start: startWaves, step: step,
         isStarted: function () { return started; },
+        pixelRatio: function () { return renderer.getPixelRatio(); },
         isPaused: function () { return paused; },
         pause: function () { setPaused(true); },
         resume: function () { setPaused(false); },
@@ -157,9 +165,29 @@
         if (started && !over && window.Main.autoPause) setPaused(true);
       });
 
+      // Adaptive resolution (touch devices, not under ?debug=1): when the average frame stays above ~34 ms for three 2 s windows in a row the
+      // pixel ratio is cut by 20 % (floor 0.6). It never goes back up, so it cannot oscillate.
+      const perf = { acc: 0, n: 0, slow: 0, age: 0 };
+      function adaptResolution(dt) {
+        if (!lite || window.__dbg || paused || !started) return;
+        perf.age += dt;
+        if (perf.age < 3) return;                              // shader compiles and first frames do not count
+        perf.acc += dt; perf.n++;
+        if (perf.acc < 2) return;
+        const avg = perf.acc / perf.n;
+        perf.acc = 0; perf.n = 0;
+        perf.slow = avg > 0.034 ? perf.slow + 1 : 0;
+        if (perf.slow >= 3) {
+          perf.slow = 0;
+          const r = Math.max(0.6, renderer.getPixelRatio() * 0.8);
+          if (r < renderer.getPixelRatio() - 0.01) { renderer.setPixelRatio(r); renderer.setSize(innerWidth, innerHeight); }
+        }
+      }
+
       (function loop() {
         requestAnimationFrame(loop);
         const dt = Math.min(clock.getDelta(), 0.1);
+        adaptResolution(dt);
         step(dt);
         try { renderer.render(scene, camera); } catch (e) {
           errCount.render = (errCount.render || 0) + 1;

@@ -126,7 +126,7 @@
     const c = ctx();
     if (c && c.state === 'suspended') { try { c.resume(); } catch (e) { /* ignore */ } }
   }
-  ['pointerdown', 'mousedown', 'keydown', 'touchstart'].forEach((ev) => {
+  ['pointerdown', 'mousedown', 'keydown', 'touchstart', 'touchend', 'click'].forEach((ev) => {   // iOS only unlocks audio on touchend / click
     try { document.addEventListener(ev, unlock, { capture: true, passive: true }); } catch (e) { /* ignore */ }
   });
 
@@ -254,7 +254,7 @@
 
   // ---------------------------------------------------------------- master, ambience, controls
   const POSITIONAL = ['shoot', 'swing', 'clang', 'armorHit', 'headshot', 'fleshHit', 'kill', 'death', 'bossRoar', 'footstep',
-    'throwWhoosh', 'dagger', 'bird'];
+    'throwWhoosh', 'dagger', 'bird', 'rushCry', 'grenadeBounce', 'grenadeBeep', 'explosion'];
 
   function applyMaster() {
     if (!S.out) return;
@@ -653,6 +653,70 @@
         T({ t: t + 0.85, dur: 2.2, type: 'sine', f0: 1046.5, f1: 1046.5, gain: 0.06, attack: 0.2, hold: 0.8, send: 0.9 });
         T({ t: t + 0.85, dur: 0.4, type: 'sine', f0: 100, f1: 50, gain: 0.7, attack: 0.003 });
       });
+    },
+
+    // grenade: the pin and spoon, then a short underarm whoosh (the player's own hands: not positional)
+    grenadeThrow: function () {
+      play(1.2, function (t) {
+        N({ t, dur: 0.02, gain: 0.5, type: 'highpass', f0: 2600, f1: 2600, attack: 0.0005 });
+        metal(t + 0.02, rnd(1700, 2100), 0.08, 0.12, 0.1);
+        N({ t: t + 0.09, dur: 0.3, gain: 0.45, type: 'bandpass', f0: 350, f1: 1500, q: 1.1, attack: 0.1 });
+        T({ t: t + 0.09, dur: 0.2, type: 'sine', f0: 150, f1: 90, gain: 0.2, attack: 0.05 });
+      });
+    },
+
+    // a grenade bouncing: a dull metal knock
+    grenadeBounce: function (pos) {
+      play(1.1, function (t) {
+        if (!gate('nadeBounce', 0.06)) return;
+        metal(t, rnd(900, 1300), 0.16, 0.14, 0.2);
+        T({ t, dur: 0.07, type: 'sine', f0: 200, f1: 100, gain: 0.3, attack: 0.001 });
+      }, pos);
+    },
+
+    // the fuse tick / blink of a live grenade
+    grenadeBeep: function (pos) {
+      play(1.0, function (t) {
+        if (!gate('nadeBeep', 0.05)) return;
+        T({ t, dur: 0.05, type: 'square', f0: 2100, f1: 2100, gain: 0.07, attack: 0.001 });
+      }, pos);
+    },
+
+    // a grenade goes off: a sub boom, a bright crack, a burst of debris and a long tail
+    explosion: function (pos) {
+      play(1.35, function (t) {
+        if (!gate('boom', 0.05)) return;
+        T({ t, dur: 1.0, type: 'sine', f0: 105, f1: 26, gain: 1.5, attack: 0.002 });
+        T({ t, dur: 0.3, type: 'triangle', f0: 260, f1: 50, gain: 0.6, attack: 0.001 });
+        N({ t, dur: 0.7, gain: 1.1, type: 'lowpass', f0: 4200, f1: 140, attack: 0.003, send: 0.9 });
+        N({ t, dur: 0.12, gain: 0.9, type: 'highpass', f0: 2000, f1: 1400, attack: 0.0005 });
+        N({ t: t + 0.03, dur: 1.2, gain: 0.35, type: 'lowpass', f0: 1800, f1: 120, attack: 0.08, send: 1.0 });
+        for (let i = 0; i < 7; i++) {
+          N({ t: t + rnd(0.12, 0.9), dur: rnd(0.04, 0.12), gain: rnd(0.12, 0.3), type: 'bandpass', f0: rnd(1200, 4200), f1: rnd(300, 900), q: 1.4, attack: 0.001 });
+        }
+      }, pos, 16);
+    },
+
+    // bonus weapon earned: a bright rising chime
+    bonus: function () {
+      play(1.0, function (t) {
+        [523.3, 659.3, 784, 1046.5].forEach(function (f, i) {
+          T({ t: t + i * 0.08, dur: 0.55, type: 'triangle', f0: f, f1: f, gain: 0.16, attack: 0.005, send: 0.5 });
+          T({ t: t + i * 0.08, dur: 0.3, type: 'sine', f0: f * 2, f1: f * 2, gain: 0.05, attack: 0.005 });
+        });
+        N({ t: t + 0.3, dur: 0.12, gain: 0.08, type: 'highpass', f0: 5000, f1: 5000, attack: 0.002 });
+      });
+    },
+
+    // a knight about to charge: a short hoarse war cry (two detuned saws through a moving formant) with a rattle of plate
+    rushCry: function (pos) {
+      play(1.1, function (t) {
+        T({ t, dur: 0.55, type: 'sawtooth', f0: 135, f1: 190, gain: 0.3, attack: 0.05, hold: 0.2, lp: [900, 1500, 1.4], send: 0.4 });
+        T({ t, dur: 0.55, type: 'sawtooth', f0: 141, f1: 198, gain: 0.22, attack: 0.05, hold: 0.2, lp: [800, 1300, 1.4] });
+        N({ t, dur: 0.5, gain: 0.25, type: 'bandpass', f0: 700, f1: 1200, q: 1.5, attack: 0.08 });
+        metal(t + 0.1, rnd(520, 700), 0.1, 0.25, 0.2);
+        metal(t + 0.22, rnd(420, 600), 0.08, 0.25, 0.2);
+      }, pos, 9);
     },
 
     // a dagger leaving the hand: a short bright whoosh and a thin metallic shing

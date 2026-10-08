@@ -1,13 +1,14 @@
 /* waves.js - window.Waves (B4 rewrite; docs/FIX_PLAN.md "Waves", diagnosis 1.5).
 
-   Flow:  waves 1-4 = 5 / 7 / 9 / 11 knights (+-2 on Hard / Easy, see Difficulty), spawned ONE AT A TIME on a ring (radius ~30)
+   Flow:  knight waves of 5 / 7 / 9 / 11 / 13 knights (+-2 on Hard / Easy, see Difficulty), spawned ONE AT A TIME on a ring (radius ~30)
           around the arena centre, preferring points behind / beside the player's view, never on a collider and never near
           the player. A wave is complete only when pending == 0 AND alive == 0.  Then the player is healed (25 HP on Normal,
           everything before the boss) via Game.heal, a 4 s countdown banner, then the next wave.
-          Wave 5 = the Boss (intro banner + Sfx.bossRoar, boss bar). Victory only after the boss dies -> HUD.victory(stats).
+          The LAST wave is the Boss (Difficulty.waves: 4 on Easy, 5 on Normal, 6 on Hard; intro banner + Sfx.bossRoar, boss bar).
+          Victory only after the boss dies -> HUD.victory(stats).
    Everything is driven by update(dt) timers (no setTimeout), so the QA virtual clock and freezeAI behave.
 
-   Boss (wave 5): `new window.Boss()` (no arguments), then mesh.position is set to the spawn point, `waveNumber` is assigned and
+   Boss (the last wave): `new window.Boss()` (no arguments), then mesh.position is set to the spawn point, `waveNumber` is assigned and
    Enemies.add(boss) is called. Waves reads boss.hp / maxHp / displayName / dead. Minions the boss summons itself (Enemies.add)
    are NOT tracked here: they do not hold the wave open and they are killed when the boss dies (victory comes only from the
    boss's death). If the Boss class is missing, throws or comes back unusable, a tougher Knight stands in (Waves.bossFallback).
@@ -33,12 +34,14 @@
   //   dmg      x enemy damage to the player        hp       x knight HP            knights  added to the knights of every wave
   //   boss     x boss HP                           heal     HP restored per wave   windup   x knight windup (telegraph) time
   //   speed    x knight walk / run speed           reach    x boss sweep / slam reach and attack distance
-  //   throwers share of knights that throw daggers (chosen when the knight spawns)
+  //   throwers share of knights that throw daggers, rushers share that do the shield rush (both chosen when the knight spawns)
+  //   waves    waves in a run, the boss being the last: more waves as the difficulty rises
+  //   streak   kills in a row that earn the bonus weapon (grenade.js), nades = how many grenades it gives
   // ------------------------------------------------------------------------------------------------------------------------
   const LEVELS = {
-    easy:   { key: 'easy',   label: 'Easy',   dmg: 0.6, hp: 0.8,  knights: -2, boss: 0.75, heal: 40, windup: 1.0, speed: 0.9,  reach: 0.9,  throwers: 0.20 },
-    normal: { key: 'normal', label: 'Normal', dmg: 1.0, hp: 1.0,  knights: 0,  boss: 1.0,  heal: 25, windup: 1.0, speed: 1.0,  reach: 1.0,  throwers: 0.35 },
-    hard:   { key: 'hard',   label: 'Hard',   dmg: 1.4, hp: 1.25, knights: 2,  boss: 1.3,  heal: 15, windup: 0.8, speed: 1.15, reach: 1.15, throwers: 0.50 },
+    easy:   { key: 'easy',   label: 'Easy',   dmg: 0.6, hp: 0.8,  knights: -2, boss: 0.75, heal: 40, windup: 1.0, speed: 0.9,  reach: 0.9,  throwers: 0.20, rushers: 0.10, streak: 3, nades: 3, waves: 4 },
+    normal: { key: 'normal', label: 'Normal', dmg: 1.0, hp: 1.0,  knights: 0,  boss: 1.0,  heal: 25, windup: 1.0, speed: 1.0,  reach: 1.0,  throwers: 0.35, rushers: 0.20, streak: 4, nades: 2, waves: 5 },
+    hard:   { key: 'hard',   label: 'Hard',   dmg: 1.4, hp: 1.25, knights: 2,  boss: 1.3,  heal: 15, windup: 0.8, speed: 1.15, reach: 1.15, throwers: 0.50, rushers: 0.35, streak: 5, nades: 2, waves: 6 },
   };
   let level = 'normal';
   try { const saved = localStorage.getItem('kf_difficulty'); if (saved && LEVELS[saved]) level = saved; } catch (e) { /* private mode */ }
@@ -73,8 +76,8 @@
 (() => {
   'use strict';
 
-  const TOTAL = 5;                       // wave 5 is the boss
-  const KNIGHTS = [0, 5, 7, 9, 11];      // knights per wave (index = wave number)
+  const KNIGHTS = [0, 5, 7, 9, 11, 13];  // knights per wave (index = wave number); the last wave of a run is the boss
+  const total = () => Difficulty.get().waves;   // waves in this run (boss included): 4 / 5 / 6 on Easy / Normal / Hard
   const RING_RADIUS = 30;
   const MIN_FROM_PLAYER = 18;            // never spawn closer than this to the player
   const COUNTDOWN = 4;                   // seconds between waves
@@ -163,7 +166,7 @@
   }
 
   const Waves = {
-    total: TOTAL,
+    get total() { return total(); },
     current: 0,
     active: false,          // a wave is in progress (spawning / fighting)
     state: 'idle',
@@ -187,8 +190,8 @@
 
     // ------------------------------------------------------------------ control
     start(n) {
-      n = Math.max(1, Math.min(TOTAL, Math.floor(Number(n)) || 1));
-      if (n === 1) { this.kills = 0; this.runTime = 0; if (window.Game) Game.kills = 0; }
+      n = Math.max(1, Math.min(total(), Math.floor(Number(n)) || 1));
+      if (n === 1) { this.kills = 0; this.runTime = 0; if (window.Game) Game.kills = 0; if (window.Grenade && Grenade.reset) Grenade.reset(); }
       this._begin(n);
     },
 
@@ -257,6 +260,7 @@
       if (!enemy || enemy._waveCounted) return;
       enemy._waveCounted = true;
       this.kills++;
+      if (window.Grenade && Grenade.onKill) { try { Grenade.onKill(enemy); } catch (e) { console.error('[waves] Grenade.onKill', e); } }   // kill streak -> bonus grenades
       if (window.Game) Game.kills = this.kills;
       if (window.HUD && HUD.setKills) HUD.setKills(this.kills);
 
@@ -317,13 +321,13 @@
       this.active = true;
       this.state = 'fighting';
       this.countdown = 0;
-      this._bossWave = (n === TOTAL);
+      this._bossWave = (n === total());
       this.pending = this._bossWave ? 1 : Math.max(1, KNIGHTS[n] + Difficulty.get().knights);
       this.alive = 0;
       this._spawnTimer = this._bossWave ? BOSS_DELAY : 0;
 
       if (window.HUD) {
-        if (HUD.setWave) HUD.setWave(n, TOTAL);
+        if (HUD.setWave) HUD.setWave(n, total());
         if (HUD.setKills) HUD.setKills(this.kills);
         if (HUD.bossBar) HUD.bossBar(false);
         if (HUD.banner) {
@@ -446,14 +450,14 @@
       this.countdown = COUNTDOWN;
       this._cdShown = -1;
       if (window.HUD && HUD.setEnemiesLeft) HUD.setEnemiesLeft(0);
-      if (window.Game && Game.heal) Game.heal(done === TOTAL - 1 ? 100 : Difficulty.get().heal);
+      if (window.Game && Game.heal) Game.heal(done === total() - 1 ? 100 : Difficulty.get().heal);
       saveBest(done);
     },
 
     _countdownBanner(sec) {
       if (!window.HUD || !HUD.banner) return;
       const done = this.current, next = done + 1;
-      const sub = (next === TOTAL ? 'The boss arrives in ' : 'Wave ' + next + ' begins in ') + sec;
+      const sub = (next === total() ? 'The boss arrives in ' : 'Wave ' + next + ' begins in ') + sec;
       // 1.6 s > the 1 s refresh period: HUD extends the same banner (no re-fade) before its fade-out begins
       HUD.banner('Wave ' + done + ' cleared', sub, 1600, { kind: 'clear' });
     },
@@ -472,7 +476,7 @@
     _victory() {
       this.state = 'victory';
       this.active = false;
-      saveBest(TOTAL);
+      saveBest(total());
       if (window.HUD && HUD.bossBar) HUD.bossBar(false);
       if (window.Sfx && Sfx.victory) Sfx.victory();
       if (window.HUD && HUD.victory) HUD.victory(this.stats());
