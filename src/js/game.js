@@ -4,12 +4,13 @@
    Firing pipeline (docs/FIX_PLAN.md "Game / Player"):
      Weapon.fire() -> muzzle position; hitscan from the camera centre against Enemies.rayTargets() AND
      World.staticTargets, nearest wins.
-       enemy : Combat.zoneFor -> Combat.damageFor -> enemy.takeHit({damage,zone,point,dir}) (legacy: Enemies.hurt)
+       enemy : Combat.zoneFor -> Combat.damageFor -> enemy.takeHit({damage,zone,point,dir})
                -> Combat.onHit / Combat.onKill -> HUD.hitmark('hit'|'head'|'kill')
        world : FX.dust + FX.impactDecal
        always: FX.tracer(muzzle, point), FX.shake, Sfx.shoot, camera kick
    Every cross-module call is guarded, so any module can be missing.
-   Kills: Waves owns the kill counter when Waves.onEnemyKilled exists; otherwise Game counts them itself. */
+   Kills: Waves owns the kill counter when Waves.onEnemyKilled exists; otherwise Game counts them itself.
+   Controls: WASD / arrow keys move, Shift sprints, mouse aims (pointer lock), left button fires, R reloads. */
 window.getInput = function () {
   const input = { forward: false, backward: false, left: false, right: false, sprint: false };
   const keys = {};
@@ -32,7 +33,7 @@ window.getInput = function () {
   const MAX_AMMO = 6;
   const RELOAD_MS = 1600;
   const FIRE_GATE_MS = 350;
-  const LEGACY_DAMAGE = 34;       // used only when Combat.damageFor is absent
+  const FALLBACK_DAMAGE = 34;     // used only when Combat.damageFor is absent
   const X_AXIS = new THREE.Vector3(1, 0, 0);
   const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
@@ -42,11 +43,7 @@ window.getInput = function () {
   const _q = new THREE.Quaternion();
 
   function isDead(e) {
-    if (!e) return false;
-    if (e.dead === true) return true;
-    if (e.hp !== undefined && e.hp <= 0) return true;
-    const ud = e.mesh && e.mesh.userData;
-    return !!(ud && (ud.dying || (ud.hp !== undefined && ud.hp <= 0)));
+    return !!e && (e.dead === true || (typeof e.hp === 'number' && e.hp <= 0));
   }
 
   // first intersection whose object (and all of its ancestors) is visible
@@ -57,6 +54,17 @@ window.getInput = function () {
       if (ok) return hits[i];
     }
     return null;
+  }
+
+  // Raycasts read the world matrices and the skeleton as of the LAST render (skinned meshes are tested at their posed
+  // vertices via skeleton.boneMatrices). Refresh the targets first so a shot is exact even when the frame is stale
+  // (long frame, or a headless fast-forward that steps the simulation without rendering).
+  function refreshTargets(list) {
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      m.updateMatrixWorld(true);
+      m.traverse(function (o) { if (o.isSkinnedMesh && o.skeleton) o.skeleton.update(); });
+    }
   }
 
   // damped spring used for the camera kick (angle in radians)
@@ -182,6 +190,7 @@ window.getInput = function () {
       rc.set(origin, dir);
       rc.near = 0.1; rc.far = 200;
       const eTargets = (window.Enemies && Enemies.rayTargets) ? Enemies.rayTargets() : [];
+      refreshTargets(eTargets);
       const eHit = eTargets.length ? firstVisible(rc.intersectObjects(eTargets, true)) : null;
       const sTargets = (window.World && World.staticTargets) ? World.staticTargets : null;
       const wHit = (sTargets && sTargets.length) ? firstVisible(rc.intersectObjects(sTargets, true)) : null;
@@ -221,7 +230,7 @@ window.getInput = function () {
         zone: 'torso', damage: 0, killed: false };
       this.hits++;
 
-      let zone = 'torso', damage = LEGACY_DAMAGE;
+      let zone = 'torso', damage = FALLBACK_DAMAGE;
       if (enemy && window.Combat) {
         try { if (Combat.zoneFor) zone = Combat.zoneFor(enemy, hit) || 'torso'; } catch (e) { console.error('[Game] Combat.zoneFor', e); }
         try { if (Combat.damageFor) { const d = Combat.damageFor(zone, enemy); if (typeof d === 'number' && isFinite(d)) damage = d; } } catch (e) { console.error('[Game] Combat.damageFor', e); }
@@ -233,30 +242,22 @@ window.getInput = function () {
       const hitData = { damage: damage, zone: zone, point: point.clone(), dir: dir.clone() };
       try {
         if (enemy && typeof enemy.takeHit === 'function') enemy.takeHit(hitData);
-        else if (window.Enemies && Enemies.hurt && root) Enemies.hurt(root, damage, point);
-        else if (enemy && typeof enemy.hurt === 'function') enemy.hurt(damage);
       } catch (e) { console.error('[Game] enemy hit failed', e); }
       const killed = !wasDead && isDead(enemy);
       hitInfo.killed = killed;
 
       // hit / kill reactions (sparks, blood, knockback, loose gear ...) live in Combat; plain FX fallback otherwise
       let kind = killed ? 'kill' : (zone === 'head' ? 'head' : 'hit');
-      const hasCombat = window.Combat && (killed ? Combat.onKill : Combat.onHit);
-      if (hasCombat) {
+      if (window.Combat) {
         try {
           if (killed) {
-            // the enemy's own die() may already have called Combat.onKill (plan: Knight.die); Combat flags that with enemy._killFx
-            if (!enemy._killFx) { const r = Combat.onKill(enemy, hit, dir); if (r === 'hit' || r === 'head' || r === 'kill') kind = r; }
-          } else {
+            // the enemy's own die() already called Combat.onKill (Knight.die); Combat flags that with enemy._killFx
+            if (!enemy._killFx && Combat.onKill) { const r = Combat.onKill(enemy, hit, dir); if (r === 'hit' || r === 'head' || r === 'kill') kind = r; }
+          } else if (Combat.onHit) {
             const r = Combat.onHit(enemy, hit, dir);
             if (r === 'hit' || r === 'head') kind = r;
           }
         } catch (e) { console.error('[Game] Combat reaction', e); }
-      } else {
-        const n = dir.clone().negate();
-        if (window.FX && FX.sparks) FX.sparks(point, n);
-        if (window.FX && FX.blood) FX.blood(point, dir, killed ? 14 : 6);
-        if (window.Sfx && Sfx.armorHit) Sfx.armorHit();
       }
       if (window.HUD && HUD.hitmark) HUD.hitmark(kind);
 
@@ -421,15 +422,13 @@ window.getInput = function () {
     }
   };
 
+  // Enemy attacks call Player.hurt(dmg, attacker): `attacker` (enemy / Object3D / Vector3 / {x,z}) orients the HUD arc.
   window.Player = {
     hurt: function (dmg, from) {
+      const G = window.Game;
+      if (G.dead || G.godMode) return;                         // no pain sound while dead or in god mode
       if (window.Sfx && Sfx.hurt) Sfx.hurt();
-      window.Game.hurt(dmg, from);
-    },
-    hp: function () { return window.Game.playerHP; },
-    fire: function () { return window.Game.tryFire.apply(window.Game, arguments); },
-    get position() {
-      return (window.Game && window.Game.playerObj) ? window.Game.playerObj.position : new THREE.Vector3();
+      G.hurt(dmg, from);
     }
   };
 })();

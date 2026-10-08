@@ -23,8 +23,7 @@
      hitmark('hit'|'head'|'kill')        white ticks / gold ticks + ring / big red ticks + ring
      bossBar(show, frac, name)           cheap to call every frame
      setKills(n), setEnemiesLeft(n)
-     gameOver(stats|wave), victory(stats|wave)   stats: { wave, kills, shots, time(s), best }
-   The old Smite power-up (dead code, called a non-existent Sfx.roar, nothing ever activated it) was removed. */
+     gameOver(stats|wave), victory(stats|wave)   stats: { wave, kills, shots, time(s), best } */
 (function () {
   'use strict';
 

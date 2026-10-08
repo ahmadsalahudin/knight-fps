@@ -1,6 +1,4 @@
 /* debug.js — window.__dbg, active ONLY when the page is opened with ?debug=1 (used by tools/qa).
-   Best-effort against whatever the other modules currently expose: every helper checks for the optional
-   APIs of later waves (Enemies.clear, enemy.takeHit, Waves.stop, ...) and falls back to the original code.
    Modules may attach their own helpers as __dbg.<module> (debug.js loads before main.js runs any init).
 
    __dbg.godMode(on)                 player takes no damage
@@ -9,7 +7,8 @@
    __dbg.freezeAI(on)                main loop stops Enemies.update / Waves.update
    __dbg.lookAt(x, y, z)             aim the camera at a world point (also accepts {x,y,z} or [x,y,z])
    __dbg.killAll()                   kill every living enemy through the normal damage path
-   __dbg.state()                     JSON snapshot (wave, alive, pending, hp, ammo, enemies with state + clip names)
+   __dbg.state()                     JSON snapshot (wave, alive, pending, hp, ammo, waves = Waves.snapshot(), overlays,
+                                     enemies with state + clip names)
    extras: begin(), start(), fire(), teleport(x, z, yawDeg?), clear(), ready() */
 (function () {
   let enabled = false;
@@ -21,21 +20,9 @@
   const round = (v) => Math.round(v * 1000) / 1000;
   const playerPos = () => (window.Game && Game.playerObj) ? Game.playerObj.position : null;
 
-  // ---- god mode: wrap Game.hurt once; the wrapper honours dbg.god -------------------------------------------
-  function installGodWrap() {
-    const G = window.Game;
-    if (!G || typeof G.hurt !== 'function' || G.hurt.__dbgWrapped) return;
-    const orig = G.hurt;
-    G.hurt = function () {
-      if (dbg.god) return;
-      return orig.apply(this, arguments);
-    };
-    G.hurt.__dbgWrapped = true;
-  }
-
   // ---- helpers ----------------------------------------------------------------------------------------------
   function isDead(e) {
-    return !!(e.dead || (e.mesh && e.mesh.userData && e.mesh.userData.dying));
+    return !!(e.dead || (typeof e.hp === 'number' && e.hp <= 0));
   }
 
   function clipName(e) {
@@ -54,12 +41,11 @@
   }
 
   function describe(e) {
-    const ud = (e.mesh && e.mesh.userData) || {};
     const p = e.mesh ? e.mesh.position : null;
     const pp = playerPos();
     return {
-      type: e.type || ud.type || null,
-      hp: e.hp !== undefined ? e.hp : (ud.hp !== undefined ? ud.hp : null),
+      type: e.type || null,
+      hp: e.hp !== undefined ? e.hp : null,
       maxHp: e.maxHp !== undefined ? e.maxHp : null,
       state: e.state !== undefined ? e.state : null,
       clip: clipName(e),
@@ -67,15 +53,6 @@
       pos: p ? [round(p.x), round(p.y), round(p.z)] : null,
       dist: (p && pp) ? round(Math.hypot(p.x - pp.x, p.z - pp.z)) : null
     };
-  }
-
-  function clearEnemies() {
-    const E = window.Enemies;
-    if (!E) return;
-    if (typeof E.clear === 'function') { E.clear(); return; }
-    const scene = window.Game && Game.scene;
-    for (const e of E.list.slice()) { if (scene && e.mesh) scene.remove(e.mesh); }
-    E.list.length = 0;
   }
 
   // ---- public API -------------------------------------------------------------------------------------------
@@ -86,23 +63,18 @@
 
   dbg.godMode = function (on) {
     dbg.god = (on === undefined) ? true : !!on;
-    if (window.Game) Game.godMode = dbg.god;   // game.js may also honour this flag directly
-    installGodWrap();
+    if (window.Game) Game.godMode = dbg.god;   // honoured by Game.hurt and Player.hurt
     return dbg.god;
   };
 
-  dbg.clear = function () { clearEnemies(); };
+  // remove every enemy without going through the kill path (no kill counted, no death FX)
+  dbg.clear = function () { if (window.Enemies) Enemies.clear(); };
 
   dbg.skipToWave = function (n) {
     n = Math.max(1, Math.floor(Number(n) || 1));
     dbg.begin();
-    clearEnemies();
-    const W = window.Waves;
-    if (!W) return false;
-    // stop whatever the previous wave was still doing (pending spawns, timers)
-    if (typeof W.stop === 'function') W.stop();
-    else { W.active = false; W.respawnPending = 0; if ('pending' in W) W.pending = 0; }
-    W.start(n);
+    if (!window.Waves) return false;
+    Waves.skipTo(n);        // Enemies.clear() + stop pending spawns / timers + start(n)
     return true;
   };
 
@@ -161,13 +133,7 @@
     for (const e of E.list.slice()) {
       if (isDead(e)) continue;
       const p = e.mesh.position;
-      if (typeof e.takeHit === 'function') {
-        e.takeHit({ damage: 1e6, zone: 'torso', point: new THREE.Vector3(p.x, 1, p.z), dir: new THREE.Vector3(0, 0, -1) });
-      } else if (typeof E.hurt === 'function') {
-        E.hurt(e.mesh, 1e6);
-      } else if (typeof e.die === 'function') {
-        e.die();
-      }
+      e.takeHit({ damage: 1e6, zone: 'torso', point: new THREE.Vector3(p.x, 1, p.z), dir: new THREE.Vector3(0, 0, -1) });
       n++;
     }
     return n;
@@ -182,13 +148,13 @@
       const d = new THREE.Vector3(); G.camera.getWorldDirection(d);
       yaw = round(Math.atan2(-d.x, -d.z) * 180 / Math.PI);   // 0 = looking down -Z, + = turning left
     }
-    const pending = (W.pending !== undefined) ? W.pending : W.respawnPending;
     const alive = (typeof E.aliveCount === 'function') ? E.aliveCount() : enemies.filter(e => !e.dead).length;
+    const shown = (id) => { const el = document.getElementById(id); return !!el && getComputedStyle(el).display !== 'none'; };
     return JSON.parse(JSON.stringify({
       started: !!(window.Main && Main.isStarted && Main.isStarted()),
       wave: W.current !== undefined ? W.current : null,
       waveActive: W.active !== undefined ? !!W.active : null,
-      pending: pending !== undefined ? pending : null,
+      pending: W.pending !== undefined ? W.pending : null,
       alive: alive,
       hp: G.playerHP !== undefined ? G.playerHP : null,
       ammo: G.ammo !== undefined ? G.ammo : null,
@@ -199,6 +165,8 @@
       godMode: dbg.god,
       frozen: dbg.frozen,
       player: pp ? { x: round(pp.x), y: round(pp.y), z: round(pp.z), yawDeg: yaw } : null,
+      waves: typeof W.snapshot === 'function' ? W.snapshot() : null,
+      screens: { lock: shown('lock'), pause: shown('pauseScreen'), gameOver: shown('gameOverScreen'), victory: shown('victoryScreen') },
       enemies: enemies
     }));
   };

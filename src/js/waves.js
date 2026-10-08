@@ -6,6 +6,11 @@
           Wave 5 = the Boss (intro banner + Sfx.bossRoar, boss bar). Victory only after the boss dies -> HUD.victory(stats).
    Everything is driven by update(dt) timers (no setTimeout), so the QA virtual clock and freezeAI behave.
 
+   Boss (wave 5): `new window.Boss()` (no arguments), then mesh.position is set to the spawn point, `waveNumber` is assigned and
+   Enemies.add(boss) is called. Waves reads boss.hp / maxHp / displayName / dead. Minions the boss summons itself (Enemies.add)
+   are NOT tracked here: they do not hold the wave open and they are killed when the boss dies (victory comes only from the
+   boss's death). If the Boss class is missing, throws or comes back unusable, a tougher Knight stands in (Waves.bossFallback).
+
    Public API
      Waves.start(n)               begin wave n (1..5) right now. n == 1 also resets the run stats (kills, time).
      Waves.stop()                 halt the wave flow: no more spawns, banner / boss bar hidden, state 'idle'.
@@ -34,8 +39,8 @@
   const bestOf = () => { try { return parseInt(localStorage.getItem('kf_best') || '0', 10) || 0; } catch (e) { return 0; } };
   const saveBest = (n) => { try { if (n > bestOf()) localStorage.setItem('kf_best', String(n)); } catch (e) { /* private mode */ } };
 
-  const isDead = (e) => !!(e && (e.dead === true || (e.mesh && e.mesh.userData && e.mesh.userData.dying)));
-  const hpOf = (e) => (typeof e.hp === 'number' ? e.hp : (e.mesh && e.mesh.userData ? e.mesh.userData.hp : undefined));
+  const isDead = (e) => !!(e && (e.dead === true || (typeof e.hp === 'number' && e.hp <= 0)));
+  const hpOf = (e) => (typeof e.hp === 'number' ? e.hp : undefined);
   const inList = (e) => !!(window.Enemies && Enemies.list && Enemies.list.indexOf(e) >= 0);
 
   // Pick a spawn point on the ring: behind / beside the view, clear of colliders, far from the player.
@@ -75,12 +80,36 @@
 
   function killEnemy(e) {
     try {
-      if (typeof e.takeHit === 'function') {
-        const p = e.mesh.position;
-        e.takeHit({ damage: 1e6, zone: 'torso', point: new THREE.Vector3(p.x, 1, p.z), dir: new THREE.Vector3(0, 0, -1) });
-      } else if (window.Enemies && typeof Enemies.hurt === 'function') Enemies.hurt(e.mesh, 1e6);
-      else if (typeof e.die === 'function') e.die();
+      const p = e.mesh.position;
+      e.takeHit({ damage: 1e6, zone: 'torso', point: new THREE.Vector3(p.x, 1, p.z), dir: new THREE.Vector3(0, 0, -1) });
     } catch (err) { console.error('[waves] could not kill leftover enemy', err); }
+  }
+
+  function standInKnight(wave) {
+    const k = new window.Knight({ scale: 1.5, hp: 800, maxHp: 800, type: 'boss', knockbackScale: 0.1, displayName: BOSS_NAME + ' (stand-in)' });
+    k.waveNumber = wave;
+    return k;
+  }
+
+  // Build the boss. Returns { enemy, fallback }. The real Boss is used when it constructs and looks like a Knight
+  // (mesh + takeHit); otherwise a tougher plain Knight stands in so wave 5 can still be played and reported.
+  function makeBoss(wave) {
+    let err = null;
+    try {
+      if (typeof window.Boss !== 'function') throw new Error('window.Boss is not defined');
+      const b = new window.Boss();
+      if (!b || !b.mesh || typeof b.takeHit !== 'function') throw new Error('Boss instance has no mesh / takeHit');
+      b.waveNumber = wave;
+      return { enemy: b, fallback: false, error: null };
+    } catch (e) { err = e; }
+    console.error('[waves] Boss construction failed, using a tougher knight as a stand-in:', err);
+    const msg = String((err && err.message) || err);
+    try {
+      return { enemy: standInKnight(wave), fallback: true, error: msg };
+    } catch (err2) {
+      console.error('[waves] stand-in knight failed too:', err2);
+      return { enemy: null, fallback: true, error: msg };
+    }
   }
 
   const Waves = {
@@ -166,6 +195,7 @@
       }
 
       this._updateBossBar();
+      this._hud();
 
       if (this._bossWave && this.bossKilled) { this._beginVictory(); return; }
       if (this.pending === 0 && this.alive === 0) this._finishWave();
@@ -263,20 +293,10 @@
       const pos = pickSpawn();
       let e = null;
       if (this._bossWave) {
-        try {
-          if (typeof window.Boss !== 'function') throw new Error('window.Boss is not defined');
-          e = new window.Boss();
-        } catch (err) {
-          this.bossError = String((err && err.message) || err);
-          console.error('[waves] Boss construction failed, using a tougher knight as a stand-in:', err);
-          try {
-            e = new window.Knight();
-            this.bossFallback = true;
-            if (typeof e.hp === 'number') { e.hp *= 8; if (typeof e.maxHp === 'number') e.maxHp = e.hp; }
-            else if (e.mesh && e.mesh.userData && typeof e.mesh.userData.hp === 'number') e.mesh.userData.hp *= 8;
-            if (e.mesh) e.mesh.scale.multiplyScalar(1.5);
-          } catch (err2) { e = null; console.error('[waves] stand-in knight failed too:', err2); }
-        }
+        const b = makeBoss(this.current);
+        e = b.enemy;
+        this.bossFallback = b.fallback;
+        this.bossError = b.error;
       } else {
         try { e = new window.Knight(); } catch (err) {
           console.error('[waves] Knight construction failed:', err);
@@ -286,16 +306,27 @@
 
       this.pending--;
       if (!e) { this.spawnFailures++; this._hud(); return; }
+      e.waveNumber = this.current;
 
       try {
         e.mesh.position.set(pos.x, 0, pos.z);
-        e.waveNumber = this.current;
         window.Enemies.add(e);
       } catch (err) {
         console.error('[waves] could not add enemy to the arena:', err);
-        this.spawnFailures++;
-        this._hud();
-        return;
+        if (this._bossWave && !this.bossFallback) {         // the real boss was built but cannot be added: stand-in
+          try { if (e.mesh && e.mesh.parent) e.mesh.parent.remove(e.mesh); const i = Enemies.list.indexOf(e); if (i >= 0) Enemies.list.splice(i, 1); } catch (e2) { /* ignore */ }
+          this.bossError = String((err && err.message) || err);
+          this.bossFallback = true;
+          try {
+            e = standInKnight(this.current);
+            e.mesh.position.set(pos.x, 0, pos.z);
+            window.Enemies.add(e);
+          } catch (err3) { console.error('[waves] stand-in knight failed too:', err3); this.spawnFailures++; this._hud(); return; }
+        } else {
+          this.spawnFailures++;
+          this._hud();
+          return;
+        }
       }
       this._tracked.push(e);
       this.alive++;
@@ -331,8 +362,21 @@
       HUD.bossBar(true, typeof hp === 'number' ? Math.max(0, hp) / max : 1, this._bossName());
     },
 
+    // Enemies on the field that this wave did not spawn itself and that are still alive (minions summoned by the boss,
+    // debug spawns): they show up in "enemies left" but never hold the wave open.
+    _extras() {
+      const L = window.Enemies && Enemies.list;
+      if (!L) return 0;
+      let n = 0;
+      for (let i = 0; i < L.length; i++) {
+        const e = L[i];
+        if (!isDead(e) && !e._waveCounted && this._tracked.indexOf(e) < 0) n++;
+      }
+      return n;
+    },
+
     _hud() {
-      if (window.HUD && HUD.setEnemiesLeft) HUD.setEnemiesLeft(this.pending + this.alive);
+      if (window.HUD && HUD.setEnemiesLeft) HUD.setEnemiesLeft(this.pending + this.alive + this._extras());
     },
 
     _finishWave() {
