@@ -60,6 +60,7 @@
   const LINGER = 8, SINK = 2, SINK_DEPTH = 0.55;      // corpse: stays 8 s, sinks for 2 s, then is removed
   const BODY_R = 0.42;                                // collision radius of a 1.8 m knight
   const ARENA = 58;
+  const DEATH_TURN = 4;                               // rad/s: how fast a falling knight turns toward its fall direction
 
   // Gear fit, measured on the 1.8 m knight. pos is in METRES inside the bone's own axes (x, y, z of the bone), rot in radians
   // (bone-local), scale in metres per native glTF unit. Everything is multiplied by the knight's scale at mount time.
@@ -69,7 +70,7 @@
   //             it is turned 0.75 rad about the forearm so the face also looks forward and reads from the front.
   const GEAR = {
     helmet: { asset: 'knight_helmet1', bone: 'Head', pos: [0, 0.235, -0.032], rot: [0, 0, 0], scale: 0.29 },
-    sword: { asset: 'knight_sword', bone: 'Palm.R', pos: [0.04, 0.025, -0.02], rot: [0, 0, Math.PI / 2], scale: 0.30 },
+    sword: { asset: 'knight_sword', bone: 'Palm.R', pos: [0.04, 0.025, -0.02], rot: [Math.PI / 2, 0, Math.PI / 2], scale: 0.30 },
     shield: { asset: 'knight_shield', bone: 'LowerArm.L', pos: [0.06, 0.17, 0.17], rot: [0, 0.75, 0], scale: 0.30 },
   };
 
@@ -710,7 +711,11 @@
       this._deadT = 0;
       // fall the way the bullet was travelling: the Death clip topples toward the model's +Z
       const d = hit.dir;
-      if (d && (Math.abs(d.x) + Math.abs(d.z)) > 1e-3) this._targetYaw = Math.atan2(d.x, d.z);
+      if (d && (Math.abs(d.x) + Math.abs(d.z)) > 1e-3) {
+        // turn at most a quarter circle (a frontal kill topples sideways instead of pirouetting 180 deg to show its back)
+        const turn = clamp(angDiff(this._yaw, Math.atan2(d.x, d.z)), -Math.PI / 2, Math.PI / 2);
+        this._targetYaw = this._yaw + turn;
+      }
       this._flinch = 0;
       if (!this._killFx && window.Combat && Combat.onKill) {
         try { Combat.onKill(this, hit, hit.dir); } catch (e) { console.error('[Knight] Combat.onKill', e); }
@@ -728,7 +733,7 @@
       // turn to the fall direction during the first part of the Death clip
       if (this._targetYaw !== null) {
         const err = angDiff(this._yaw, this._targetYaw);
-        this._yaw += clamp(err, -9 * dt, 9 * dt);
+        this._yaw += clamp(err, -DEATH_TURN * dt, DEATH_TURN * dt);
         this.mesh.rotation.y = this._yaw;
         if (Math.abs(err) < 0.01) this._targetYaw = null;
       }
