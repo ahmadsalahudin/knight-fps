@@ -69,33 +69,6 @@
     return t;
   }
 
-  // pale skin: warm base, soft blotches, fine pores, faint blue-green veins and creases (generated, 256 px, wraps)
-  function makeSkinTexture(base, shade) {
-    const t = canvasTex(256, 256, (g, w, h) => {
-      g.fillStyle = base; g.fillRect(0, 0, w, h);
-      const wrap = (x, y, r, fn) => { for (const ox of [-w, 0, w]) for (const oy of [-h, 0, h]) { if (x + ox + r < 0 || x + ox - r > w || y + oy + r < 0 || y + oy - r > h) continue; fn(x + ox, y + oy); } };
-      let seed = 1337; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-      for (let i = 0; i < 70; i++) {                       // soft blood-flush and shade blotches
-        const x = rnd() * w, y = rnd() * h, r = 18 + rnd() * 40, warm = rnd() < 0.5;
-        wrap(x, y, r, (cx, cy) => { const gr = g.createRadialGradient(cx, cy, 0, cx, cy, r); const c = warm ? '255,150,130' : shade; gr.addColorStop(0, 'rgba(' + c + ',0.10)'); gr.addColorStop(1, 'rgba(' + c + ',0)'); g.fillStyle = gr; g.fillRect(cx - r, cy - r, r * 2, r * 2); });
-      }
-      g.lineCap = 'round';
-      for (let i = 0; i < 9; i++) {                        // faint veins
-        const x = rnd() * w, y = rnd() * h, a = rnd() * 6.28; g.strokeStyle = 'rgba(120,140,170,0.10)'; g.lineWidth = 2 + rnd() * 2.5; g.beginPath(); g.moveTo(x, y);
-        g.bezierCurveTo(x + Math.cos(a) * 30, y + Math.sin(a) * 30, x + Math.cos(a + 1) * 60, y + Math.sin(a + 1) * 60, x + Math.cos(a + 0.4) * 90, y + Math.sin(a + 0.4) * 90); g.stroke();
-      }
-      g.strokeStyle = 'rgba(150,100,85,0.16)';             // skin creases
-      for (let i = 0; i < 26; i++) { const x = rnd() * w, y = rnd() * h, l = 14 + rnd() * 26; g.lineWidth = 0.8 + rnd() * 0.8; g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + l / 2, y + (rnd() - 0.5) * 8, x + l, y + (rnd() - 0.5) * 6); g.stroke(); }
-      const img = g.getImageData(0, 0, w, h), d = img.data;   // fine grain + pores
-      for (let i = 0; i < d.length; i += 4) { const n = (rnd() - 0.5) * 14; d[i] += n; d[i + 1] += n * 0.9; d[i + 2] += n * 0.8; }
-      g.putImageData(img, 0, 0);
-      for (let i = 0; i < 900; i++) { g.fillStyle = 'rgba(120,70,60,' + (0.05 + rnd() * 0.07) + ')'; g.beginPath(); g.arc(rnd() * w, rnd() * h, 0.6 + rnd() * 0.7, 0, 6.28); g.fill(); }
-    });
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.anisotropy = 4;
-    return t;
-  }
-
   function makeStarTexture() {
     return canvasTex(128, 128, (g, w, h) => {
       g.clearRect(0, 0, w, h);
@@ -305,16 +278,14 @@
 
     _makeMaterials: function () {
       const col = (h) => this._col(h);
-      const skin = (b, sh) => { const t = makeSkinTexture(b, sh); if (this.srgb) t.encoding = THREE.sRGBEncoding; return t; };
       this.mats = {
         dark: new THREE.MeshPhongMaterial({ color: col(0x2c3036), specular: col(0x3a4046), shininess: 30 }),
         light: new THREE.MeshPhongMaterial({ color: col(0x626972), specular: col(0x545b63), shininess: 30 }),
         wood: new THREE.MeshPhongMaterial({ color: col(0x5d3a20), specular: col(0x34271a), shininess: 22 }),
-        // bare, pale hands (generated skin textures, smooth shading)
-        glove: new THREE.MeshPhongMaterial({ color: 0xffffff, map: skin('#efcdb8', '200,150,140'), specular: col(0x3a2e2a), shininess: 18 }),
-        glove2: new THREE.MeshPhongMaterial({ color: 0xf2dccf, map: skin('#e6bfa8', '190,140,135'), specular: col(0x30262a), shininess: 14 }),
-        sleeve: new THREE.MeshPhongMaterial({ color: col(0x4a5668), specular: col(0x141a22), shininess: 6 }),
-        cuff: new THREE.MeshPhongMaterial({ color: col(0x3a2a1c), specular: col(0x16100a), shininess: 8 })
+        glove: new THREE.MeshPhongMaterial({ color: col(0x6b4a30), specular: col(0x241a12), shininess: 10, flatShading: true }),
+        glove2: new THREE.MeshPhongMaterial({ color: col(0x4d3523), specular: col(0x1a120c), shininess: 8, flatShading: true }),
+        sleeve: new THREE.MeshPhongMaterial({ color: col(0x4a5668), specular: col(0x141a22), shininess: 6, flatShading: true }),
+        cuff: new THREE.MeshPhongMaterial({ color: col(0x3a2a1c), specular: col(0x16100a), shininess: 8, flatShading: true })
       };
     },
 
@@ -571,7 +542,7 @@
       const up = new V3(0, 1, 0);
       const limb = (a, b, r, mat, seg) => {            // capsule from a to b
         const d = new V3().subVectors(b, a), len = d.length();
-        const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.0005, len - 2 * r), 6, (seg || 6) * 2), mat);
+        const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.0005, len - 2 * r), 2, seg || 6), mat);
         m.position.copy(a).add(b).multiplyScalar(0.5);
         m.quaternion.setFromUnitVectors(up, d.normalize());
         m.frustumCulled = false;
@@ -579,7 +550,7 @@
       };
       const taper = (a, b, ra, rb, mat, seg) => {      // cone frustum, radius ra at a, rb at b
         const d = new V3().subVectors(b, a), len = d.length();
-        const m = new THREE.Mesh(new THREE.CylinderGeometry(rb, ra, len, (seg || 8) * 2, 1), mat);
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(rb, ra, len, seg || 8, 1), mat);
         m.position.copy(a).add(b).multiplyScalar(0.5);
         m.quaternion.setFromUnitVectors(up, d.normalize());
         m.frustumCulled = false;
@@ -607,7 +578,7 @@
 
       // back of the hand: faceted ellipsoid behind (and to the right of) the grip, tilted with the grip rake
       const blob = (c, rx, ry, rz, mat, q) => {
-        const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 3), mat);
+        const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), mat);
         m.scale.set(rx, ry, rz);
         m.position.copy(c);
         if (q) m.quaternion.copy(q);
@@ -617,9 +588,12 @@
       const basis = new THREE.Matrix4().makeBasis(new V3(1, 0, 0), u.clone().negate(), n);
       const palmQ = new THREE.Quaternion().setFromRotationMatrix(basis);
       const palmC = mid.clone().addScaledVector(n, halfD + 0.010).add(new V3(0.010, 0.0, 0));
-      R.add(blob(palmC, 0.029, 0.040, 0.017, M.glove, palmQ));       // flattened back of the hand
-      // the side of the palm against the grip, kept low so it reads as one smooth hand, not a lump
-      R.add(blob(mid.clone().add(new V3(0.012, 0.004, -0.001)), 0.013, 0.036, 0.020, M.glove2, palmQ));
+      R.add(blob(palmC, 0.031, 0.043, 0.024, M.glove, palmQ));
+      // heel of the hand / web between thumb and index finger, over the top strap
+      const webC = gT.clone().addScaledVector(n, halfD + 0.002).addScaledVector(u, -0.006).add(new V3(0.0, 0.0, 0));
+      R.add(blob(webC, 0.022, 0.016, 0.019, M.glove2, palmQ));
+      // palm side covering the right of the grip
+      R.add(blob(mid.clone().add(new V3(0.016, 0.003, -0.002)), 0.016, 0.040, 0.025, M.glove2, palmQ));
 
       // three fingers wrapped around the front of the grip (tips curl round to the left side)
       for (let i = 0; i < 3; i++) {
@@ -627,7 +601,7 @@
         const c = gT.clone().addScaledVector(u, sOff).addScaledVector(n, -(halfD + 0.007));
         const a = c.clone().add(new V3(-0.0195 + i * 0.0015, 0, 0));
         const b = c.clone().add(new V3(0.024, 0, 0));
-        R.add(limb(a, b, 0.0080 - i * 0.0006, i % 2 ? M.glove2 : M.glove, 6));
+        R.add(limb(a, b, 0.0088 - i * 0.0007, i % 2 ? M.glove2 : M.glove, 6));
       }
       // index finger along the left of the frame, resting on the trigger
       const knuckle = gT.clone().addScaledVector(n, -(halfD + 0.002)).add(new V3(-0.0135, 0.0045, 0));
@@ -636,7 +610,7 @@
       // thumb lying along the left side of the frame
       const thumbRoot = gT.clone().addScaledVector(n, halfD - 0.004).add(new V3(-0.009, 0.013, 0));
       const thumbTip = new V3(-0.0195, 0.0265, -0.040);
-      R.add(blob(thumbRoot, 0.010, 0.010, 0.011, M.glove2, null));
+      R.add(blob(thumbRoot, 0.012, 0.012, 0.014, M.glove2, null));
       R.add(limb(thumbRoot, thumbTip, 0.0090, M.glove2, 6));
 
       // wrist: leather cuff then sleeve, running back and DOWN out of the frame

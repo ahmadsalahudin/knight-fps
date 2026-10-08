@@ -31,7 +31,6 @@
 
   const Knight = window.Knight;
   const V3 = THREE.Vector3;
-  const DROP_T = 0.9, DROP_H = 30;      // boss entrance: fall time (s) and height (m)
   const TAU = Math.PI * 2;
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -138,9 +137,7 @@
       // the arrival: it stands, raises the sword and roars before it starts to walk
       this.atk = 'roar';
       this._roarKind = 'intro';
-      this.windupTime = 1.5 + DROP_T;       // it drops out of the sky first (DROP_T), then raises the sword and roars
-      this._landed = false;
-      this.mesh.position.y = DROP_H;
+      this.windupTime = 1.5;
       this.setState('windup');
     }
 
@@ -520,39 +517,8 @@
       this.setState('windup');
     }
 
-    // the dramatic entrance: it plunges from DROP_H, lands with a slam (shockwave, dust ring, sparks, shake, white flash)
-    _tickDrop() {
-      const u = Math.min(1, this.stateT / DROP_T);
-      this.mesh.position.y = DROP_H * (1 - u * u);
-      if (u < 1 || this._landed) return;
-      this._landed = true;
-      this.mesh.position.y = 0;
-      const x = this.mesh.position.x, z = this.mesh.position.z;
-      this._shake(1.6);
-      this._wave = { t: 0, x: x, z: z, R: 16 };
-      for (let i = 0; i < 24; i++) { const a = i / 24 * TAU; this._dustAt(x + Math.cos(a) * 5.5, z + Math.sin(a) * 5.5, 1.8); }
-      for (let i = 0; i < 8; i++) { const a = i / 8 * TAU; this._dustAt(x + Math.cos(a) * 2.5, z + Math.sin(a) * 2.5, 2.4); }
-      if (window.FX && FX.sparks) { try { FX.sparks(new V3(x, 0.2, z), new V3(0, 1, 0), 50); FX.sparks(new V3(x, 0.2, z), new V3(0.8, 0.4, 0), 30); } catch (e) { /* ignore */ } }
-      if (window.Sfx) { try { if (Sfx.footstep) Sfx.footstep('boss', this.mesh.position); if (Sfx.clang) Sfx.clang(this.mesh.position); if (Sfx.armorHit) Sfx.armorHit(this.mesh.position); } catch (e) { /* ignore */ } }
-      this._whiteFlash();
-    }
-
-    _whiteFlash() {
-      try {
-        let el = document.getElementById('bossFlash');
-        if (!el) {
-          el = document.createElement('div'); el.id = 'bossFlash';
-          el.style.cssText = 'position:fixed;inset:0;background:#fff;pointer-events:none;z-index:40;opacity:0;transition:opacity 60ms linear';
-          document.body.appendChild(el);
-        }
-        el.style.transition = 'opacity 60ms linear'; el.style.opacity = '0.75';
-        setTimeout(() => { el.style.transition = 'opacity 650ms ease-out'; el.style.opacity = '0'; }, 70);
-      } catch (e) { /* ignore */ }
-    }
-
     _tickRoar(dt, ctx) {
-      if (this._roarKind === 'intro' && !this._landed) { this._tickDrop(); if (!this._landed) return; }
-      const t = this._roarKind === 'intro' ? this.stateT - DROP_T : this.stateT;
+      const t = this.stateT;
       if (this._roarFx < 1 && t >= 0.35) {
         this._roarFx = 1;
         this._shake(0.55);
@@ -563,7 +529,7 @@
         }
       }
       if (this._roarFx < 2 && t >= 0.95) { this._roarFx = 2; this._shake(0.35); }
-      if (this.stateT >= this.windupTime) {
+      if (t >= this.windupTime) {
         this.atk = null;
         this._gap = 0.4;
         this._idleWait = 0.1;

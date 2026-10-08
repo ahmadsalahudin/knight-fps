@@ -133,7 +133,6 @@ try {
   row(sOn === true && sOff === false, 'SPRINT: latch toggles on and off', `on ${sOn}, off ${sOff}`);
 
   // ---- GRENADE button: hidden until the kill streak earns grenades, then it throws one
-  await page.evaluate(() => { Grenade.count = 0; Grenade._hud(); });   // a run starts with 1 grenade: empty the hand first
   const gHidden = await page.evaluate(() => getComputedStyle(document.getElementById('tGrenade')).display);
   await page.evaluate(() => { __dbg.grenade.give(3); Grenade.streak = 2; Grenade._streakT = 6; Grenade._hud(); });
   await h.advance(100, 33);
