@@ -2802,3 +2802,278 @@ function e2Fuzz(a) {
   out.kills = Waves.kills - out.kills0;
   return out;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// F1 (Wave F): the knight sword roll (GEAR.sword.rot = [PI/2, 0, PI/2]) and the clamped death turn (+-PI/2 at 4 rad/s).
+//   f1-gear / f1-gear-walk / f1-gear-attack / f1-gear-death / f1-death-sequence / f1-boss-gear re-run the E1 / C1 / D1 scenarios under
+//   the f1- name (so the PNGs do not overwrite theirs); f1-death-front is new: a frontal kill with the yaw measured per frame.
+Object.assign(scenarios, {
+  'f1-gear': { desc: 'F1: e1-gear (front / right / left / back, combat idle) after the sword roll fix.', run: (page, h) => scenarios['e1-gear'].run(page, h) },
+  'f1-gear-walk': { desc: 'F1: e1-gear-walk after the sword roll fix.', run: (page, h) => scenarios['e1-gear-walk'].run(page, h) },
+  'f1-gear-attack': { desc: 'F1: e1-gear-attack after the sword roll fix.', run: (page, h) => scenarios['e1-gear-attack'].run(page, h) },
+  'f1-gear-death': { desc: 'F1: e1-gear-death after the death turn fix.', run: (page, h) => scenarios['e1-gear-death'].run(page, h) },
+  'f1-death-sequence': { desc: 'F1: c1-death-sequence after the death turn fix.', viewport: { width: 800, height: 450 }, run: (page, h) => scenarios['c1-death-sequence'].run(page, h) },
+  'f1-boss-gear': { desc: 'F1: d1-boss-gear (the boss inherits Knight.GEAR.sword.rot) after the sword roll fix.', viewport: { width: 800, height: 450 }, run: (page, h) => scenarios['d1-boss-gear'].run(page, h) },
+
+  'f1-boss-windup': { desc: 'F1: d1-boss-sweep-windup (the raised sword of the boss sweep) after the sword roll fix.', viewport: { width: 800, height: 450 }, run: (page, h) => scenarios['d1-boss-sweep-windup'].run(page, h) },
+
+  'f1-death-front': {
+    desc: 'F1: a knight facing the player is killed head-on (bullet travelling away from the player): frames at 0.1 / 0.25 / 0.5 / 1.2 s from the player camera; the yaw is sampled every frame and asserted (total turn <= PI/2, rate <= 4 rad/s).',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await page.evaluate(() => { Weapon.setVisible(false); Game.camera.fov = 50; Game.camera.updateProjectionMatrix(); });
+      const k = await h.spawn('knight', 3.2, 0);
+      await page.evaluate((i) => __dbg.knight.pose(i, 'combatIdle', 0), k.i);
+      await h.freezeAI(false);
+      await h.aimAt(k, 0.9);
+      await h.pause();
+      await h.advance(400, 50);
+      await page.evaluate(() => {
+        const e = Enemies.list[0];
+        window.__f1k = e;
+        window.__f1 = { yaw0: e._yaw, last: e._yaw, maxRate: 0, total: 0, rates: [] };
+        // face the player exactly (the pose helper may leave it at an angle)
+        const p = e.mesh.position, pp = Game.playerObj.position;
+        e._yaw = Math.atan2(pp.x - p.x, pp.z - p.z); e.mesh.rotation.y = e._yaw; window.__f1.yaw0 = window.__f1.last = e._yaw;
+        e.takeHit({ damage: 1e6, zone: 'torso', point: new THREE.Vector3(p.x, 1.2, p.z), dir: new THREE.Vector3(0, 0, -1) });
+      });
+      const ff = (sec, pre) => page.evaluate(([sec, pre]) => {
+        const e = window.__f1k, f = window.__f1, step = 1 / 30, pp = Game.playerObj.position;
+        if (pre) {                                      // frames h.advance() ran since the last sample (pre seconds)
+          let d0 = e._yaw - f.last; while (d0 > Math.PI) d0 -= 2 * Math.PI; while (d0 < -Math.PI) d0 += 2 * Math.PI;
+          f.total += d0; f.maxRate = Math.max(f.maxRate, Math.abs(d0) / pre); f.last = e._yaw;
+        }
+        for (let t = 0; t < sec - 1e-9; t += step) {
+          Enemies.update(step, pp.clone()); Combat.update(step); FX.update(step);
+          let d = e._yaw - f.last; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+          f.total += d; f.maxRate = Math.max(f.maxRate, Math.abs(d) / step); f.last = e._yaw;
+        }
+        return { total_deg: +(f.total * 180 / Math.PI).toFixed(1), maxRate: +f.maxRate.toFixed(2), targetYaw: e._targetYaw, state: e.state, dead: e.dead };
+      }, [sec, pre]);
+      const log = [];
+      let at = 0;
+      const pre = 0.04;                               // the h.advance(40, 20) below runs two game frames of 20 ms after each sample
+      for (const t of [0.1, 0.25, 0.5, 1.2]) {
+        log.push({ t, ...(await ff(Math.max(0, t - at - pre), at ? pre : 0)) });
+        at = t;
+        await h.advance(40, 20);                      // renders (two more game frames of ~20 ms)
+        await h.shot('t' + t + 's');
+      }
+      const f = await page.evaluate(() => ({ total: window.__f1.total, maxRate: window.__f1.maxRate }));
+      const problems = [];
+      if (Math.abs(f.total) > Math.PI / 2 + 0.05) problems.push('turned ' + (f.total * 180 / Math.PI).toFixed(1) + ' deg (> 90)');
+      if (f.maxRate > 4.2) problems.push('turn rate ' + f.maxRate.toFixed(2) + ' rad/s (> 4)');
+      if (problems.length) throw new Error('f1-death-front: ' + problems.join(' | '));
+      return { ok: true, totalDeg: +(f.total * 180 / Math.PI).toFixed(1), maxRate: +f.maxRate.toFixed(2), log };
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// F2 (Wave F): the arena boundary. A closed wall of boulders at World.ringRadius (51.6) and a circular player clamp at
+// World.arenaRadius (49). Scenarios:
+//   f2-boundary-view  screenshots from inside (at the edge, mid-arena vista, a diagonal corner, skyline) + a ray sweep that must find the
+//                     wall at every angle (no gaps) + draw-call / triangle count of one world render
+//   f2-boundary-walk  scripted walks into the edge (every 45 degrees, walking and sprinting, backwards, sliding along the wall) with the
+//                     player position logged each second; asserts r <= arenaRadius; screenshots at the wall
+//   f2-boundary-ai    a knight and the boss chase a player standing at the edge: they must reach him (no trapped steering), stay inside
+Object.assign(scenarios, {
+  'f2-boundary-view': {
+    desc: 'F2: the rock wall seen from inside: at the edge, from mid-arena, the diagonal corner, the skyline. Also: a ray sweep (no gaps), render cost.',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.pause();
+      const at = async (label, x, z, yawDeg, pitchDeg) => {
+        await page.evaluate(([x, z, yaw, pitch]) => { __dbg.teleport(x, z, yaw); Game.camera.rotation.x = (pitch || 0) * Math.PI / 180; }, [x, z, yawDeg, pitchDeg || 0]);
+        await h.advance(100);
+        await h.shot(label);
+      };
+      await at('edge-facing-wall', 0, 48.9, 180);            // standing at the clamp, looking +Z into the wall
+      await at('edge-along-wall', 0, 48.9, 135);             // same spot, looking along the wall
+      await at('vista', 0, 20, 180);                         // from 30 m: the wall as a whole
+      await at('corner', -33, -33, 45);                      // towards the NW diagonal (the old +-58 square let the player out here)
+      await at('skyline-up', 20, -20, -45, 12);              // looking a little up: skyline of the wall
+      const r = await page.evaluate(() => {
+        const out = {};
+        const rc = new THREE.Raycaster();
+        const front = World.staticTargets.filter((o) => o.name === 'boundary');
+        const both = World.staticTargets.filter((o) => /^boundary/.test(o.name));
+        // horizontal rays from inside the arena at several eye heights: the share that finds NO wall (a see-through hole), front row alone and with the back row
+        const origins = [[0, 0], [30, 0], [-20, -30], [0, 45], [-45, 5]];
+        const missPct = { front: {}, both: {} };
+        let minD = 1e9, maxD = 0;
+        for (const [nm, tg] of [['front', front], ['both', both]]) for (const y of [0.3, 1, 1.7, 2.6, 3.5]) {
+          let n = 0, miss = 0;
+          for (const o of origins) for (let a = 0; a < 360; a++) {
+            const ang = a / 360 * Math.PI * 2;
+            rc.set(new THREE.Vector3(o[0], y, o[1]), new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang))); rc.far = 120;
+            const hit = rc.intersectObjects(tg, true)[0];
+            n++;
+            if (!hit) { miss++; continue; }
+            const pt = Math.hypot(hit.point.x, hit.point.z);
+            if (nm === 'front' && y <= 1.7) { minD = Math.min(minD, pt); maxD = Math.max(maxD, pt); }
+          }
+          missPct[nm][y] = +(miss / n * 100).toFixed(2);
+        }
+        out.missPercentByHeight = missPct; out.frontWallHitRadius = [+minD.toFixed(2), +maxD.toFixed(2)];
+        out.badRays = missPct.both[0.3] + missPct.both[1] + missPct.both[1.7] + missPct.front[0.3] + missPct.front[1];   // must be exactly 0: no see-through hole up to eye height
+        // draw cost of one world render (shadow pass + main pass)
+        const R = Main.renderer; R.info.autoReset = false; R.info.reset();
+        R.render(Main.scene, Main.camera);
+        out.render = { calls: R.info.render.calls, triangles: R.info.render.triangles, geometries: R.info.memory.geometries };
+        R.info.autoReset = true;
+        let objs = 0; Main.scene.traverse(() => objs++);
+        out.sceneObjects = objs; out.colliders = World.colliders.length; out.staticTargets = World.staticTargets.length;
+        out.boundary = World.staticTargets.filter((o) => /^boundary/.test(o.name)).map((o) => ({ name: o.name, tris: o.geometry.index.count / 3 }));
+        out.arenaRadius = World.arenaRadius; out.ringRadius = World.ringRadius;
+        // innermost point of the front wall vs the clamp
+        const pos = World.staticTargets.find((o) => o.name === 'boundary').geometry.attributes.position;
+        let inner = 1e9; for (let i = 0; i < pos.count; i++) if (pos.getY(i) > 0.05) inner = Math.min(inner, Math.hypot(pos.getX(i), pos.getZ(i)));
+        out.innermostWallFace = +inner.toFixed(2);
+        // props must all be inside the disc
+        let maxProp = 0; for (const c of World.colliders) if (c.r <= 1.2) maxProp = Math.max(maxProp, Math.hypot(c.x, c.z) + c.r);
+        out.maxPropReach = +maxProp.toFixed(2);
+        return out;
+      });
+      const problems = [];
+      if (r.badRays > 0) problems.push('see-through holes in the wall: ' + JSON.stringify(r.missPercentByHeight));
+      if (r.missPercentByHeight.front[1.7] > 1) problems.push('front row has >1% gaps at eye height: ' + r.missPercentByHeight.front[1.7]);
+      if (r.innermostWallFace < r.arenaRadius + 0.3) problems.push('wall face ' + r.innermostWallFace + ' too close to the clamp ' + r.arenaRadius);
+      if (problems.length) throw new Error('f2-boundary-view: ' + problems.join(' | '));
+      return r;
+    },
+  },
+
+  'f2-boundary-walk': {
+    desc: 'F2: scripted walks into the edge from the centre (8 headings, walk + sprint, backwards, strafing along the wall): position logged every second, r must stay <= arenaRadius.',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.pause();
+      const run = await page.evaluate(() => {
+        const key = (type, code) => document.dispatchEvent(new KeyboardEvent(type, { code: code, bubbles: true }));
+        const lim = World.arenaRadius, out = { limit: lim, runs: [], problems: [] };
+        const doRun = (name, x0, z0, yawDeg, keys, secs) => {
+          __dbg.teleport(x0, z0, yawDeg);
+          const log = [], p = Game.playerObj.position;
+          let maxR = 0;
+          for (const k of keys) key('keydown', k);
+          const dt = 1 / 30;
+          for (let i = 0; i <= secs * 30; i++) {
+            Main.step(dt);
+            const r = Math.hypot(p.x, p.z); if (r > maxR) maxR = r;
+            if (i % 30 === 0) log.push([i / 30, +p.x.toFixed(2), +p.z.toFixed(2), +r.toFixed(2)]);
+          }
+          for (const k of keys) key('keyup', k);
+          const ang = Math.atan2(p.z, p.x) * 180 / Math.PI;
+          out.runs.push({ name, final: [+p.x.toFixed(2), +p.z.toFixed(2)], finalR: +Math.hypot(p.x, p.z).toFixed(3), finalAngleDeg: +ang.toFixed(1), maxR: +maxR.toFixed(3), log });
+          if (maxR > lim + 1e-6) out.problems.push(name + ': r reached ' + maxR.toFixed(3));
+        };
+        // yaw 0 faces -Z, +90 faces -X (turning left), 180 faces +Z, -90 faces +X
+        for (const yaw of [0, 45, 90, 135, 180, 225, 270, 315]) doRun('walk yaw ' + yaw, 0, 0, yaw, ['KeyW'], 12);
+        for (const yaw of [0, 135, 225]) doRun('sprint yaw ' + yaw, 0, 0, yaw, ['KeyW', 'ShiftLeft'], 8);
+        doRun('backwards yaw 180 (walks to -Z)', 0, 0, 180, ['KeyS'], 12);
+        // slide along the wall: stand at the wall facing +Z, strafe right (D): moves towards -X ... position angle must keep changing while r stays at the limit
+        doRun('strafe D at wall (yaw 180)', 0, 48.5, 180, ['KeyD'], 4);
+        doRun('strafe A at wall (yaw 180)', 0, 48.5, 180, ['KeyA'], 4);
+        // diagonal into the wall at 45 degrees: should slide, not stick
+        doRun('diagonal W+D into wall', 0, 40, 180, ['KeyW', 'KeyD'], 6);
+        // teleported outside (QA only): pulled back to the circle on the next frame
+        __dbg.teleport(70, 70); Main.step(1 / 30);
+        out.afterTeleportOutside = [+Game.playerObj.position.x.toFixed(2), +Game.playerObj.position.z.toFixed(2), +Math.hypot(Game.playerObj.position.x, Game.playerObj.position.z).toFixed(3)];
+        return out;
+      });
+      for (const r of run.runs) console.log(`   ${r.name.padEnd(36)} final (${r.final.join(', ')}) r=${r.finalR} maxR=${r.maxR} angle=${r.finalAngleDeg}`);
+      // screenshots at the wall: walk head-on into it at yaw 180 from (0, 44)
+      await page.evaluate(() => { __dbg.teleport(0, 44, 180); });
+      await page.evaluate(() => { const key = (t, c) => document.dispatchEvent(new KeyboardEvent(t, { code: c, bubbles: true })); key('keydown', 'KeyW'); for (let i = 0; i < 90; i++) Main.step(1 / 30); key('keyup', 'KeyW'); });
+      await h.advance(100);
+      await h.shot('pushing-into-wall');
+      const posA = await h.player();
+      await page.evaluate(() => { Game.camera.rotation.y = 135 * Math.PI / 180; });
+      await h.advance(100);
+      await h.shot('at-wall-along');
+      // a shot at the wall must raise dust on the wall mesh (hitscan finds it)
+      const hit = await page.evaluate(() => {
+        Game.camera.rotation.set(0, Math.PI, 0);
+        const rc = new THREE.Raycaster(); const d = new THREE.Vector3(); Game.camera.getWorldDirection(d);
+        rc.set(Game.camera.getWorldPosition(new THREE.Vector3()), d);
+        const hh = rc.intersectObjects(World.staticTargets, true)[0];
+        return hh && { obj: hh.object.name, dist: +hh.distance.toFixed(2), r: +Math.hypot(hh.point.x, hh.point.z).toFixed(2) };
+      });
+      if (run.problems.length) throw new Error('f2-boundary-walk: ' + run.problems.join(' | '));
+      return { limit: run.limit, finals: run.runs.map((r) => [r.name, r.finalR, r.maxR]), afterTeleportOutside: run.afterTeleportOutside, atWall: posA && { x: +posA.x.toFixed(2), z: +posA.z.toFixed(2) }, bulletRayHit: hit,
+        sampleLog: run.runs[0].log };
+    },
+  },
+  'f2-boundary-ai': {
+    desc: 'F2: the player stands at the edge (r 48.9, facing the wall): a knight, the boss and wave 4 (11 knights) must reach him from inside; a boss charge through him must stop at the wall; spawn radii logged.',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.pause();
+      const out = await page.evaluate(() => {
+        const dt = 1 / 30, res = { problems: [] };
+        const P = Game.playerObj.position;
+        const rad = (m) => Math.hypot(m.position.x, m.position.z);
+        const spawnR = [];
+        const origAdd = Enemies.add;
+        Enemies.add = function (e) { const r = origAdd.apply(this, arguments); try { spawnR.push([e.type || 'knight', +rad(e.mesh).toFixed(1)]); } catch (x) { /* ignore */ } return r; };
+        const run = (name, secs, setup, opts) => {
+          opts = opts || {};
+          Waves.stop(); Enemies.clear(); __dbg.freezeAI(false); __dbg.godMode(true);
+          __dbg.teleport(0, 48.9, 180);
+          setup();
+          let maxR = 0, minD = 1e9, attacked = 0, near = 0, maxAlive = 0, log = [];
+          for (let i = 0; i < secs * 30; i++) {
+            Main.step(dt);
+            let alive = 0;
+            for (const e of Enemies.list) {
+              if (e.dead) continue;
+              alive++;
+              const r = rad(e.mesh), d = Math.hypot(e.mesh.position.x - P.x, e.mesh.position.z - P.z);
+              if (r > maxR) maxR = r; if (d < minD) minD = d;
+              if (e.state === 'attack') attacked++;
+              if (d < 3.2 * (e.sizeScale || 1)) near++;
+            }
+            if (alive > maxAlive) maxAlive = alive;
+            if (i % 60 === 0) log.push([i / 30, alive, +minD.toFixed(2), +maxR.toFixed(2)]);
+          }
+          const r = { name, maxEnemyR: +maxR.toFixed(2), minDistToPlayer: +minD.toFixed(2), attackFrames: attacked, nearFrames: near, maxAlive, log };
+          res[name] = r;
+          return r;
+        };
+        // 1. one knight 14 m behind the player (toward the centre)
+        const k = run('knight', 20, () => { __dbg.spawn('knight', 14, 180); });
+        if (k.attackFrames < 5 || k.minDistToPlayer > 3.5) res.problems.push('knight never reached the player at the wall: ' + JSON.stringify(k));
+        if (k.maxEnemyR > 49.5) res.problems.push('knight reached r ' + k.maxEnemyR);
+        // 2. the boss
+        const b = run('boss', 45, () => { __dbg.spawn('boss', 16, 180); });
+        if (b.attackFrames < 5) res.problems.push('boss never attacked the player at the wall: ' + JSON.stringify(b));
+        if (b.maxEnemyR > 51) res.problems.push('boss got into the wall, r ' + b.maxEnemyR);
+        // 3. wave 4 with the player at the wall
+        const w = run('wave4', 40, () => { Waves.start(4); });
+        if (w.attackFrames < 5) res.problems.push('wave 4 knights never attacked: ' + JSON.stringify(w));
+        if (w.maxEnemyR > 50.5) res.problems.push('wave 4 knight reached r ' + w.maxEnemyR);
+        // 4. boss charge straight at the player and through him into the wall: the dense ring colliders must stop it at the wall
+        // (without Game._leashEnemies the boss ends the charge on top of the player, enemies.js shoves it 3 m outward and the collider pass
+        //  ejects it on the far side of the wall: r 53.9, outside for good. With it: one frame at ~51.9 inside the rocks, then back at ~46.)
+        const c = run('bossCharge', 14, () => { __dbg.spawn('boss', 25, 180); __dbg.boss.force('charge'); });
+        const bossR = Enemies.list[0] ? rad(Enemies.list[0].mesh) : -1;
+        if (c.maxEnemyR > 52.5 || bossR > 49.5 || bossR < 0) res.problems.push('boss charged into / through the wall: max r ' + c.maxEnemyR + ', final r ' + bossR);
+        res.bossCharge = { maxR: c.maxEnemyR, finalR: +bossR.toFixed(2), attackFrames: c.attackFrames };
+        Enemies.add = origAdd;
+        const radii = spawnR.map((x) => x[1]);
+        res.spawn = { count: radii.length, minR: Math.min.apply(null, radii), maxR: Math.max.apply(null, radii), byType: spawnR.reduce((o, x) => { o[x[0]] = (o[x[0]] || 0) + 1; return o; }, {}) };
+        if (res.spawn.maxR > 36) res.problems.push('a spawn at r ' + res.spawn.maxR);
+        return res;
+      });
+      await h.advance(100);
+      await h.shot();
+      if (out.problems.length) throw new Error('f2-boundary-ai: ' + out.problems.join(' | '));
+      return out;
+    },
+  },
+});

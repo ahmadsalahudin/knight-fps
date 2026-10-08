@@ -35,6 +35,7 @@ window.getInput = function () {
 (function () {
   const MAX_AMMO = 6;
   const MAX_HP = 100;
+  const ARENA_RADIUS_FALLBACK = 49;     // only used when World.arenaRadius is missing
   const RELOAD_MS = 1600;
   const FIRE_GATE_MS = 350;
   const FALLBACK_DAMAGE = 34;     // used only when Combat.damageFor is absent
@@ -343,6 +344,29 @@ window.getInput = function () {
       return p ? { x: p.x, z: p.z } : undefined;
     },
 
+    // Safety net for the rock wall. The wall's colliders keep enemies inside, but enemies.js resolves "do not stand on the camera"
+    // (a push of up to ~3 m away from the player) AFTER its collider pass, so a boss that ends a charge on top of a player who
+    // stands at the wall is shoved outward, and the next collider pass then ejects it on the FAR side of the wall: it would stay
+    // outside forever (shots hit the wall, it cannot reach the player). Anything past the wall's centre line is put back inside,
+    // 3 m behind the clamp circle. Normal positions never get there (colliders hold enemies at r <= ~49.9).
+    _leashEnemies: function () {
+      const list = window.Enemies && Enemies.list;
+      if (!list) return;
+      const W = window.World;
+      const limit = ((W && W.ringRadius) || 51.6) - 1.0;
+      const back = ((W && W.arenaRadius) || ARENA_RADIUS_FALLBACK) - 3;
+      for (let i = 0; i < list.length; i++) {
+        const e = list[i];
+        const p = e && e.mesh && e.mesh.position;
+        if (!p) continue;
+        const r = Math.hypot(p.x, p.z);
+        if (r <= limit) continue;
+        p.x *= back / r; p.z *= back / r;
+        if (e._vel) { e._vel.x = 0; e._vel.z = 0; }
+        if (e.knockback) { e.knockback.x = 0; e.knockback.z = 0; }
+      }
+    },
+
     _removeShake: function () {
       if (this._shakeApplied && this.playerObj) {
         this.playerObj.position.sub(this._shakeApplied);
@@ -382,6 +406,7 @@ window.getInput = function () {
       }
       this.reloading = this.reloadTimer > 0;
       this._applyKick(dt);
+      this._leashEnemies();                                    // keeps strays inside the wall (see above); runs even without focus
 
       if (!document.hasFocus()) {                              // pointer lock optional in QA (headless may not lock) — focus is what matters
         this.moving = false; this.sprinting = false;
@@ -416,8 +441,11 @@ window.getInput = function () {
           p.z += (dz / (d || 1)) * push;
         }
       }
-      p.x = Math.max(-58, Math.min(58, p.x));
-      p.z = Math.max(-58, Math.min(58, p.z));
+      // arena edge: a circle just inside the rock wall (World.arenaRadius). Projecting onto it keeps the tangential motion,
+      // so walking diagonally into the wall slides along it instead of sticking.
+      const lim = (window.World && World.arenaRadius) || ARENA_RADIUS_FALLBACK;
+      const rr = Math.hypot(p.x, p.z);
+      if (rr > lim) { p.x *= lim / rr; p.z *= lim / rr; }
       p.y = 1.7;
 
       // footsteps by distance walked
