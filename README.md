@@ -18,7 +18,7 @@ python3 -m http.server 8877      # or: node tools/qa/serve.mjs 8877
 | W A S D / arrow keys | Move |
 | Shift | Sprint |
 | Mouse | Aim |
-| Left click | Fire (5-shot revolver) |
+| Left click | Fire (6-shot revolver) |
 | R | Reload |
 | Esc | Release the mouse and pause |
 
