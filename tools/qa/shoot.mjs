@@ -35,7 +35,8 @@ for (const name of names) {
     headless: !args.headed,
     seed: parseSeed(args.seed),
   });
-  const timer = setTimeout(() => { console.error(`   scenario ${name} timed out (180 s)`); s.close().finally(() => process.exit(1)); }, 180000);
+  const tmo = +(process.env.QA_TIMEOUT_MS || 180000);
+  const timer = setTimeout(() => { console.error(`   scenario ${name} timed out (${tmo / 1000} s)`); s.close().finally(() => process.exit(1)); }, tmo);
   try {
     await s.h.boot();
     if (def.start !== false) {

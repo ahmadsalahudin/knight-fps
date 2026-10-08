@@ -729,7 +729,7 @@
         const a = (Math.random() - 0.5) * 0.8, c = Math.cos(a), s = Math.sin(a);
         const R = 17 + Math.random() * 4;
         const x = pp.x + (d.x * c - d.z * s) * R, z = pp.z + (d.x * s + d.z * c) * R;
-        if (Math.abs(x) > 54 || Math.abs(z) > 54) continue;
+        if (Math.hypot(x, z) > ((window.World && World.arenaRadius) || 49) - 3) continue;
         let ok = true;
         for (const col of cols) { if (Math.hypot(x - col.x, z - col.z) < col.r + 3) { ok = false; break; } }
         if (!ok) continue;

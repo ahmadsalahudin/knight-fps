@@ -551,6 +551,14 @@
 
     _resolve(p, R, ctx) {
       const S = this.sizeScale;
+      // do not walk into the camera (before the collider pass, so a collider can never be pushed through)
+      if (ctx.dist < this.stopDist * 0.7 && ctx.dist > 1e-4) {
+        const k = (this.stopDist * 0.7 - ctx.dist);
+        p.x -= ctx.nx * k; p.z -= ctx.nz * k;
+        // never let that push shove a body into the boundary wall (the collider pass would eject it outside)
+        const lim = ((window.World && World.arenaRadius) || 49) - 1, r = Math.hypot(p.x, p.z);
+        if (r > lim) { p.x *= lim / r; p.z *= lim / r; }
+      }
       const cols = window.World && World.colliders;
       if (cols) {
         for (let i = 0; i < cols.length; i++) {
@@ -575,11 +583,6 @@
           const min = (BODY_R * S + BODY_R * (o.sizeScale || 1)) * 0.85;
           if (d < min && d > 1e-5) { const k = (min - d) / d * 0.5; p.x += ox * k; p.z += oz * k; }
         }
-      }
-      // do not walk into the camera
-      if (ctx.dist < this.stopDist * 0.7 && ctx.dist > 1e-4) {
-        const k = (this.stopDist * 0.7 - ctx.dist);
-        p.x -= ctx.nx * k; p.z -= ctx.nz * k;
       }
       p.x = clamp(p.x, -ARENA, ARENA);
       p.z = clamp(p.z, -ARENA, ARENA);
