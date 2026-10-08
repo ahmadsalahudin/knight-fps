@@ -31,6 +31,64 @@ export const scenarios = {
     },
   },
 
+  'title-options': {
+    desc: 'Title screen with the difficulty buttons (Hard picked, remembered in localStorage) and the volume slider.',
+    start: false,
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.wait(400);
+      await page.click('.diffBtn[data-diff=hard]');
+      await page.fill('#volSlider', '55');
+      await page.dispatchEvent('#volSlider', 'input');
+      await h.shot();
+      return page.evaluate(() => ({ diff: Difficulty.get().key, stored: localStorage.getItem('kf_difficulty'), vol: localStorage.getItem('kf_volume'),
+        pressed: [...document.querySelectorAll('.diffBtn')].map((b) => b.dataset.diff + ':' + b.getAttribute('aria-pressed')) }));
+    },
+  },
+
+  'dagger-flight': {
+    desc: 'A knight 10 m ahead has just thrown a dagger: it spins toward the camera on a slight arc (0.4 s into its flight).',
+    viewport: { width: 1280, height: 720 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.pause();
+      const k = await h.spawn('knight', 10, 0);
+      await page.evaluate(() => __dbg.knight.pose(0, 'recover', 0.25));
+      await h.advance(120, 40);
+      const t = await page.evaluate(() => __dbg.knightThrow(0, 0.4));
+      await h.advance(16, 16);
+      await h.shot();
+      const size = await page.evaluate(() => { const b = new THREE.Box3().setFromObject(Enemies.daggers[0].mesh), v = b.getSize(new THREE.Vector3()); return v.toArray().map((x) => +x.toFixed(3)); });
+      return { knight: k, dagger: t, boxSize: size, daggers: await page.evaluate(() => __dbg.daggers()) };
+    },
+  },
+
+  'dagger-hit-arc': {
+    desc: 'A knight 9 m to the right throws; the dagger hits (god mode off): HP drops by 10 x difficulty and the red damage arc points right.',
+    god: false,
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.freezeAI(false);
+      await h.resetView();
+      await h.pause();
+      await h.spawn('knight', 9, 90);
+      await page.evaluate(() => __dbg.knight.pose(0, 'combatIdle', 0));
+      await h.advance(100, 33);
+      const hp0 = await page.evaluate(() => Game.playerHP);
+      await page.evaluate(() => __dbg.knightThrow(0));
+      let hit = false, steps = 0;
+      while (!hit && steps++ < 60) {
+        await h.advance(33, 33);
+        hit = await page.evaluate((h0) => Game.playerHP < h0, hp0);
+      }
+      await h.advance(60, 30);
+      await h.shot();
+      return { hp0, hp1: await page.evaluate(() => Game.playerHP), steps, daggersLeft: await page.evaluate(() => __dbg.daggers()) };
+    },
+  },
+
   'gun-idle': {
     desc: 'First-person view with the revolver at rest, arena cleared, level view.',
     run: async (page, h) => {

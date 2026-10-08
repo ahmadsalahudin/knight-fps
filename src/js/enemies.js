@@ -28,12 +28,19 @@
    Public: takeHit({damage, zone, point, dir}), die(hit), applyImpulse(Vector3), setState(name),
         update(dt, playerPos, waveNumber), dispose().
    Knockback protocol with combat.js: Combat calls enemy.applyImpulse(Vector3) (m/s); the knight owns decay and movement.
+   Thrown daggers: a share of the knights (Difficulty.throwers: Easy 20 %, Normal 35 %, Hard 50 %; chosen at spawn, never the boss) throw
+        a dagger when they are 6-16 m from the player, walking, and their 5-8 s throw cooldown is ready: they stop, wind up ~0.6 s
+        (the sword-raise windup) and release. Enemies.daggers holds the projectiles (see "Daggers" below); knight.thrower / ._throwCd.
+   Difficulty (waves.js): knight HP / speed / damage / windup time scale with window.Difficulty; the boss applies its own (boss.js).
    Loose gear: combat.js re-parents helmet / sword / shield into physics holders on death (userData.loose = true); after that this
         module never touches them again.
 
    ---- Enemies --------------------------------------------------------------------------------------------------------------
    list, add(e), update(dt, playerPos), rayTargets(), aliveCount(), findByObject(obj), clear(), remove(e)
-   Debug (?debug=1, installed lazily): __dbg.knight.pose(i, state, progress), .gear(i), .info(i).
+   daggers[], throwDagger(thrower, target?), _tickDaggers(dt)   (ticked by update(), emptied by clear())
+   Debug (?debug=1, installed lazily): __dbg.knight.pose(i, state, progress), .gear(i), .info(i),
+        __dbg.knightThrow(i?, flightSec?)  the knight (default: the nearest living one) throws at once, no windup / cooldown / range check;
+        flightSec advances the dagger that long right away (use it with a frozen AI), __dbg.daggers() lists the daggers in flight.
 */
 (() => {
   'use strict';
@@ -61,6 +68,15 @@
   const BODY_R = 0.42;                                // collision radius of a 1.8 m knight
   const ARENA = 58;
   const DEATH_TURN = 4;                               // rad/s: how fast a falling knight turns toward its fall direction
+  // thrown dagger
+  const THROW_MIN = 6, THROW_MAX = 16;                // throw only from this distance (m) to the player
+  const THROW_WINDUP = 0.6, THROW_RELEASE = 0.12;     // s of windup; the hand is released this long after the arm starts to swing
+  const DAGGER_SPEED = 18, DAGGER_G = 6;              // m/s, and the gravity (m/s^2) that bends the flight into a slight arc
+  const DAGGER_SIZE = 0.5, DAGGER_SPIN = 17;          // m, rad/s end over end
+  const DAGGER_DAMAGE = 10, DAGGER_HIT_R = 0.6;       // base damage (x Difficulty.dmg), and the reach of the player's body
+  const DAGGER_LIE = 5, DAGGER_MAX = 12;              // s a landed dagger stays; most daggers alive at once
+  const NEUTRAL = { dmg: 1, hp: 1, windup: 1, speed: 1, reach: 1, throwers: 0.35 };
+  const diff = () => (window.Difficulty && Difficulty.get()) || NEUTRAL;
 
   // Gear fit, measured on the 1.8 m knight. pos is in METRES inside the bone's own axes (x, y, z of the bone), rot in radians
   // (bone-local), scale in metres per native glTF unit. Everything is multiplied by the knight's scale at mount time.
@@ -78,7 +94,7 @@
   const UPPER_RE = /^(Abdomen|Torso|Neck|Head|Shoulder|UpperArm|LowerArm|Palm|MiddleHand|Fingers|Thumb)/;
 
   // scratch
-  const _v1 = new V3(), _q1 = new Q(), _q2 = new Q();
+  const _v1 = new V3(), _q1 = new Q(), _q2 = new Q(), _sp = new V3();
   const AX = new V3(1, 0, 0), AZ = new V3(0, 0, 1);
 
   // Split every clip once into a lower and an upper body clip (clips are shared by all knights).
@@ -102,6 +118,19 @@
     return (window.Game && Game.scene) || (window.Main && Main.scene) || null;
   }
 
+  const _qv = new V3();
+  const _q1v = (v) => _qv.copy(v);
+
+  // where a knight's sound comes from: above its feet (scratch vector, valid until the next call)
+  function soundAt(k, h) {
+    const p = k.mesh.position;
+    return _sp.set(p.x, h === undefined ? 1.2 * k.sizeScale : h, p.z);
+  }
+  function sfx(name, a, b) {
+    if (!window.Sfx || !Sfx[name]) return;
+    try { Sfx[name](a, b); } catch (e) { /* audio never breaks the game */ }
+  }
+
   // ------------------------------------------------------------------------------------------------------------------------
   // Knight
   // ------------------------------------------------------------------------------------------------------------------------
@@ -117,6 +146,17 @@
       this.dead = false;
       this.damage = opts.damage > 0 ? opts.damage : 15;
       this.speedScale = opts.speedScale > 0 ? opts.speedScale : 1;
+      // difficulty: wave knights (and the boss's minions) only. The boss and its stand-in apply their own multipliers.
+      const D = diff();
+      if (this.type === 'knight') {
+        if (!(opts.hp > 0) && !(opts.maxHp > 0)) { this.maxHp = Math.max(1, Math.round(this.maxHp * D.hp)); this.hp = this.maxHp; }
+        this.speedScale *= D.speed;
+      }
+      // dagger throwers are chosen at spawn
+      this.thrower = this.type === 'knight' && Math.random() < D.throwers;
+      this._throwCd = 5 + Math.random() * 3;      // s until the next throw is allowed (5-8 s, random per knight)
+      this._throwing = false;                     // the current windup / recover is a throw, not a sword swing
+      this._thrown = false;
       this.knockbackScale = typeof opts.knockbackScale === 'number' ? opts.knockbackScale : 1;
       this.knockback = new V3();
       this.waveNumber = 1;
@@ -318,6 +358,7 @@
       this.state = name;
       this.stateT = 0;
       if (name === 'windup') { this._hitDone = false; }
+      if (name !== 'windup' && name !== 'recover') this._throwing = false;
       if (name === 'approach') this._playStateAnim('approach', FADE);
       else if (name === 'combatIdle' || name === 'stagger') this._playStateAnim(name, FADE);
       else if (name === 'windup') this._playStateAnim('windup', FADE * 0.8);
@@ -344,10 +385,13 @@
     updateAI(dt, ctx) {
       const st = this.state;
       this._cool -= dt;
+      this._throwCd -= dt;
       const dist = ctx.dist;
       switch (st) {
         case 'approach': {
           if (dist <= this.attackStart) { this._idleWait = 0.2 + Math.random() * 0.35; this.setState('combatIdle'); }
+          else if (this.thrower && this._throwCd <= 0 && dist >= THROW_MIN && dist <= THROW_MAX && this._facingError(ctx) < 0.7
+            && Enemies.daggers.length < DAGGER_MAX) this.startThrow();
           break;
         }
         case 'combatIdle': {
@@ -356,7 +400,7 @@
           break;
         }
         case 'windup': {
-          if (this.stateT >= this.windupTime) this.startStrike();
+          if (this.stateT >= this.windupTime) { if (this._throwing) this.setState('recover'); else this.startStrike(); }
           break;
         }
         case 'attack': {
@@ -366,6 +410,11 @@
           break;
         }
         case 'recover': {
+          if (this._throwing) {
+            if (!this._thrown && this.stateT >= THROW_RELEASE) { this._thrown = true; this.throwDagger(); }
+            if (this.stateT >= this.recoverTime) { this._cool = Math.max(this._cool, 0.5); this.setState('approach'); }
+            break;
+          }
           if (this.stateT >= this.recoverTime) { this._cool = 0.25 + Math.random() * 0.5; this._idleWait = 0.1; this.setState('combatIdle'); }
           break;
         }
@@ -381,13 +430,31 @@
     }
 
     startWindup() {
-      this.windupTime = Math.max(0.5, 0.72 - 0.04 * (Math.max(1, this.waveNumber) - 1));
+      this._throwing = false;
+      // Hard: 20 % shorter telegraph (never below the 0.45 s a player needs to read it)
+      this.windupTime = Math.max(0.45, Math.max(0.5, 0.72 - 0.04 * (Math.max(1, this.waveNumber) - 1)) * diff().windup);
       this.setState('windup');
+    }
+
+    // Stop, raise the sword (the normal windup) and throw a dagger instead of striking.
+    startThrow() {
+      this._throwing = true;
+      this._thrown = false;
+      this._throwCd = 5 + Math.random() * 3;
+      this.windupTime = Math.max(0.45, THROW_WINDUP * diff().windup);
+      this.setState('windup');
+    }
+
+    // Release a dagger from the right hand at where the player is now (the range / cooldown checks are in updateAI).
+    throwDagger() {
+      const E = window.Enemies;
+      if (!E || !E.throwDagger) return null;
+      return E.throwDagger(this);
     }
 
     startStrike() {
       this.setState('attack');
-      if (window.Sfx && Sfx.swing) { try { Sfx.swing(); } catch (e) { /* ignore */ } }
+      sfx('swing', false, soundAt(this));
     }
 
     // Damage frame of the sword swing: only when the player is in front and within reach.
@@ -401,8 +468,8 @@
       const fx = Math.sin(this._yaw), fz = Math.cos(this._yaw);
       const cos = dist > 1e-4 ? (fx * dx + fz * dz) / dist : 1;
       if (cos < this.attackCone) return;
-      if (window.Sfx && Sfx.clang && Math.random() < 0.5) { try { Sfx.clang(); } catch (e) { /* ignore */ } }
-      Player.hurt(this.damage, this);
+      if (Math.random() < 0.5) sfx('clang', soundAt(this));
+      Player.hurt(Math.max(1, Math.round(this.damage * diff().dmg)), this);
     }
 
     // Clip time (s) of the attack animation for the current state / timer.
@@ -419,6 +486,8 @@
         }
         case 'recover': {
           const u = clamp(this.stateT / this.recoverTime, 0, 1);
+          // a throw swings the raised arm through in the first 40 % (no jump from the raised pose), then settles
+          if (this._throwing) return u < 0.4 ? lerp(ATK_RAISE, ATK_STRIKE_END, smooth(u / 0.4)) : lerp(ATK_STRIKE_END, ATK_END, smooth((u - 0.4) / 0.6));
           return lerp(ATK_STRIKE_END, ATK_END, smooth(u));
         }
         default: return 0;
@@ -641,9 +710,9 @@
       this._pOn = true;
     }
 
-    // a boot-on-ground sound once per half stride, only close by and rate limited
+    // a boot-on-ground sound (with an armour jingle) once per half stride, positional, audible up to ~32 m, lightly rate limited
     _footsteps(ctx) {
-      if (this.state !== 'approach' || !window.Sfx || !Sfx.footstep || ctx.dist > 12) return;
+      if (this.state !== 'approach' || !window.Sfx || !Sfx.footstep || ctx.dist > 32) return;
       const a = this._cur.lower;
       if (!a) return;
       const clip = a.getClip();
@@ -652,9 +721,9 @@
       if (step !== this._stepPhase) {
         this._stepPhase = step;
         const E = window.Enemies;
-        if (E && Math.abs(E._clock - E._lastStepAt) < 0.16) return;      // one boot sound at a time
+        if (E && Math.abs(E._clock - E._lastStepAt) < 0.04) return;      // at most ~25 boot sounds a second over the whole crowd
         if (E) E._lastStepAt = E._clock;
-        try { Sfx.footstep('knight'); } catch (e) { /* ignore */ }
+        sfx('footstep', 'knight', soundAt(this, 0.1));
       }
     }
 
@@ -783,6 +852,7 @@
   // ------------------------------------------------------------------------------------------------------------------------
   window.Enemies = {
     list: [],
+    daggers: [],          // thrown daggers: { mesh, spin, vel, state 'fly'|'lie', age, lie, thrower, whirr }
     _clock: 0,
     _lastStepAt: -1,
 
@@ -804,6 +874,7 @@
 
     update(dt, playerPos) {
       this._clock += dt;
+      this._tickDaggers(dt);
       const wave = window.Waves && typeof Waves.current === 'number' ? Waves.current : 1;
       for (let i = this.list.length - 1; i >= 0; i--) {
         const e = this.list[i];
@@ -847,7 +918,131 @@
       else if (e.mesh && e.mesh.parent) e.mesh.parent.remove(e.mesh);
     },
 
+    // ---- Daggers ------------------------------------------------------------------------------------------------------
+    // Launch a dagger from `thrower`'s right hand at the player's chest as it is now: a slight arc (DAGGER_G) at DAGGER_SPEED, so
+    // a player who keeps moving is missed. Returns the dagger record (or null when it cannot be made).
+    throwDagger(thrower) {
+      const scene = sceneOf();
+      const pp = window.Game && Game.playerObj ? Game.playerObj.position : null;
+      if (!scene || !pp || !window.Assets) return null;
+      // the dagger is a small clone of the knight's sword. Assets' `length` option sizes the longest HORIZONTAL extent, which for the
+      // upright sword is the cross guard (a 2.8 m blade at length 0.5), so it is sized by height here: 0.5 m from pommel to tip.
+      const sword = Assets.get('knight_sword', { height: DAGGER_SIZE });
+      if (!sword) return null;
+      const spin = new THREE.Group();            // rotated about X every frame: the blade (local Z) tumbles end over end
+      const align = new THREE.Group();           // carries the sword so that its long axis is local Z and its centre is the origin
+      const box = new THREE.Box3().setFromObject(sword);
+      const size = box.getSize(new V3()), mid = box.getCenter(new V3());
+      sword.position.sub(mid);
+      if (size.y >= size.x && size.y >= size.z) align.rotation.x = Math.PI / 2;        // Y -> Z
+      else if (size.x >= size.z) align.rotation.y = -Math.PI / 2;                      // X -> Z
+      align.add(sword);
+      spin.add(align);
+      const mesh = new THREE.Group();
+      mesh.name = 'dagger';
+      mesh.add(spin);
+
+      const hand = thrower.bones && thrower.bones.handR;
+      if (hand) hand.getWorldPosition(mesh.position);
+      else mesh.position.set(thrower.mesh.position.x, thrower.height * 0.75, thrower.mesh.position.z);
+      const vel = new V3();
+      const tx = pp.x, ty = Math.min(pp.y, 1.7) - 0.45, tz = pp.z;       // chest height of the player
+      const dx = tx - mesh.position.x, dy = ty - mesh.position.y, dz = tz - mesh.position.z;
+      const T = Math.max(0.12, Math.hypot(dx, dy, dz) / DAGGER_SPEED);
+      vel.set(dx / T, dy / T + 0.5 * DAGGER_G * T, dz / T);
+      mesh.quaternion.setFromUnitVectors(AZ, _v1.copy(vel).normalize());
+      scene.add(mesh);
+
+      const d = { mesh, spin, vel, state: 'fly', age: 0, lie: 0, thrower, whirr: null };
+      this.daggers.push(d);
+      if (window.Sfx) {
+        try {
+          if (Sfx.throwWhoosh) Sfx.throwWhoosh(mesh.position);
+          if (Sfx.whirr) d.whirr = Sfx.whirr(mesh.position, 4);
+        } catch (e) { /* audio never breaks the game */ }
+      }
+      return d;
+    },
+
+    _tickDaggers(dt) {
+      const L = this.daggers;
+      if (!L.length) return;
+      const pp = window.Game && Game.playerObj ? Game.playerObj.position : null;
+      for (let i = L.length - 1; i >= 0; i--) {
+        const d = L[i];
+        if (d.state === 'lie') {
+          d.lie -= dt;
+          if (d.lie <= 0) { this._removeDagger(d); L.splice(i, 1); }
+          continue;
+        }
+        d.age += dt;
+        d.spin.rotation.x += DAGGER_SPIN * dt;
+        // sub-steps of <= 0.25 m, so a long frame cannot jump over the player or a tree
+        const n = clamp(Math.ceil(d.vel.length() * dt / 0.25), 1, 16), h = dt / n;
+        const p = d.mesh.position;
+        let end = null;
+        for (let k = 0; k < n && !end; k++) {
+          d.vel.y -= DAGGER_G * h;
+          p.x += d.vel.x * h; p.y += d.vel.y * h; p.z += d.vel.z * h;
+          if (pp && !(window.Game && Game.dead) && Math.hypot(p.x - pp.x, p.z - pp.z) < DAGGER_HIT_R && p.y > 0.2 && p.y < 1.95) end = 'hit';
+          else if (p.y <= 0.04) end = 'ground';
+          else {
+            const cols = window.World && World.colliders;
+            if (cols) {
+              for (let c = 0; c < cols.length; c++) {
+                const q = cols[c];
+                if (p.y < 5 && Math.hypot(p.x - q.x, p.z - q.z) < q.r) { end = 'collider'; break; }
+              }
+            }
+          }
+        }
+        if (!end && (d.age > 5 || Math.hypot(p.x, p.z) > 80)) end = 'gone';
+        if (d.whirr && d.whirr.move) { try { d.whirr.move(p); } catch (e) { /* ignore */ } }
+        if (end) this._landDagger(d, end, pp, i);
+      }
+    },
+
+    // the dagger ended its flight: 'hit' (the player), 'ground', 'collider' (tree / rock) or 'gone' (out of bounds / too old)
+    _landDagger(d, how, pp, index) {
+      const p = d.mesh.position;
+      if (d.whirr && d.whirr.stop) { try { d.whirr.stop(); } catch (e) { /* ignore */ } }
+      d.whirr = null;
+      const dir = _v1.copy(d.vel).normalize();
+      const near = pp ? Math.hypot(p.x - pp.x, p.z - pp.z) < 3 : false;
+      if (how === 'gone') { this._removeDagger(d); this.daggers.splice(index, 1); return; }
+      if (how === 'hit') {
+        if (window.FX && FX.sparks) { try { FX.sparks(p, _q1v(dir).negate(), 8); } catch (e) { /* ignore */ } }
+        sfx('dagger', 'hit', p);
+        if (window.Player && Player.hurt) Player.hurt(Math.max(1, Math.round(DAGGER_DAMAGE * diff().dmg)), d.thrower);
+        this._removeDagger(d); this.daggers.splice(index, 1);
+        return;
+      }
+      if (how === 'collider') {
+        // drop at the foot of the obstacle
+        if (window.FX && FX.sparks) { try { FX.sparks(p, _q1v(dir).negate(), 8); } catch (e) { /* ignore */ } }
+        sfx('dagger', 'clang', p);
+      } else {
+        if (window.FX && FX.dust) { try { FX.dust(_sp.set(p.x, 0.02, p.z), new V3(0, 1, 0), 0.35); } catch (e) { /* ignore */ } }
+        sfx('dagger', near ? 'clang' : 'ground', p);
+      }
+      d.state = 'lie';
+      d.lie = DAGGER_LIE;
+      d.vel.set(0, 0, 0);
+      p.y = 0.04;
+      d.mesh.quaternion.setFromAxisAngle(new V3(0, 1, 0), Math.random() * TAU);   // blade (local Z) flat on the ground
+      d.spin.rotation.set(0, 0, 0);
+    },
+
+    // take a dagger's meshes out of the scene (geometry and materials are shared with the sword asset: nothing to dispose)
+    _removeDagger(d) {
+      if (d.whirr && d.whirr.stop) { try { d.whirr.stop(); } catch (e) { /* ignore */ } }
+      d.whirr = null;
+      if (d.mesh && d.mesh.parent) d.mesh.parent.remove(d.mesh);
+    },
+
     clear() {
+      for (let i = 0; i < this.daggers.length; i++) this._removeDagger(this.daggers[i]);
+      this.daggers.length = 0;
       const all = this.list.slice();
       this.list.length = 0;
       for (let i = 0; i < all.length; i++) {
@@ -868,6 +1063,27 @@
     dbgDone = true;
     const round = (v) => Math.round(v * 1000) / 1000;
     const get = (i) => Enemies.list[i];
+    // the knight i (default: the nearest living one) throws a dagger right now. flightSec > 0 advances the dagger that long at once,
+    // which is how a dagger is put mid-flight while the AI is frozen (a frozen AI does not tick the daggers).
+    window.__dbg.knightThrow = function (i, flightSec) {
+      let k = typeof i === 'number' ? get(i) : null;
+      if (!k) {
+        const pp = Game.playerObj.position;
+        let best = 1e9;
+        for (const e of Enemies.list) {
+          if (e.dead || e.type !== 'knight') continue;
+          const dd = Math.hypot(e.mesh.position.x - pp.x, e.mesh.position.z - pp.z);
+          if (dd < best) { best = dd; k = e; }
+        }
+      }
+      if (!k) return null;
+      const d = k.throwDagger();
+      if (d && flightSec > 0) Enemies._tickDaggers(flightSec);
+      return d ? { pos: d.mesh.position.toArray().map(round), vel: d.vel.toArray().map(round), state: d.state } : null;
+    };
+    window.__dbg.daggers = function () {
+      return Enemies.daggers.map((d) => ({ state: d.state, pos: d.mesh.position.toArray().map(round), age: round(d.age), lie: round(d.lie) }));
+    };
     window.__dbg.knight = {
       // freeze the AI of knight i in `state` at `progress` (0..1 of that state's duration); animation keeps running.
       // yaw (optional, radians): turn the knight (0 = facing +Z, PI/2 = its right side toward +Z)

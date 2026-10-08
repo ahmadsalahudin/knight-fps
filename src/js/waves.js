@@ -1,9 +1,9 @@
 /* waves.js - window.Waves (B4 rewrite; docs/FIX_PLAN.md "Waves", diagnosis 1.5).
 
-   Flow:  waves 1-4 = 5 / 7 / 9 / 11 knights, spawned ONE AT A TIME on a ring (radius ~30) around the arena centre,
-          preferring points behind / beside the player's view, never on a collider and never near the player.
-          A wave is complete only when pending == 0 AND alive == 0.  Then the player is healed (25 HP, everything
-          before the boss) via Game.heal, a 4 s countdown banner, then the next wave.
+   Flow:  waves 1-4 = 5 / 7 / 9 / 11 knights (+-2 on Hard / Easy, see Difficulty), spawned ONE AT A TIME on a ring (radius ~30)
+          around the arena centre, preferring points behind / beside the player's view, never on a collider and never near
+          the player. A wave is complete only when pending == 0 AND alive == 0.  Then the player is healed (25 HP on Normal,
+          everything before the boss) via Game.heal, a 4 s countdown banner, then the next wave.
           Wave 5 = the Boss (intro banner + Sfx.bossRoar, boss bar). Victory only after the boss dies -> HUD.victory(stats).
    Everything is driven by update(dt) timers (no setTimeout), so the QA virtual clock and freezeAI behave.
 
@@ -27,13 +27,59 @@
 (() => {
   'use strict';
 
+  // ------------------------------------------------------------------------------------------------------------------------
+  // Difficulty (window.Difficulty): picked on the title screen, remembered in localStorage ('kf_difficulty').
+  // Read lazily by enemies.js / boss.js / hud.js at spawn / hit time, so this block only has to exist before the first wave.
+  //   dmg      x enemy damage to the player        hp       x knight HP            knights  added to the knights of every wave
+  //   boss     x boss HP                           heal     HP restored per wave   windup   x knight windup (telegraph) time
+  //   speed    x knight walk / run speed           reach    x boss sweep / slam reach and attack distance
+  //   throwers share of knights that throw daggers (chosen when the knight spawns)
+  // ------------------------------------------------------------------------------------------------------------------------
+  const LEVELS = {
+    easy:   { key: 'easy',   label: 'Easy',   dmg: 0.6, hp: 0.8,  knights: -2, boss: 0.75, heal: 40, windup: 1.0, speed: 0.9,  reach: 0.9,  throwers: 0.20 },
+    normal: { key: 'normal', label: 'Normal', dmg: 1.0, hp: 1.0,  knights: 0,  boss: 1.0,  heal: 25, windup: 1.0, speed: 1.0,  reach: 1.0,  throwers: 0.35 },
+    hard:   { key: 'hard',   label: 'Hard',   dmg: 1.4, hp: 1.25, knights: 2,  boss: 1.3,  heal: 15, windup: 0.8, speed: 1.15, reach: 1.15, throwers: 0.50 },
+  };
+  let level = 'normal';
+  try { const saved = localStorage.getItem('kf_difficulty'); if (saved && LEVELS[saved]) level = saved; } catch (e) { /* private mode */ }
+
+  function paintButtons() {
+    document.querySelectorAll('.diffBtn').forEach((b) => {
+      const on = b.getAttribute('data-diff') === level;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  window.Difficulty = {
+    levels: LEVELS,
+    get() { return LEVELS[level]; },
+    set(k) {
+      if (!LEVELS[k]) return level;
+      level = k;
+      try { localStorage.setItem('kf_difficulty', k); } catch (e) { /* private mode */ }
+      paintButtons();
+      return level;
+    },
+    // damage dealt to the player by an attack of base damage n (never below 1)
+    damage(n) { return Math.max(1, Math.round(n * LEVELS[level].dmg)); },
+  };
+  const bindButtons = () => {
+    document.querySelectorAll('.diffBtn').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); Difficulty.set(b.getAttribute('data-diff')); }));
+    paintButtons();
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindButtons); else bindButtons();
+})();
+
+(() => {
+  'use strict';
+
   const TOTAL = 5;                       // wave 5 is the boss
   const KNIGHTS = [0, 5, 7, 9, 11];      // knights per wave (index = wave number)
   const RING_RADIUS = 30;
   const MIN_FROM_PLAYER = 18;            // never spawn closer than this to the player
   const COUNTDOWN = 4;                   // seconds between waves
-  const HEAL_PER_WAVE = 25;              // HP restored when a wave is cleared (100 HP, 15 per knight hit, no other healing);
-                                         // the break before the boss restores everything (the boss does 22-36 per hit)
+  // HP restored when a wave is cleared comes from Difficulty.heal (25 on Normal; 100 HP, 15 per knight hit, no other healing);
+  // the break before the boss restores everything (the boss does 22-36 per hit).
   const BOSS_DELAY = 1.8;                // boss appears this long after the intro banner / roar
   const VICTORY_DELAY = 3.0;             // let the boss death play out before the victory screen
   const MAX_ALIVE = 8;                   // never more than this many wave knights alive at once
@@ -89,7 +135,8 @@
   }
 
   function standInKnight(wave) {
-    const k = new window.Knight({ scale: 1.5, hp: 800, maxHp: 800, type: 'boss', knockbackScale: 0.1, displayName: BOSS_NAME + ' (stand-in)' });
+    const hp = Math.round(800 * Difficulty.get().boss);
+    const k = new window.Knight({ scale: 1.5, hp: hp, maxHp: hp, type: 'boss', knockbackScale: 0.1, displayName: BOSS_NAME + ' (stand-in)' });
     k.waveNumber = wave;
     return k;
   }
@@ -152,6 +199,7 @@
       this.pending = 0;
       this.alive = 0;
       this.countdown = 0;
+      if (window.Sfx && Sfx.duck) Sfx.duck(false);
       if (window.HUD) {
         if (HUD.clearBanner) HUD.clearBanner();
         if (HUD.bossBar) HUD.bossBar(false);
@@ -228,6 +276,7 @@
         shots: window.Game ? (Game.shots || 0) : 0,
         time: Math.round(this.runTime),
         best: Math.max(bestOf(), this.current),
+        difficulty: Difficulty.get().label,
       };
       // Game.stats() (when present) adds hits / headshots / accuracy
       try {
@@ -269,7 +318,7 @@
       this.state = 'fighting';
       this.countdown = 0;
       this._bossWave = (n === TOTAL);
-      this.pending = this._bossWave ? 1 : KNIGHTS[n];
+      this.pending = this._bossWave ? 1 : Math.max(1, KNIGHTS[n] + Difficulty.get().knights);
       this.alive = 0;
       this._spawnTimer = this._bossWave ? BOSS_DELAY : 0;
 
@@ -285,6 +334,7 @@
       if (window.Sfx) {
         if (this._bossWave) { if (Sfx.bossRoar) Sfx.bossRoar(); }
         else if (Sfx.waveStart) Sfx.waveStart();
+        if (Sfx.duck) Sfx.duck(this._bossWave);                // the meadow ambience drops a little during the boss fight
       }
       // first knight is on the field immediately; the boss waits for its intro
       if (!this._bossWave) { this._spawnOne(); this._spawnTimer = Math.max(0.9, 2.6 - 0.35 * n); }
@@ -396,7 +446,7 @@
       this.countdown = COUNTDOWN;
       this._cdShown = -1;
       if (window.HUD && HUD.setEnemiesLeft) HUD.setEnemiesLeft(0);
-      if (window.Game && Game.heal) Game.heal(done === TOTAL - 1 ? 100 : HEAL_PER_WAVE);
+      if (window.Game && Game.heal) Game.heal(done === TOTAL - 1 ? 100 : Difficulty.get().heal);
       saveBest(done);
     },
 

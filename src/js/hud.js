@@ -224,6 +224,7 @@
     if (s.kills == null) s.kills = (W && typeof W.kills === 'number') ? W.kills : (G && G.kills) || 0;
     if (s.shots == null) s.shots = (G && G.shots) || 0;
     if (s.time == null && W && typeof W.runTime === 'number') s.time = W.runTime;
+    if (s.difficulty == null && window.Difficulty) s.difficulty = Difficulty.get().label;
     if (s.accuracy == null && s.hits != null && s.shots) s.accuracy = s.hits / s.shots;
     s.best = Math.max(s.best || 0, bestWave(), s.wave);
     return s;
@@ -244,6 +245,7 @@
     if (typeof s.headshots === 'number') rows.push(['HEADSHOTS', s.headshots]);
     if (s.time != null) rows.push(['TIME', fmtTime(s.time)]);
     rows.push(['BEST WAVE', s.best]);
+    if (s.difficulty) rows.push(['DIFFICULTY', s.difficulty]);
     return rows;
   }
 
@@ -261,6 +263,12 @@
       const fin = total > 1 && n >= total;
       e.wave.textContent = fin ? 'FINAL WAVE' : (total ? 'WAVE ' + n + ' / ' + total : 'WAVE ' + n);
       e.wave.classList.toggle('final', fin);
+      if (window.Difficulty) {                       // "WAVE 2 / 5  HARD"
+        const d = Difficulty.get(), tag = document.createElement('span');
+        tag.className = 'diff ' + d.key; tag.textContent = d.label.toUpperCase();
+        e.wave.appendChild(document.createTextNode(' '));
+        e.wave.appendChild(tag);
+      }
     },
 
     banner: function (title, sub, ms, opts) {
