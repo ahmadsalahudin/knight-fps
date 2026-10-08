@@ -8151,6 +8151,8 @@ window.getInput = function () {
 
     // ---------------------------------------------------------------------------------------------- the streak
     onKill: function (enemy) {
+      const W = window.Waves;
+      if (W && (W.state === 'victory-wait' || W.state === 'victory')) return;      // the boss's minions fall with it: no reward for that
       const need = diff().streak;
       this.streak++;
       this._streakT = STREAK_WINDOW;
