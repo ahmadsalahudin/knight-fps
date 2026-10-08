@@ -126,7 +126,7 @@
     const c = ctx();
     if (c && c.state === 'suspended') { try { c.resume(); } catch (e) { /* ignore */ } }
   }
-  ['pointerdown', 'mousedown', 'keydown', 'touchstart'].forEach((ev) => {
+  ['pointerdown', 'mousedown', 'keydown', 'touchstart', 'touchend', 'click'].forEach((ev) => {   // iOS only unlocks audio on touchend / click
     try { document.addEventListener(ev, unlock, { capture: true, passive: true }); } catch (e) { /* ignore */ }
   });
 

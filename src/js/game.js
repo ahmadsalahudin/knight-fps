@@ -10,9 +10,10 @@
        always: FX.tracer(muzzle, point), FX.shake, Sfx.shoot, camera kick
    Every cross-module call is guarded, so any module can be missing.
    Kills: Waves owns the kill counter when Waves.onEnemyKilled exists; otherwise Game counts them itself.
-   Controls: WASD / arrow keys move, Shift sprints, mouse aims (pointer lock), left button fires, R reloads. */
+   Controls: WASD / arrow keys move, Shift sprints, mouse aims (pointer lock), left button fires, R reloads.
+   Touch (touch.js): window.TouchInput feeds an analog move vector (input.analog / ax / ay) and a sprint flag through getInput. */
 window.getInput = function () {
-  const input = { forward: false, backward: false, left: false, right: false, sprint: false };
+  const input = { forward: false, backward: false, left: false, right: false, sprint: false, analog: false, ax: 0, ay: 0 };
   const keys = {};
   document.addEventListener('keydown', function (e) {
     keys[e.code] = true;
@@ -28,6 +29,14 @@ window.getInput = function () {
     input.left = !!(keys['KeyA'] || keys['ArrowLeft']);
     input.right = !!(keys['KeyD'] || keys['ArrowRight']);
     input.sprint = !!(keys['ShiftLeft'] || keys['ShiftRight']);
+    input.analog = false; input.ax = 0; input.ay = 0;
+    // on-screen stick (touch.js): analog strafe / forward in -1..1; the keys win when one is held
+    const T = window.TouchInput;
+    if (T && T.active && (T.ax || T.ay) && !(input.forward || input.backward || input.left || input.right)) {
+      input.analog = true; input.ax = T.ax; input.ay = T.ay;
+      input.forward = T.ay > 0.15; input.backward = T.ay < -0.15; input.right = T.ax > 0.15; input.left = T.ax < -0.15;
+    }
+    if (T && T.active && T.sprint) input.sprint = true;
     return input;
   };
 };
@@ -426,10 +435,15 @@ window.getInput = function () {
       // r147-native movement: moveForward/moveRight handle yaw-correct axes internally.
       // (never hand-rolled: my applyAxisAngle(yaw) version inverted A/D)
       const step = speed * dt;
-      if (input.forward) this.controls.moveForward(step);
-      if (input.backward) this.controls.moveForward(-step);
-      if (input.left) this.controls.moveRight(-step);
-      if (input.right) this.controls.moveRight(step);
+      if (input.analog) {                                      // touch stick: speed follows how far it is pushed
+        this.controls.moveForward(input.ay * step);
+        this.controls.moveRight(input.ax * step);
+      } else {
+        if (input.forward) this.controls.moveForward(step);
+        if (input.backward) this.controls.moveForward(-step);
+        if (input.left) this.controls.moveRight(-step);
+        if (input.right) this.controls.moveRight(step);
+      }
 
       // collider clamp: don't fight movement — only cancel penetration after the move
       for (const c of window.World.colliders) {

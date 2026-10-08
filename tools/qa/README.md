@@ -63,3 +63,11 @@ Headless runs cannot be listened to, so every `Sfx` sound is rendered into an `O
 not silent, peak below 1.0, a 60-sound pile-up that does not clip, distance falloff, HRTF left/right placement, mute, volume + `localStorage`,
 and that nothing throws when `AudioContext` does not exist. Prints a PASS/FAIL table and exits 1 on any failure. It proves the sounds are
 present and bounded, not that they sound good.
+
+## Touch check (`touch-check.mjs`, `npm run touch`)
+Opens the game with `?touch=1` in an 844x390 landscape viewport and drives the on-screen controls with real multi-touch events
+(CDP `Input.dispatchTouchEvent`, which produces the same `pointerType: "touch"` pointer events as a phone). Checks the touch help on the
+title screen, START by tap, the floating stick (analog speed, edge = sprint, strafe, release), look drag (yaw and clamped pitch), FIRE
+(tap, and aiming while held), RELOAD, the SPRINT latch, stick + look + fire at once, mute, pause / tap to resume, the portrait pause and
+"turn your device" screen, and that a desktop session shows no touch UI. Saves `out/touch-title.png`, `out/touch-hud.png` and
+`out/touch-active.png`. Prints a PASS/FAIL table and exits 1 on any failure. It cannot judge how the controls *feel* on a real phone.

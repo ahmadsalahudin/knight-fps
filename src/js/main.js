@@ -73,6 +73,7 @@
       // too soon after Esc, or the page is not focused). `onFail` runs on a rejection and on 'pointerlockerror'.
       let onLockFail = null;
       function requestLock(onFail) {
+        if (window.TouchInput && TouchInput.active) return;     // touch screens have no pointer lock: the sticks aim, nothing to request
         onLockFail = onFail || null;
         try {
           const p = renderer.domElement.requestPointerLock();

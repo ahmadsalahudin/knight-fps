@@ -23,6 +23,24 @@ python3 -m http.server 8877      # or: node tools/qa/serve.mjs 8877
 | M | Mute / unmute (a small "MUTED" hint shows on the HUD) |
 | Esc | Release the mouse and pause |
 
+### Touch controls
+
+On phones and tablets (and with `?touch=1` on a desktop browser for testing) the game shows on-screen controls, best in landscape:
+
+| Control | Action |
+|---|---|
+| Left thumb, anywhere on the left side | Floating stick: move at an analog speed, push it to the edge to sprint |
+| Right thumb, anywhere on the right | Drag to aim |
+| FIRE | Shoot (one shot per tap, like the mouse). Keep the finger on it and drag to aim while shooting |
+| RELOAD | Reload |
+| SPRINT | Latch sprint on / off |
+| Top right: pause, mute | The touch versions of Esc and M |
+
+Touch mode turns itself on when the primary pointer is coarse or on the first touch; starting with a mouse turns it off again, and `?touch=0` forces it off.
+Touch screens have no pointer lock, so the game never asks for it there. It pauses when the page is hidden or the phone is turned upright
+(tap the screen to resume), and tries fullscreen + landscape when you press START. The HUD moves out of the way of the thumbs.
+The module is `src/js/touch.js`.
+
 The title screen has a **difficulty** choice (Easy / Normal / Hard) and a **volume** slider. Both are remembered in the browser (`localStorage`).
 
 Waves 1 to 4 bring 5, 7, 9 and 11 knights on Normal, spawned one at a time from the edge of the arena. You heal 25 HP between waves and get fully healed before the boss.
@@ -85,6 +103,7 @@ src/js/enemies.js         animated Knight class (mixer, state machine, bone-atta
 src/js/boss.js            Boss extends Knight
 src/js/waves.js           Difficulty table, wave flow 1-4, boss wave 5, victory
 src/js/game.js            player movement, hitscan firing, damage
+src/js/touch.js           on-screen touch controls (stick, aim drag, fire / reload / sprint / pause / mute)
 src/js/debug.js           __dbg helpers (only with ?debug=1)
 src/js/main.js            renderer, lights, async asset load, guarded main loop
 tools/build.mjs           embeds the used assets/*.glb + concatenates the modules into knights_out_final.html
@@ -99,6 +118,7 @@ PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm i     # once; uses a pre-installed Chromi
 npm run build
 npm run qa                                   # smoke test: prints SMOKE PASS/FAIL
 npm run audio                                # renders every sound offline and checks it is audible, bounded and positional
+npm run touch                                # drives the touch controls with real multi-touch events (844x390 landscape)
 npm run shots -- --list                      # named screenshot scenarios
 npm run shots -- d2-full-run e1-gun-fire     # PNGs -> tools/qa/out/
 ```

@@ -8,7 +8,8 @@
     "qa": "node tools/qa/smoke.mjs",
     "shots": "node tools/qa/shoot.mjs",
     "test": "node tools/qa/smoke.mjs",
-    "audio": "node tools/qa/audio-check.mjs"
+    "audio": "node tools/qa/audio-check.mjs",
+    "touch": "node tools/qa/touch-check.mjs"
   },
   "keywords": [],
   "type": "commonjs",
