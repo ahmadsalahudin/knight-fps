@@ -71,7 +71,7 @@ The chosen level shows next to the wave counter (`WAVE 2 / 5 HARD`) and on the g
 | Heal after a wave | 40 HP | 25 HP | 15 HP |
 | Knights that throw daggers | 20 % | 35 % | 50 % |
 | Knights that do the shield rush | 10 % | 20 % | 35 % |
-| Kill streak that earns grenades | 4 kills: +1 | 5 kills: +1 | 6 kills: +1 |
+| Kill streak that earns grenades | 3 kills: +3 | 4 kills: +2 | 5 kills: +2 |
 
 The table lives in `window.Difficulty` at the top of `src/js/waves.js`; the other modules read it when they spawn or hit.
 
@@ -92,19 +92,9 @@ you back; **sidestep** it and the knight overshoots and **stumbles** for 1.4 s (
 damage. Shooting a rusher while the strip is showing breaks the charge. After a cooldown of 9-13 s it can do it again.
 Debug: `__dbg.knightRush(i?)`.
 
-### Knight animation touches
-
-* **Shield rush:** during the red-strip wind-up and the charge the knight's shield arm is posed procedurally (upper arm and forearm re-aimed, then rolled so the shield face looks along the charge), eased in and out; `_extraPose` in `enemies.js`.
-* **Sword swing:** the swing keeps the clip but adds a torso twist back during the wind-up, a fast whip through the strike (the clip time follows an ease-in curve) and a forward lean, then eases out in the recovery. Dagger throws and the boss are unchanged.
-* Screenshots: `npm run shots -- knight-shield knight-swing`.
-
-### Iron Warlord entrance
-
-The boss no longer just stands there: it drops out of the sky (0.9 s fall from 30 m), lands with a slam (shockwave ring, ring of dust, sparks, a hard camera shake, a white screen flash and the armour clang), and only then raises the sword and roars. The landing does no damage (`_tickDrop` in `boss.js`).
-
 ### Bonus weapon: grenades
 
-You start every run with **1 grenade**. Kill several knights in a row (each within 8 s of the last; 4 / 5 / 6 on Easy / Normal / Hard) and you are given one more (at most 6 carried). The HUD
+Kill several knights in a row (each within 8 s of the last; 3 / 4 / 5 on Easy / Normal / Hard) and you are given grenades (3 / 2 / 2, at most 6 carried). The HUD
 shows the streak and its timer, and the grenades you hold. Press **G** (or tap **GRENADE** on a touch screen) to lob one in an arc: it bounces off the ground,
 trees and rocks, and goes off on touching a knight or when its 2 s fuse ends (the LED blinks faster as it burns down). The blast reaches 6.5 m with a falloff:
 a knight dies within about 2.5 m, the boss takes 35 %, knights are thrown back and flying daggers are destroyed. It also hurts **you** (up to 30 HP x the difficulty
@@ -135,7 +125,7 @@ src/js/world.js           ground, trees, rocks, circular boulder wall, colliders
 src/js/sfx.js             WebAudio synthesized sounds: master chain, reverb, 3D positional audio, ambience, mute / volume
 src/js/hud.js             ammo, HP, wave and boss bars, banners, hitmarkers, damage arcs
 src/js/fx.js              pooled particles, tracers, decals, blood pools, camera shake
-src/js/weapon.js          revolver viewmodel and pale, smooth-skinned hands with generated canvas skin textures (separate scene and camera), recoil, flash, reload
+src/js/weapon.js          revolver viewmodel and hand (separate scene and camera), recoil, flash, reload
 src/js/combat.js          hit zones, damage, knockback, helmet pop, dropped gear physics
 src/js/enemies.js         animated Knight class (mixer, state machine, bone-attached gear, dagger throw, shield rush) + Enemies (incl. thrown daggers)
 src/js/boss.js            Boss extends Knight

@@ -36,12 +36,12 @@
   //   speed    x knight walk / run speed           reach    x boss sweep / slam reach and attack distance
   //   throwers share of knights that throw daggers, rushers share that do the shield rush (both chosen when the knight spawns)
   //   waves    waves in a run, the boss being the last: more waves as the difficulty rises
-  //   streak   kills in a row that earn the bonus weapon (grenade.js), nades = how many grenades it gives (1; a run also starts with 1)
+  //   streak   kills in a row that earn the bonus weapon (grenade.js), nades = how many grenades it gives
   // ------------------------------------------------------------------------------------------------------------------------
   const LEVELS = {
-    easy:   { key: 'easy',   label: 'Easy',   dmg: 0.6, hp: 0.8,  knights: -2, boss: 0.75, heal: 40, windup: 1.0, speed: 0.9,  reach: 0.9,  throwers: 0.20, rushers: 0.10, streak: 4, nades: 1, waves: 4 },
-    normal: { key: 'normal', label: 'Normal', dmg: 1.0, hp: 1.0,  knights: 0,  boss: 1.0,  heal: 25, windup: 1.0, speed: 1.0,  reach: 1.0,  throwers: 0.35, rushers: 0.20, streak: 5, nades: 1, waves: 5 },
-    hard:   { key: 'hard',   label: 'Hard',   dmg: 1.4, hp: 1.25, knights: 2,  boss: 1.3,  heal: 15, windup: 0.8, speed: 1.15, reach: 1.15, throwers: 0.50, rushers: 0.35, streak: 6, nades: 1, waves: 6 },
+    easy:   { key: 'easy',   label: 'Easy',   dmg: 0.6, hp: 0.8,  knights: -2, boss: 0.75, heal: 40, windup: 1.0, speed: 0.9,  reach: 0.9,  throwers: 0.20, rushers: 0.10, streak: 3, nades: 3, waves: 4 },
+    normal: { key: 'normal', label: 'Normal', dmg: 1.0, hp: 1.0,  knights: 0,  boss: 1.0,  heal: 25, windup: 1.0, speed: 1.0,  reach: 1.0,  throwers: 0.35, rushers: 0.20, streak: 4, nades: 2, waves: 5 },
+    hard:   { key: 'hard',   label: 'Hard',   dmg: 1.4, hp: 1.25, knights: 2,  boss: 1.3,  heal: 15, windup: 0.8, speed: 1.15, reach: 1.15, throwers: 0.50, rushers: 0.35, streak: 5, nades: 2, waves: 6 },
   };
   let level = 'normal';
   try { const saved = localStorage.getItem('kf_difficulty'); if (saved && LEVELS[saved]) level = saved; } catch (e) { /* private mode */ }

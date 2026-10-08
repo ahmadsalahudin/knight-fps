@@ -2795,33 +2795,6 @@ window.World = (function () {
     return t;
   }
 
-  // pale skin: warm base, soft blotches, fine pores, faint blue-green veins and creases (generated, 256 px, wraps)
-  function makeSkinTexture(base, shade) {
-    const t = canvasTex(256, 256, (g, w, h) => {
-      g.fillStyle = base; g.fillRect(0, 0, w, h);
-      const wrap = (x, y, r, fn) => { for (const ox of [-w, 0, w]) for (const oy of [-h, 0, h]) { if (x + ox + r < 0 || x + ox - r > w || y + oy + r < 0 || y + oy - r > h) continue; fn(x + ox, y + oy); } };
-      let seed = 1337; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-      for (let i = 0; i < 70; i++) {                       // soft blood-flush and shade blotches
-        const x = rnd() * w, y = rnd() * h, r = 18 + rnd() * 40, warm = rnd() < 0.5;
-        wrap(x, y, r, (cx, cy) => { const gr = g.createRadialGradient(cx, cy, 0, cx, cy, r); const c = warm ? '255,150,130' : shade; gr.addColorStop(0, 'rgba(' + c + ',0.10)'); gr.addColorStop(1, 'rgba(' + c + ',0)'); g.fillStyle = gr; g.fillRect(cx - r, cy - r, r * 2, r * 2); });
-      }
-      g.lineCap = 'round';
-      for (let i = 0; i < 9; i++) {                        // faint veins
-        const x = rnd() * w, y = rnd() * h, a = rnd() * 6.28; g.strokeStyle = 'rgba(120,140,170,0.10)'; g.lineWidth = 2 + rnd() * 2.5; g.beginPath(); g.moveTo(x, y);
-        g.bezierCurveTo(x + Math.cos(a) * 30, y + Math.sin(a) * 30, x + Math.cos(a + 1) * 60, y + Math.sin(a + 1) * 60, x + Math.cos(a + 0.4) * 90, y + Math.sin(a + 0.4) * 90); g.stroke();
-      }
-      g.strokeStyle = 'rgba(150,100,85,0.16)';             // skin creases
-      for (let i = 0; i < 26; i++) { const x = rnd() * w, y = rnd() * h, l = 14 + rnd() * 26; g.lineWidth = 0.8 + rnd() * 0.8; g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + l / 2, y + (rnd() - 0.5) * 8, x + l, y + (rnd() - 0.5) * 6); g.stroke(); }
-      const img = g.getImageData(0, 0, w, h), d = img.data;   // fine grain + pores
-      for (let i = 0; i < d.length; i += 4) { const n = (rnd() - 0.5) * 14; d[i] += n; d[i + 1] += n * 0.9; d[i + 2] += n * 0.8; }
-      g.putImageData(img, 0, 0);
-      for (let i = 0; i < 900; i++) { g.fillStyle = 'rgba(120,70,60,' + (0.05 + rnd() * 0.07) + ')'; g.beginPath(); g.arc(rnd() * w, rnd() * h, 0.6 + rnd() * 0.7, 0, 6.28); g.fill(); }
-    });
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.anisotropy = 4;
-    return t;
-  }
-
   function makeStarTexture() {
     return canvasTex(128, 128, (g, w, h) => {
       g.clearRect(0, 0, w, h);
@@ -3031,16 +3004,14 @@ window.World = (function () {
 
     _makeMaterials: function () {
       const col = (h) => this._col(h);
-      const skin = (b, sh) => { const t = makeSkinTexture(b, sh); if (this.srgb) t.encoding = THREE.sRGBEncoding; return t; };
       this.mats = {
         dark: new THREE.MeshPhongMaterial({ color: col(0x2c3036), specular: col(0x3a4046), shininess: 30 }),
         light: new THREE.MeshPhongMaterial({ color: col(0x626972), specular: col(0x545b63), shininess: 30 }),
         wood: new THREE.MeshPhongMaterial({ color: col(0x5d3a20), specular: col(0x34271a), shininess: 22 }),
-        // bare, pale hands (generated skin textures, smooth shading)
-        glove: new THREE.MeshPhongMaterial({ color: 0xffffff, map: skin('#efcdb8', '200,150,140'), specular: col(0x3a2e2a), shininess: 18 }),
-        glove2: new THREE.MeshPhongMaterial({ color: 0xf2dccf, map: skin('#e6bfa8', '190,140,135'), specular: col(0x30262a), shininess: 14 }),
-        sleeve: new THREE.MeshPhongMaterial({ color: col(0x4a5668), specular: col(0x141a22), shininess: 6 }),
-        cuff: new THREE.MeshPhongMaterial({ color: col(0x3a2a1c), specular: col(0x16100a), shininess: 8 })
+        glove: new THREE.MeshPhongMaterial({ color: col(0x6b4a30), specular: col(0x241a12), shininess: 10, flatShading: true }),
+        glove2: new THREE.MeshPhongMaterial({ color: col(0x4d3523), specular: col(0x1a120c), shininess: 8, flatShading: true }),
+        sleeve: new THREE.MeshPhongMaterial({ color: col(0x4a5668), specular: col(0x141a22), shininess: 6, flatShading: true }),
+        cuff: new THREE.MeshPhongMaterial({ color: col(0x3a2a1c), specular: col(0x16100a), shininess: 8, flatShading: true })
       };
     },
 
@@ -3297,7 +3268,7 @@ window.World = (function () {
       const up = new V3(0, 1, 0);
       const limb = (a, b, r, mat, seg) => {            // capsule from a to b
         const d = new V3().subVectors(b, a), len = d.length();
-        const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.0005, len - 2 * r), 6, (seg || 6) * 2), mat);
+        const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.0005, len - 2 * r), 2, seg || 6), mat);
         m.position.copy(a).add(b).multiplyScalar(0.5);
         m.quaternion.setFromUnitVectors(up, d.normalize());
         m.frustumCulled = false;
@@ -3305,7 +3276,7 @@ window.World = (function () {
       };
       const taper = (a, b, ra, rb, mat, seg) => {      // cone frustum, radius ra at a, rb at b
         const d = new V3().subVectors(b, a), len = d.length();
-        const m = new THREE.Mesh(new THREE.CylinderGeometry(rb, ra, len, (seg || 8) * 2, 1), mat);
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(rb, ra, len, seg || 8, 1), mat);
         m.position.copy(a).add(b).multiplyScalar(0.5);
         m.quaternion.setFromUnitVectors(up, d.normalize());
         m.frustumCulled = false;
@@ -3333,7 +3304,7 @@ window.World = (function () {
 
       // back of the hand: faceted ellipsoid behind (and to the right of) the grip, tilted with the grip rake
       const blob = (c, rx, ry, rz, mat, q) => {
-        const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 3), mat);
+        const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), mat);
         m.scale.set(rx, ry, rz);
         m.position.copy(c);
         if (q) m.quaternion.copy(q);
@@ -3343,9 +3314,12 @@ window.World = (function () {
       const basis = new THREE.Matrix4().makeBasis(new V3(1, 0, 0), u.clone().negate(), n);
       const palmQ = new THREE.Quaternion().setFromRotationMatrix(basis);
       const palmC = mid.clone().addScaledVector(n, halfD + 0.010).add(new V3(0.010, 0.0, 0));
-      R.add(blob(palmC, 0.029, 0.040, 0.017, M.glove, palmQ));       // flattened back of the hand
-      // the side of the palm against the grip, kept low so it reads as one smooth hand, not a lump
-      R.add(blob(mid.clone().add(new V3(0.012, 0.004, -0.001)), 0.013, 0.036, 0.020, M.glove2, palmQ));
+      R.add(blob(palmC, 0.031, 0.043, 0.024, M.glove, palmQ));
+      // heel of the hand / web between thumb and index finger, over the top strap
+      const webC = gT.clone().addScaledVector(n, halfD + 0.002).addScaledVector(u, -0.006).add(new V3(0.0, 0.0, 0));
+      R.add(blob(webC, 0.022, 0.016, 0.019, M.glove2, palmQ));
+      // palm side covering the right of the grip
+      R.add(blob(mid.clone().add(new V3(0.016, 0.003, -0.002)), 0.016, 0.040, 0.025, M.glove2, palmQ));
 
       // three fingers wrapped around the front of the grip (tips curl round to the left side)
       for (let i = 0; i < 3; i++) {
@@ -3353,7 +3327,7 @@ window.World = (function () {
         const c = gT.clone().addScaledVector(u, sOff).addScaledVector(n, -(halfD + 0.007));
         const a = c.clone().add(new V3(-0.0195 + i * 0.0015, 0, 0));
         const b = c.clone().add(new V3(0.024, 0, 0));
-        R.add(limb(a, b, 0.0080 - i * 0.0006, i % 2 ? M.glove2 : M.glove, 6));
+        R.add(limb(a, b, 0.0088 - i * 0.0007, i % 2 ? M.glove2 : M.glove, 6));
       }
       // index finger along the left of the frame, resting on the trigger
       const knuckle = gT.clone().addScaledVector(n, -(halfD + 0.002)).add(new V3(-0.0135, 0.0045, 0));
@@ -3362,7 +3336,7 @@ window.World = (function () {
       // thumb lying along the left side of the frame
       const thumbRoot = gT.clone().addScaledVector(n, halfD - 0.004).add(new V3(-0.009, 0.013, 0));
       const thumbTip = new V3(-0.0195, 0.0265, -0.040);
-      R.add(blob(thumbRoot, 0.010, 0.010, 0.011, M.glove2, null));
+      R.add(blob(thumbRoot, 0.012, 0.012, 0.014, M.glove2, null));
       R.add(limb(thumbRoot, thumbTip, 0.0090, M.glove2, 6));
 
       // wrist: leather cuff then sleeve, running back and DOWN out of the frame
@@ -4613,7 +4587,6 @@ window.World = (function () {
   const UPPER_RE = /^(Abdomen|Torso|Neck|Head|Shoulder|UpperArm|LowerArm|Palm|MiddleHand|Fingers|Thumb)/;
 
   // scratch
-  const _v2 = new V3(), _v3 = new V3(), _v4 = new V3(), _v5 = new V3(), _v6 = new V3(), _up = new V3(0, 1, 0);
   const _v1 = new V3(), _q1 = new Q(), _q2 = new Q(), _sp = new V3();
   const AX = new V3(1, 0, 0), AZ = new V3(0, 0, 1);
 
@@ -4682,7 +4655,6 @@ window.World = (function () {
       this.rusher = this.type === 'knight' && !this.thrower && roll < D.throwers + (D.rushers || 0);
       this._rushCd = 6 + Math.random() * 4;       // s until the first rush may start
       this._rushDir = new V3(0, 0, 1);
-      this._shieldW = 0; this._ov = [];
       this._rushLen = 12; this._rushed = 0; this._rushHit = false; this._strip = null;
       this.knockbackScale = typeof opts.knockbackScale === 'number' ? opts.knockbackScale : 1;
       this.knockback = new V3();
@@ -5118,7 +5090,7 @@ window.World = (function () {
         }
         case 'attack': {
           const u = clamp(this.stateT / this.strikeTime, 0, 1);
-          return lerp(ATK_RAISE, ATK_STRIKE_END, Math.pow(u, 1.8));       // slow start, whips through the end of the arc
+          return lerp(ATK_RAISE, ATK_STRIKE_END, Math.pow(u, 1.25));
         }
         case 'recover': {
           const u = clamp(this.stateT / this.recoverTime, 0, 1);
@@ -5322,10 +5294,6 @@ window.World = (function () {
     // whose clip is static at that moment (the head during the sword swing) would keep last frame's rotation and gain a new one every
     // frame: a knight shot mid-swing spun its head round by up to ~3 rad. So the added rotation is taken off again before the mixer runs.
     _undoProcedural() {
-      if (this._ov && this._ov.length) {            // swing twist / shield pose: put the pre-override rotations back (last in, first out)
-        for (let i = this._ov.length - 1; i >= 0; i--) this._ov[i].bone.quaternion.copy(this._ov[i].q);
-        this._ov.length = 0;
-      }
       if (!this._pOn) return;
       this._pOn = false;
       const torso = this.bones.torso, head = this.bones.head;
@@ -5333,86 +5301,7 @@ window.World = (function () {
       if (head) head.quaternion.multiply(_q1.copy(this._pH).invert());
     }
 
-    // ---- bone overrides on top of the mixer (swing twist, shield arm). Each one is remembered so _undoProcedural can take it off again.
-    _ovSave(bone) { if (!this._ov) this._ov = []; this._ov.push({ bone: bone, q: bone.quaternion.clone() }); }
-
-    // rotate `bone` about a WORLD axis by `ang` (needs fresh world matrices on its parent chain): q' = P^-1 R P q
-    _ovRotate(bone, axis, ang) {
-      this._ovSave(bone);
-      bone.parent.getWorldQuaternion(_q1);
-      _q2.setFromAxisAngle(axis, ang);
-      bone.quaternion.premultiply(_q1).premultiply(_q2).premultiply(_q1.invert());
-      bone.updateMatrixWorld(true);
-    }
-
-    // swing the bone so the segment bone -> child points along `dir` (world), blended by w
-    _ovAim(bone, child, dir, w) {
-      this._ovSave(bone);
-      bone.getWorldPosition(_v1); child.getWorldPosition(_v2);
-      _v2.sub(_v1).normalize();
-      const d = new Q().setFromUnitVectors(_v2, dir);
-      d.slerp(new Q(), 1 - w);
-      const P = bone.parent.getWorldQuaternion(new Q());
-      const W = bone.getWorldQuaternion(new Q());
-      bone.quaternion.copy(P.invert().multiply(d.multiply(W)));
-      bone.updateMatrixWorld(true);
-    }
-
-    // turn / lean the torso through the sword swing and bring the shield up for the charge
-    _extraPose(dt) {
-      const st = this.state;
-      const bones = this.bones;
-      let twist = 0, lean = 0, shieldTarget = 0;
-      if (this.type === 'knight' && !this._throwing) {
-        if (st === 'windup') { const u = clamp(this.stateT / this.windupTime, 0, 1); const k = smooth(Math.min(1, u / 0.6)); twist = -0.34 * k; lean = -0.06 * k; }
-        else if (st === 'attack') { const u = clamp(this.stateT / this.strikeTime, 0, 1); const k = Math.pow(u, 1.8); twist = lerp(-0.34, 0.5, k); lean = lerp(-0.06, 0.2, k); }
-        else if (st === 'recover') { const u = clamp(this.stateT / this.recoverTime, 0, 1); const k = smooth(Math.min(1, u * 1.25)); twist = lerp(0.5, 0, k); lean = lerp(0.2, 0, k); }
-      }
-      if (this.type === 'knight' && (st === 'rushWind' || st === 'rush')) shieldTarget = 1;
-      this._shieldW += (shieldTarget - this._shieldW) * Math.min(1, dt * (shieldTarget ? 11 : 7));
-      if (this._shieldW < 0.01) this._shieldW = 0;
-      if (Math.abs(twist) < 0.002 && Math.abs(lean) < 0.002 && this._shieldW === 0) return;
-      this.mesh.updateMatrixWorld(true);
-      const yaw = this.mesh.rotation.y, sn = Math.sin(yaw), cs = Math.cos(yaw);
-      if (bones.torso && (twist || lean)) {
-        _v3.set(0, 1, 0);
-        this._ovTorso(bones.torso, _v3, twist, _v4.set(cs, 0, -sn), lean);
-      }
-      const W = this._shieldW;
-      const fore = bones.armL, upper = fore && fore.parent, hand = bones.handL;
-      if (W > 0 && fore && upper && hand && this.shield) {
-        const f = _v5.set(sn, 0, cs);
-        _v1.copy(fore.getWorldPosition(_v1)).sub(this.mesh.position);
-        const side = (_v1.x * cs - _v1.z * sn) >= 0 ? 1 : -1;
-        const out = _v6.set(cs * side, 0, -sn * side);
-        // upper arm forward and slightly out, forearm up and forward: the shield stands in front of the chest
-        const dU = new V3().copy(f).multiplyScalar(0.62).addScaledVector(out, 0.22).addScaledVector(_up, -0.5).normalize();
-        this._ovAim(upper, fore, dU, W);
-        const dF = new V3().copy(f).multiplyScalar(0.3).addScaledVector(out, -0.1).addScaledVector(_up, 0.92).normalize();
-        this._ovAim(fore, hand, dF, W);
-        // roll the forearm about its axis until the shield face (+Z of the shield, the side facing out) looks along the charge
-        this.shield.updateWorldMatrix(true, false);
-        const nrm = new V3(0, 0, 1).transformDirection(this.shield.matrixWorld);
-        const axis = new V3().copy(dF);
-        const a = nrm.clone().addScaledVector(axis, -nrm.dot(axis)).normalize();
-        const b = f.clone().addScaledVector(axis, -f.dot(axis)).normalize();
-        let ang = Math.acos(clamp(a.dot(b), -1, 1)); if (new V3().crossVectors(a, b).dot(axis) < 0) ang = -ang;
-        this._ovRotate(fore, axis, ang * W);
-      }
-    }
-
-    // twist about the world up axis, then lean about the knight's lateral axis
-    _ovTorso(bone, up, twist, lat, lean) {
-      this._ovRotate(bone, up, twist);
-      if (lean) this._ovRotate(bone, lat, lean);
-    }
-
     _proceduralPose(dt) {
-      this._flinchPose(dt);
-      this._extraPose(dt);       // after the flinch, so _undoProcedural takes them off in the opposite order
-    }
-
-    _flinchPose(dt) {
       if (this._flinch <= 0.001) { this._flinch = 0; return; }
       this._flinch = Math.max(0, this._flinch - dt / 0.32);
       const k = Math.sin(clamp(this._flinch, 0, 1) * Math.PI * 0.5);   // 1 -> 0 ease
@@ -5903,7 +5792,6 @@ window.World = (function () {
 
   const Knight = window.Knight;
   const V3 = THREE.Vector3;
-  const DROP_T = 0.9, DROP_H = 30;      // boss entrance: fall time (s) and height (m)
   const TAU = Math.PI * 2;
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -6010,9 +5898,7 @@ window.World = (function () {
       // the arrival: it stands, raises the sword and roars before it starts to walk
       this.atk = 'roar';
       this._roarKind = 'intro';
-      this.windupTime = 1.5 + DROP_T;       // it drops out of the sky first (DROP_T), then raises the sword and roars
-      this._landed = false;
-      this.mesh.position.y = DROP_H;
+      this.windupTime = 1.5;
       this.setState('windup');
     }
 
@@ -6392,39 +6278,8 @@ window.World = (function () {
       this.setState('windup');
     }
 
-    // the dramatic entrance: it plunges from DROP_H, lands with a slam (shockwave, dust ring, sparks, shake, white flash)
-    _tickDrop() {
-      const u = Math.min(1, this.stateT / DROP_T);
-      this.mesh.position.y = DROP_H * (1 - u * u);
-      if (u < 1 || this._landed) return;
-      this._landed = true;
-      this.mesh.position.y = 0;
-      const x = this.mesh.position.x, z = this.mesh.position.z;
-      this._shake(1.6);
-      this._wave = { t: 0, x: x, z: z, R: 16 };
-      for (let i = 0; i < 24; i++) { const a = i / 24 * TAU; this._dustAt(x + Math.cos(a) * 5.5, z + Math.sin(a) * 5.5, 1.8); }
-      for (let i = 0; i < 8; i++) { const a = i / 8 * TAU; this._dustAt(x + Math.cos(a) * 2.5, z + Math.sin(a) * 2.5, 2.4); }
-      if (window.FX && FX.sparks) { try { FX.sparks(new V3(x, 0.2, z), new V3(0, 1, 0), 50); FX.sparks(new V3(x, 0.2, z), new V3(0.8, 0.4, 0), 30); } catch (e) { /* ignore */ } }
-      if (window.Sfx) { try { if (Sfx.footstep) Sfx.footstep('boss', this.mesh.position); if (Sfx.clang) Sfx.clang(this.mesh.position); if (Sfx.armorHit) Sfx.armorHit(this.mesh.position); } catch (e) { /* ignore */ } }
-      this._whiteFlash();
-    }
-
-    _whiteFlash() {
-      try {
-        let el = document.getElementById('bossFlash');
-        if (!el) {
-          el = document.createElement('div'); el.id = 'bossFlash';
-          el.style.cssText = 'position:fixed;inset:0;background:#fff;pointer-events:none;z-index:40;opacity:0;transition:opacity 60ms linear';
-          document.body.appendChild(el);
-        }
-        el.style.transition = 'opacity 60ms linear'; el.style.opacity = '0.75';
-        setTimeout(() => { el.style.transition = 'opacity 650ms ease-out'; el.style.opacity = '0'; }, 70);
-      } catch (e) { /* ignore */ }
-    }
-
     _tickRoar(dt, ctx) {
-      if (this._roarKind === 'intro' && !this._landed) { this._tickDrop(); if (!this._landed) return; }
-      const t = this._roarKind === 'intro' ? this.stateT - DROP_T : this.stateT;
+      const t = this.stateT;
       if (this._roarFx < 1 && t >= 0.35) {
         this._roarFx = 1;
         this._shake(0.55);
@@ -6435,7 +6290,7 @@ window.World = (function () {
         }
       }
       if (this._roarFx < 2 && t >= 0.95) { this._roarFx = 2; this._shake(0.35); }
-      if (this.stateT >= this.windupTime) {
+      if (t >= this.windupTime) {
         this.atk = null;
         this._gap = 0.4;
         this._idleWait = 0.1;
@@ -7006,12 +6861,12 @@ window.World = (function () {
   //   speed    x knight walk / run speed           reach    x boss sweep / slam reach and attack distance
   //   throwers share of knights that throw daggers, rushers share that do the shield rush (both chosen when the knight spawns)
   //   waves    waves in a run, the boss being the last: more waves as the difficulty rises
-  //   streak   kills in a row that earn the bonus weapon (grenade.js), nades = how many grenades it gives (1; a run also starts with 1)
+  //   streak   kills in a row that earn the bonus weapon (grenade.js), nades = how many grenades it gives
   // ------------------------------------------------------------------------------------------------------------------------
   const LEVELS = {
-    easy:   { key: 'easy',   label: 'Easy',   dmg: 0.6, hp: 0.8,  knights: -2, boss: 0.75, heal: 40, windup: 1.0, speed: 0.9,  reach: 0.9,  throwers: 0.20, rushers: 0.10, streak: 4, nades: 1, waves: 4 },
-    normal: { key: 'normal', label: 'Normal', dmg: 1.0, hp: 1.0,  knights: 0,  boss: 1.0,  heal: 25, windup: 1.0, speed: 1.0,  reach: 1.0,  throwers: 0.35, rushers: 0.20, streak: 5, nades: 1, waves: 5 },
-    hard:   { key: 'hard',   label: 'Hard',   dmg: 1.4, hp: 1.25, knights: 2,  boss: 1.3,  heal: 15, windup: 0.8, speed: 1.15, reach: 1.15, throwers: 0.50, rushers: 0.35, streak: 6, nades: 1, waves: 6 },
+    easy:   { key: 'easy',   label: 'Easy',   dmg: 0.6, hp: 0.8,  knights: -2, boss: 0.75, heal: 40, windup: 1.0, speed: 0.9,  reach: 0.9,  throwers: 0.20, rushers: 0.10, streak: 3, nades: 3, waves: 4 },
+    normal: { key: 'normal', label: 'Normal', dmg: 1.0, hp: 1.0,  knights: 0,  boss: 1.0,  heal: 25, windup: 1.0, speed: 1.0,  reach: 1.0,  throwers: 0.35, rushers: 0.20, streak: 4, nades: 2, waves: 5 },
+    hard:   { key: 'hard',   label: 'Hard',   dmg: 1.4, hp: 1.25, knights: 2,  boss: 1.3,  heal: 15, windup: 0.8, speed: 1.15, reach: 1.15, throwers: 0.50, rushers: 0.35, streak: 5, nades: 2, waves: 6 },
   };
   let level = 'normal';
   try { const saved = localStorage.getItem('kf_difficulty'); if (saved && LEVELS[saved]) level = saved; } catch (e) { /* private mode */ }
@@ -8222,8 +8077,8 @@ window.getInput = function () {
 <script>
 /* grenade.js - window.Grenade: the bonus weapon. A run of kills earns hand grenades.
 
-   Earning:  kills in a row (each within STREAK_WINDOW seconds of the last) fill the streak; at Difficulty.streak (Easy 4, Normal 5, Hard 6)
-             you are given Difficulty.nades grenades (1 on every level; at most MAX_CARRY carried). A run starts with START_NADES = 1 and the streak starts again.
+   Earning:  kills in a row (each within STREAK_WINDOW seconds of the last) fill the streak; at Difficulty.streak (Easy 3, Normal 4, Hard 5)
+             you are given Difficulty.nades grenades (Easy 3, Normal 2, Hard 2; at most MAX_CARRY carried) and the streak starts again.
              Kills by grenade count too, so a good throw chains into the next reward.
    Using:    G (desktop) or the GRENADE button (touch) lobs one in an arc from the camera. It bounces off the ground, trees and rocks,
              detonates the moment it touches a knight, or when its 2 s fuse runs out (the LED on it blinks faster and faster).
@@ -8243,11 +8098,11 @@ window.getInput = function () {
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
   const GRAVITY = 16, THROW_SPEED = 17, THROW_LIFT = 3.6;      // m/s^2, m/s along the view, m/s added upward
-  const FUSE = 2.0, COOLDOWN = 0.7, MAX_CARRY = 6, STREAK_WINDOW = 8, START_NADES = 1;
+  const FUSE = 2.0, COOLDOWN = 0.7, MAX_CARRY = 6, STREAK_WINDOW = 8;
   const R_BALL = 0.09;
   const RADIUS = 6.5, MAX_DAMAGE = 150, BOSS_FACTOR = 0.35;
   const SELF_R = 4.5, SELF_DAMAGE = 30;
-  const NEUTRAL = { streak: 5, nades: 1, dmg: 1 };
+  const NEUTRAL = { streak: 4, nades: 2, dmg: 1 };
   const diff = () => (window.Difficulty && Difficulty.get()) || NEUTRAL;
   const el = (id) => document.getElementById(id);
 
@@ -8276,7 +8131,7 @@ window.getInput = function () {
 
     reset: function () {
       this.clear();
-      this.count = START_NADES; this.streak = 0; this._streakT = 0; this._cool = 0;
+      this.count = 0; this.streak = 0; this._streakT = 0; this._cool = 0;
       this._hud();
     },
 

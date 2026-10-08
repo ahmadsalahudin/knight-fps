@@ -104,7 +104,6 @@
   const UPPER_RE = /^(Abdomen|Torso|Neck|Head|Shoulder|UpperArm|LowerArm|Palm|MiddleHand|Fingers|Thumb)/;
 
   // scratch
-  const _v2 = new V3(), _v3 = new V3(), _v4 = new V3(), _v5 = new V3(), _v6 = new V3(), _up = new V3(0, 1, 0);
   const _v1 = new V3(), _q1 = new Q(), _q2 = new Q(), _sp = new V3();
   const AX = new V3(1, 0, 0), AZ = new V3(0, 0, 1);
 
@@ -173,7 +172,6 @@
       this.rusher = this.type === 'knight' && !this.thrower && roll < D.throwers + (D.rushers || 0);
       this._rushCd = 6 + Math.random() * 4;       // s until the first rush may start
       this._rushDir = new V3(0, 0, 1);
-      this._shieldW = 0; this._ov = [];
       this._rushLen = 12; this._rushed = 0; this._rushHit = false; this._strip = null;
       this.knockbackScale = typeof opts.knockbackScale === 'number' ? opts.knockbackScale : 1;
       this.knockback = new V3();
@@ -609,7 +607,7 @@
         }
         case 'attack': {
           const u = clamp(this.stateT / this.strikeTime, 0, 1);
-          return lerp(ATK_RAISE, ATK_STRIKE_END, Math.pow(u, 1.8));       // slow start, whips through the end of the arc
+          return lerp(ATK_RAISE, ATK_STRIKE_END, Math.pow(u, 1.25));
         }
         case 'recover': {
           const u = clamp(this.stateT / this.recoverTime, 0, 1);
@@ -813,10 +811,6 @@
     // whose clip is static at that moment (the head during the sword swing) would keep last frame's rotation and gain a new one every
     // frame: a knight shot mid-swing spun its head round by up to ~3 rad. So the added rotation is taken off again before the mixer runs.
     _undoProcedural() {
-      if (this._ov && this._ov.length) {            // swing twist / shield pose: put the pre-override rotations back (last in, first out)
-        for (let i = this._ov.length - 1; i >= 0; i--) this._ov[i].bone.quaternion.copy(this._ov[i].q);
-        this._ov.length = 0;
-      }
       if (!this._pOn) return;
       this._pOn = false;
       const torso = this.bones.torso, head = this.bones.head;
@@ -824,86 +818,7 @@
       if (head) head.quaternion.multiply(_q1.copy(this._pH).invert());
     }
 
-    // ---- bone overrides on top of the mixer (swing twist, shield arm). Each one is remembered so _undoProcedural can take it off again.
-    _ovSave(bone) { if (!this._ov) this._ov = []; this._ov.push({ bone: bone, q: bone.quaternion.clone() }); }
-
-    // rotate `bone` about a WORLD axis by `ang` (needs fresh world matrices on its parent chain): q' = P^-1 R P q
-    _ovRotate(bone, axis, ang) {
-      this._ovSave(bone);
-      bone.parent.getWorldQuaternion(_q1);
-      _q2.setFromAxisAngle(axis, ang);
-      bone.quaternion.premultiply(_q1).premultiply(_q2).premultiply(_q1.invert());
-      bone.updateMatrixWorld(true);
-    }
-
-    // swing the bone so the segment bone -> child points along `dir` (world), blended by w
-    _ovAim(bone, child, dir, w) {
-      this._ovSave(bone);
-      bone.getWorldPosition(_v1); child.getWorldPosition(_v2);
-      _v2.sub(_v1).normalize();
-      const d = new Q().setFromUnitVectors(_v2, dir);
-      d.slerp(new Q(), 1 - w);
-      const P = bone.parent.getWorldQuaternion(new Q());
-      const W = bone.getWorldQuaternion(new Q());
-      bone.quaternion.copy(P.invert().multiply(d.multiply(W)));
-      bone.updateMatrixWorld(true);
-    }
-
-    // turn / lean the torso through the sword swing and bring the shield up for the charge
-    _extraPose(dt) {
-      const st = this.state;
-      const bones = this.bones;
-      let twist = 0, lean = 0, shieldTarget = 0;
-      if (this.type === 'knight' && !this._throwing) {
-        if (st === 'windup') { const u = clamp(this.stateT / this.windupTime, 0, 1); const k = smooth(Math.min(1, u / 0.6)); twist = -0.34 * k; lean = -0.06 * k; }
-        else if (st === 'attack') { const u = clamp(this.stateT / this.strikeTime, 0, 1); const k = Math.pow(u, 1.8); twist = lerp(-0.34, 0.5, k); lean = lerp(-0.06, 0.2, k); }
-        else if (st === 'recover') { const u = clamp(this.stateT / this.recoverTime, 0, 1); const k = smooth(Math.min(1, u * 1.25)); twist = lerp(0.5, 0, k); lean = lerp(0.2, 0, k); }
-      }
-      if (this.type === 'knight' && (st === 'rushWind' || st === 'rush')) shieldTarget = 1;
-      this._shieldW += (shieldTarget - this._shieldW) * Math.min(1, dt * (shieldTarget ? 11 : 7));
-      if (this._shieldW < 0.01) this._shieldW = 0;
-      if (Math.abs(twist) < 0.002 && Math.abs(lean) < 0.002 && this._shieldW === 0) return;
-      this.mesh.updateMatrixWorld(true);
-      const yaw = this.mesh.rotation.y, sn = Math.sin(yaw), cs = Math.cos(yaw);
-      if (bones.torso && (twist || lean)) {
-        _v3.set(0, 1, 0);
-        this._ovTorso(bones.torso, _v3, twist, _v4.set(cs, 0, -sn), lean);
-      }
-      const W = this._shieldW;
-      const fore = bones.armL, upper = fore && fore.parent, hand = bones.handL;
-      if (W > 0 && fore && upper && hand && this.shield) {
-        const f = _v5.set(sn, 0, cs);
-        _v1.copy(fore.getWorldPosition(_v1)).sub(this.mesh.position);
-        const side = (_v1.x * cs - _v1.z * sn) >= 0 ? 1 : -1;
-        const out = _v6.set(cs * side, 0, -sn * side);
-        // upper arm forward and slightly out, forearm up and forward: the shield stands in front of the chest
-        const dU = new V3().copy(f).multiplyScalar(0.62).addScaledVector(out, 0.22).addScaledVector(_up, -0.5).normalize();
-        this._ovAim(upper, fore, dU, W);
-        const dF = new V3().copy(f).multiplyScalar(0.3).addScaledVector(out, -0.1).addScaledVector(_up, 0.92).normalize();
-        this._ovAim(fore, hand, dF, W);
-        // roll the forearm about its axis until the shield face (+Z of the shield, the side facing out) looks along the charge
-        this.shield.updateWorldMatrix(true, false);
-        const nrm = new V3(0, 0, 1).transformDirection(this.shield.matrixWorld);
-        const axis = new V3().copy(dF);
-        const a = nrm.clone().addScaledVector(axis, -nrm.dot(axis)).normalize();
-        const b = f.clone().addScaledVector(axis, -f.dot(axis)).normalize();
-        let ang = Math.acos(clamp(a.dot(b), -1, 1)); if (new V3().crossVectors(a, b).dot(axis) < 0) ang = -ang;
-        this._ovRotate(fore, axis, ang * W);
-      }
-    }
-
-    // twist about the world up axis, then lean about the knight's lateral axis
-    _ovTorso(bone, up, twist, lat, lean) {
-      this._ovRotate(bone, up, twist);
-      if (lean) this._ovRotate(bone, lat, lean);
-    }
-
     _proceduralPose(dt) {
-      this._flinchPose(dt);
-      this._extraPose(dt);       // after the flinch, so _undoProcedural takes them off in the opposite order
-    }
-
-    _flinchPose(dt) {
       if (this._flinch <= 0.001) { this._flinch = 0; return; }
       this._flinch = Math.max(0, this._flinch - dt / 0.32);
       const k = Math.sin(clamp(this._flinch, 0, 1) * Math.PI * 0.5);   // 1 -> 0 ease
