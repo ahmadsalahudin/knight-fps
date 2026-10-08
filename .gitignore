@@ -19,3 +19,4 @@ __pycache__/
 *.local.key
 # build backups / QA output
 tools/build-cache/
+tools/qa/out/
