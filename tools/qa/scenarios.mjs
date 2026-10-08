@@ -1460,6 +1460,478 @@ export const scenarios = {
     },
   },
 
+  // ---- E1 (visual QA sweep at the DEFAULT 1280x720 viewport: no `viewport` override on purpose) ---------------------------------------
+  'e1-gun': {
+    desc: 'E1: revolver at 1280x720: idle, fire flash at 30 ms, recoil mid (70 ms), settled (200 ms), reload at 450 / 900 / 1350 ms.',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.pause();
+      await h.advance(400);
+      await h.shot('idle');
+      const f = await h.fire();
+      await h.advance(30);
+      await h.shot('fire-30ms');
+      await h.advance(40);
+      await h.shot('recoil-70ms');
+      await h.advance(130);
+      await h.shot('settled-200ms');
+      await h.advance(500);
+      await page.evaluate(() => Game.tryReload());
+      await h.advance(450);
+      await h.shot('reload-450ms');
+      await h.advance(450);
+      await h.shot('reload-900ms');
+      await h.advance(450);
+      await h.shot('reload-1350ms');
+      await h.advance(400);
+      await h.shot('reload-done');
+      return { fire: f, state: await page.evaluate(() => ({ ammo: Game.ammo, reloading: Game.reloadTimer > 0 })) };
+    },
+  },
+
+  'e1-gun-light': {
+    desc: 'E1: muzzle flash at 30 ms with a knight 3 m ahead and a tree behind: the point light must be visible on the world / armor (compared with the frame before the shot).',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      const k = await h.spawn('knight', 3, 12);
+      await h.aimAt(k, 1.2);
+      await h.pause();
+      await h.advance(400);
+      await h.shot('before');
+      const f = await h.fire();
+      await h.advance(30);
+      await h.shot('fire-30ms');
+      return { knight: k, fire: f };
+    },
+  },
+
+  'e1-gun-near': {
+    desc: 'E1: knight 0.8 m in front of the player (AI frozen): the viewmodel is drawn in front of the knight (no clipping), before and at 30 ms after a point-blank shot.',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      const k = await h.spawn('knight', 0.8, 0);
+      await h.aimAt(k, 1.3);
+      await h.pause();
+      await h.advance(400);
+      await h.shot('before');
+      const f = await h.fire();
+      await h.advance(30);
+      await h.shot('fired-30ms');
+      await h.advance(300);
+      await h.shot('after-330ms');
+      return { knight: k, fire: f, hits: await page.evaluate(() => ({ hits: Game.hits, last: window.__lastHitInfo ? { zone: window.__lastHitInfo.zone, dmg: window.__lastHitInfo.damage, d: +window.__lastHitInfo.distance.toFixed(2) } : null })) };
+    },
+  },
+
+  'e1-gear': {
+    desc: 'E1: knight 2.6 m ahead in combat idle at 1280x720 (FOV 50, viewmodel hidden): gear from the front, right side (sword), left side (shield) and back.',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await page.evaluate(() => { Weapon.setVisible(false); Game.camera.fov = 50; Game.camera.updateProjectionMatrix(); });
+      const k = await h.spawn('knight', 2.6, 0);
+      await page.evaluate((i) => __dbg.knight.pose(i, 'combatIdle', 0), k.i);
+      await h.freezeAI(false);
+      await h.aimAt(k, 1.0);
+      await h.pause();
+      const out = {};
+      for (const [label, yaw] of [['front', 0], ['right', Math.PI / 2], ['left', -Math.PI / 2], ['back', Math.PI]]) {
+        await page.evaluate(([i, y]) => __dbg.knight.pose(i, 'combatIdle', 0, y), [k.i, yaw]);
+        await h.advance(500, 50);
+        await h.shot(label);
+        out[label] = await page.evaluate((i) => __dbg.knight.gear(i), k.i);
+      }
+      return out;
+    },
+  },
+
+  'e1-gear-walk': {
+    desc: 'E1: knights walking / running at 1280x720 (FOV 50, viewmodel hidden): front view of an approaching walker (two frames 0.3 s apart) and a side view of walker + runner (two frames); gear distance to its bone logged.',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await page.evaluate(() => { Weapon.setVisible(false); Game.camera.fov = 50; Game.camera.updateProjectionMatrix(); });
+      await h.spawn('knight', 9, 4);
+      await h.freezeAI(false);
+      await h.pause();
+      const rep = () => page.evaluate(() => Enemies.list.map((e) => { e.mesh.updateMatrixWorld(true); return { clip: e.currentClip, state: e.state, speed: +e._speed.toFixed(2), x: +e.mesh.position.x.toFixed(2), z: +e.mesh.position.z.toFixed(2), gear: ['helmet:Head', 'sword:Palm.R', 'shield:LowerArm.L'].map((q) => { const [k, b] = q.split(':'); return +e[k].getWorldPosition(new THREE.Vector3()).distanceTo(Assets.bone(e.model, b).getWorldPosition(new THREE.Vector3())).toFixed(3); }) }; }));
+      const out = { front: [], side: [] };
+      await page.evaluate(c1FastForward, { sec: 2.5 });
+      for (const lab of ['a', 'b']) {
+        await page.evaluate(() => { const e = Enemies.list[0]; Game.camera.lookAt(e.mesh.position.x, 1.0, e.mesh.position.z); Game.camera.updateMatrixWorld(true); });
+        await h.advance(30, 15);
+        await h.shot('front-' + lab);
+        out.front.push((await rep())[0]);
+        await page.evaluate(c1FastForward, { sec: 0.3 });
+      }
+      // side view: a walker and a runner crossing in front of a camera that looks along +X
+      await h.clean();
+      await h.spawn('knight', 6, 0);
+      await h.spawn('knight', 6, 0);
+      await page.evaluate(() => { Enemies.list[0].mesh.position.set(-1.2, 0, -7.5); Enemies.list[1].mesh.position.set(1.4, 0, -2.0); });
+      await h.freezeAI(false);
+      const target = { x: 0, z: -17.5 };
+      await page.evaluate(c1FastForward, { sec: 0.8, target });
+      for (const lab of ['a', 'b']) {
+        await page.evaluate(() => { Game.update = function () {}; const c = Game.camera; c.position.set(5.2, 1.5, -5.0); c.lookAt(0, 1.0, -4.8); c.updateMatrixWorld(true); });
+        await h.advance(30, 15);
+        await h.shot('side-' + lab);
+        out.side.push(await rep());
+        await page.evaluate(c1FastForward, { sec: 0.3, target });
+      }
+      return out;
+    },
+  },
+
+  'e1-gear-attack': {
+    desc: 'E1: sword attack at 1280x720 (FOV 50, viewmodel hidden): windup start / end and swing (raised, damage frame, follow-through) from the front and the right side; gear distances logged.',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await page.evaluate(() => { Weapon.setVisible(false); Game.camera.fov = 50; Game.camera.updateProjectionMatrix(); });
+      const k = await h.spawn('knight', 2.8, 0);
+      await h.freezeAI(false);
+      await h.aimAt(k, 1.1);
+      await h.pause();
+      const gear = [];
+      for (const [st, p] of [['windup', 0], ['windup', 1]]) {
+        await page.evaluate(([i, st, p]) => __dbg.knight.pose(i, st, p), [k.i, st, p]);
+        await page.evaluate(c1FastForward, { sec: 0.4 });
+        await h.advance(40, 20);
+        await h.shot('front-' + st + '-' + Math.round(p * 100));
+      }
+      for (const u of [0.3, 0.61, 0.85]) {
+        await page.evaluate(([i, u]) => __dbg.knight.pose(i, 'attack', u, 0), [k.i, u]);
+        await page.evaluate(c1FastForward, { sec: 0.35 });
+        await h.advance(40, 20);
+        await h.shot('front-swing-' + Math.round(u * 100));
+        await page.evaluate(([i, u]) => __dbg.knight.pose(i, 'attack', u, Math.PI / 2), [k.i, u]);
+        await page.evaluate(c1FastForward, { sec: 0.35 });
+        await h.advance(40, 20);
+        await h.shot('side-swing-' + Math.round(u * 100));
+        gear.push({ u, g: await page.evaluate((i) => __dbg.knight.gear(i), k.i) });
+      }
+      return { gear };
+    },
+  },
+
+  'e1-gear-death': {
+    desc: 'E1: lethal torso hit on a knight 3.2 m ahead at 1280x720 (FOV 50, viewmodel hidden): frames at 0.25 / 0.6 / 1.2 s after the hit, gear flags, scene child counts.',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await page.evaluate(() => { Weapon.setVisible(false); Game.camera.fov = 50; Game.camera.updateProjectionMatrix(); });
+      const k = await h.spawn('knight', 3.2, 0);
+      await page.evaluate((i) => __dbg.knight.pose(i, 'combatIdle', 0, Math.PI / 2 * 0.6), k.i);
+      await h.freezeAI(false);
+      await h.aimAt(k, 0.9);
+      await h.pause();
+      await h.advance(300, 50);
+      await page.evaluate((i) => { window.__e1k = Enemies.list[i]; }, k.i);
+      const snap = (label) => page.evaluate((label) => {
+        const e = window.__e1k;
+        return { label, dead: e.dead, state: e.state, clip: e.currentClip, inList: Enemies.list.includes(e), inScene: !!e.mesh.parent, y: +e.mesh.position.y.toFixed(2),
+          loose: { helmet: !!(e.helmet && e.helmet.userData.loose), sword: !!(e.sword && e.sword.userData.loose), shield: !!(e.shield && e.shield.userData.loose) },
+          kills: Game.kills, alive: Enemies.aliveCount(), listLen: Enemies.list.length, sceneKids: Game.scene.children.length };
+      }, label);
+      const log = [await snap('before')];
+      await page.evaluate(() => { const e = window.__e1k; const p = e.mesh.position; e.takeHit({ damage: 1e6, zone: 'torso', point: new THREE.Vector3(p.x, 1.2, p.z), dir: new THREE.Vector3(0, 0, -1) }); });
+      log.push(await snap('hit+0'));
+      for (const [t, lab] of [[0.25, '0.25s'], [0.35, '0.6s'], [0.6, '1.2s']]) {
+        await page.evaluate(c1FastForward, { sec: t });
+        await h.advance(40, 20);
+        await h.shot('t' + lab);
+        log.push(await snap(lab));
+      }
+      return { log };
+    },
+  },
+
+  'e1-fx': {
+    desc: 'E1: shot FX at 1280x720: (1) bullet into the ground 12 m ahead: tracer at 16 ms, dust + impact decal at 90 / 400 ms; (2) a torso hit on a knight 5 m ahead: sparks at 40 ms, stagger at 160 ms.',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.pause();
+      await h.advance(300);
+      await page.evaluate(() => { Game.camera.lookAt(0.8, 0, -12); Game.camera.updateMatrixWorld(true); });
+      await h.advance(120);
+      const f = await h.fire();
+      await h.advance(16);
+      await h.shot('ground-tracer-16ms');
+      await h.advance(74);
+      await h.shot('ground-dust-90ms');
+      await h.advance(310);
+      await h.shot('ground-dust-400ms');
+      // a tree trunk
+      const k = await h.spawn('knight', 5, 0);
+      await page.evaluate((i) => __dbg.knight.pose(i, 'combatIdle', 0), k.i);
+      await h.freezeAI(false);
+      await page.evaluate(() => { const e = Enemies.list[0]; e.mesh.updateMatrixWorld(true); const p = new THREE.Vector3(); e.bones.torso.getWorldPosition(p); Game.camera.lookAt(p); Game.camera.updateMatrixWorld(true); });
+      await h.advance(400, 50);
+      const f2 = await h.fire();
+      await h.advance(40, 20);
+      await h.shot('armor-sparks-40ms');
+      await h.advance(120, 20);
+      await h.shot('armor-stagger-160ms');
+      return { f, f2, hit: await page.evaluate(() => window.__lastHitInfo ? { zone: window.__lastHitInfo.zone, dmg: window.__lastHitInfo.damage, killed: window.__lastHitInfo.killed } : null) };
+    },
+  },
+
+  'e1-kill-head': {
+    desc: 'E1: headshot on a knight 5 m ahead at 1280x720 (viewmodel on): tracer, helmet pops, death fall, gear lands, blood pool, corpse sinks, removed from the scene. Logs scene child count / enemy list.',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      const k = await h.spawn('knight', 5, 0);
+      await page.evaluate((i) => __dbg.knight.pose(i, 'combatIdle', 0), k.i);
+      await h.freezeAI(false);
+      await page.evaluate(() => { const e = Enemies.list[0]; window.__e1k = e; e.mesh.updateMatrixWorld(true); const p = new THREE.Vector3(); e.bones.head.getWorldPosition(p); p.y += 0.12; Game.camera.lookAt(p); Game.camera.updateMatrixWorld(true); });
+      await h.pause();
+      await h.advance(400, 50);
+      const snap = (label) => page.evaluate((label) => {
+        const e = window.__e1k; let loose = 0, pools = 0;
+        Game.scene.traverse((o) => { if (o.userData && o.userData.loose) loose++; });
+        return { label, dead: e.dead, state: e.state, clip: e.currentClip, inList: Enemies.list.includes(e), inScene: !!e.mesh.parent, y: +e.mesh.position.y.toFixed(2),
+          helmetLoose: !!(e.helmet && e.helmet.userData.loose), swordLoose: !!(e.sword && e.sword.userData.loose), shieldLoose: !!(e.shield && e.shield.userData.loose),
+          looseProps: loose, combat: (window.__dbg.combat && __dbg.combat.stats()) || null, kills: Game.kills, alive: Enemies.aliveCount(), listLen: Enemies.list.length, sceneKids: Game.scene.children.length };
+      }, label);
+      const log = [await snap('before')];
+      await h.shot('0-aim');
+      const f = await h.fire();
+      await h.advance(16, 16);
+      await h.shot('1-tracer-16ms');
+      await h.advance(64, 16);
+      await h.shot('2-pop-80ms');
+      log.push(await snap('80ms'));
+      await page.evaluate(c1FastForward, { sec: 0.22 });
+      await h.advance(40, 20);
+      await h.shot('3-fall-340ms');
+      await page.evaluate(c1FastForward, { sec: 0.9 });
+      await page.evaluate(() => { const p = window.__e1k.mesh.position; Game.camera.lookAt(p.x, 0.5, p.z); Game.camera.updateMatrixWorld(true); });
+      await h.advance(40, 20);
+      await h.shot('4-down-1.3s');
+      log.push(await snap('1.3s'));
+      await page.evaluate(c1FastForward, { sec: 3 });
+      await h.advance(40, 20);
+      await h.shot('5-pool-4.3s');
+      log.push(await snap('4.3s'));
+      await page.evaluate(c1FastForward, { sec: 4.7 });
+      await h.advance(40, 20);
+      await h.shot('6-sinking-9s');
+      log.push(await snap('9s'));
+      await page.evaluate(c1FastForward, { sec: 2.5 });
+      await h.advance(40, 20);
+      await h.shot('7-removed-11.5s');
+      log.push(await snap('11.5s'));
+      await page.evaluate(c1FastForward, { sec: 8 });
+      log.push(await snap('19.5s'));
+      await page.evaluate(c1FastForward, { sec: 8 });
+      log.push(await snap('27.5s'));
+      return { fire: f, log };
+    },
+  },
+
+  'e1-stagger-axis': {
+    desc: 'E1 diagnostic (no PNG): bone-local axes of Torso/Head in the knight model frame at rest, and the pose at the peak of a stagger (head height drop).',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      const k = await h.spawn('knight', 4, 0);
+      await page.evaluate((i) => __dbg.knight.pose(i, 'combatIdle', 0), k.i);
+      await h.freezeAI(false);
+      await h.pause();
+      await h.advance(400);
+      const probe = () => page.evaluate((i) => {
+        const e = Enemies.list[i];
+        e.mesh.updateMatrixWorld(true);
+        const inv = new THREE.Matrix4().copy(e.mesh.matrixWorld).invert();
+        const axes = (b) => {
+          const m = new THREE.Matrix4().multiplyMatrices(inv, b.matrixWorld);
+          const q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3();
+          m.decompose(p, q, sc);
+          const f = (v) => v.applyQuaternion(q).toArray().map((x) => +x.toFixed(2));
+          return { pos: p.toArray().map((x) => +x.toFixed(2)), x: f(new THREE.Vector3(1, 0, 0)), y: f(new THREE.Vector3(0, 1, 0)), z: f(new THREE.Vector3(0, 0, 1)) };
+        };
+        return { torso: axes(e.bones.torso), head: axes(e.bones.head), yaw: +e._yaw.toFixed(2) };
+      }, k.i);
+      const rest = await probe();
+      await page.evaluate((i) => { const e = Enemies.list[i]; e.takeHit({ damage: 10, zone: 'torso', point: e.mesh.position.clone().setY(1.2), dir: new THREE.Vector3(0, 0, -1) }); }, k.i);
+      await h.advance(48, 16);
+      const hit48 = await probe();
+      await h.advance(52, 26);
+      const hit100 = await probe();
+      await h.advance(60, 30);
+      const hit160 = await probe();
+      // per-frame lean of the torso bone: measured vs the procedural amount that _proceduralPose should add (amt = sin(flinch*pi/2) * pow)
+      await page.evaluate((i) => { const e = Enemies.list[i]; e.takeHit({ damage: 1, zone: 'torso', point: e.mesh.position.clone().setY(1.2), dir: new THREE.Vector3(0, 0, -1) }); }, 0 * k.i + k.i);
+      const qlog = [];
+      await page.evaluate(([i, log]) => {
+        const e = Enemies.list[i]; const orig = e._proceduralPose; const restQ = e.bones.torso.quaternion.clone();
+        window.__qlog = [];
+        e._proceduralPose = function (dt) { const q0 = this.bones.torso.quaternion.clone(); const f0 = this._flinch; orig.call(this, dt); const q1 = this.bones.torso.quaternion; window.__qlog.push({ flinch: +f0.toFixed(2), preVsRestDeg: +(q0.angleTo(restQ) * 180 / Math.PI).toFixed(1), addedDeg: +(q0.angleTo(q1) * 180 / Math.PI).toFixed(1) }); };
+      }, [k.i, 0]);
+      const frames = [];
+      for (let f = 0; f < 14; f++) {
+        await h.advance(16, 16);
+        frames.push(await page.evaluate((i) => {
+          const e = Enemies.list[i]; e.mesh.updateMatrixWorld(true);
+          const inv = new THREE.Matrix4().copy(e.mesh.matrixWorld).invert();
+          const m = new THREE.Matrix4().multiplyMatrices(inv, e.bones.torso.matrixWorld);
+          const q = new THREE.Quaternion(); m.decompose(new THREE.Vector3(), q, new THREE.Vector3());
+          const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+          const lean = Math.atan2(-up.z, up.y) * 180 / Math.PI;
+          const exp = Math.sin(Math.max(0, Math.min(1, e._flinch)) * Math.PI / 2) * e._flinchPow * 180 / Math.PI;
+          return { state: e.state, flinch: +e._flinch.toFixed(2), leanDeg: +lean.toFixed(1), expectedDeg: +exp.toFixed(1), clip: e.currentClip };
+        }, k.i));
+      }
+      const qlogOut = await page.evaluate(() => window.__qlog);
+      return { qlogOut, frames, hit48, flinchPowAndDir: await page.evaluate((i) => { const e = Enemies.list[i]; return { pow: e._flinchPow, dir: e._flinchDir.toArray(), flinch: e._flinch }; }, k.i), rest, hit100, hit160 };
+    },
+  },
+
+  'e1-sword-roll': {
+    desc: 'E1 experiment (not a criterion): the idle knight from the front with the sword rolled 0 / +90 / -90 deg about the blade axis (Euler x of the mounted sword), to pick a GEAR.sword.rot for enemies.js.',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await page.evaluate(() => { Weapon.setVisible(false); Game.camera.fov = 50; Game.camera.updateProjectionMatrix(); });
+      const k = await h.spawn('knight', 2.6, 0);
+      await page.evaluate((i) => __dbg.knight.pose(i, 'combatIdle', 0), k.i);
+      await h.freezeAI(false);
+      await h.aimAt(k, 1.0);
+      await h.pause();
+      await h.advance(500, 50);
+      const out = {};
+      for (const [label, roll] of [['roll0', 0], ['rollp90', Math.PI / 2], ['rolln90', -Math.PI / 2]]) {
+        out[label] = await page.evaluate(([i, r]) => { const e = Enemies.list[i]; e.sword.rotation.x = r; e.sword.updateMatrixWorld(true); return [e.sword.rotation.x, e.sword.rotation.y, e.sword.rotation.z].map((x) => +x.toFixed(3)); }, [k.i, roll]);
+        await h.advance(100, 50);
+        await h.shot(label);
+      }
+      return out;
+    },
+  },
+
+  'e1-full-run': {
+    desc: 'E1: scripted playthrough at 1280x720 (?debug=1, godMode, revolver shots): wave banners, wave 5 boss intro + HP bar, boss attack telegraphs, boss death, victory; zero console errors required.',
+    run: async (page, h) => {
+      const t0 = Date.now();
+      const log = [];
+      const problems = [];
+      const brief = (label, extra) => page.evaluate((lab) => {
+        const s = __dbg.state();
+        return { label: lab, wave: s.wave, ws: s.waves && s.waves.state, pend: s.pending, alive: s.alive, listLen: s.enemies.length,
+          kills: s.kills, shots: s.shots, ammo: s.ammo, hp: s.hp, boss: s.waves && s.waves.boss, bossKilled: s.waves && s.waves.bossKilled,
+          victoryShown: s.screens.victory, gameOverShown: s.screens.gameOver, godMode: s.godMode, sceneKids: Game.scene.children.length };
+      }, label).then((r) => { const o = Object.assign(r, extra || {}); log.push(o); h.log(JSON.stringify(o)); return o; });
+      const drive = (opts) => page.evaluate(d2Drive, opts);
+
+      await h.pause();
+      await h.resetView();
+      await page.evaluate(() => __dbg.skipToWave(1));       // restarts wave 1 on the paused clock: its banner starts now
+      await brief('start');
+      await h.advance(700, 100);
+      await h.shot('w1-banner');
+      for (let n = 1; n <= 4; n++) {
+        const r1 = await drive({ maxSec: n === 1 ? 9 : 7, stop: 'never', shoot: n !== 1 || false });
+        await h.advance(150, 75);
+        if (n === 1 || n === 3) await h.shot('w' + n + '-fight');
+        await brief('w' + n + ' fighting', { stepShots: r1.shots, killedByShots: r1.killedByShots });
+        const r2 = await drive({ maxSec: 150, stop: 'countdown', shoot: true });
+        if (!r2.reached) {
+          problems.push('wave ' + n + ' did not clear by shots within 150 s of game time (fallback killAll)');
+          await h.killAll(); await drive({ maxSec: 30, stop: 'countdown', shoot: false });
+        }
+        if (r1.victoryEarly || r2.victoryEarly) problems.push('victory screen shown early in wave ' + n);
+        await h.shot('w' + n + '-cleared');
+        await brief('w' + n + ' cleared', { shotsUsed: r1.shots + r2.shots, byShots: r1.killedByShots + r2.killedByShots, wallMs: Date.now() - t0 });
+        const r3 = await drive({ maxSec: 12, stop: 'wave:' + (n + 1), shoot: false });
+        if (n + 1 <= 5 && !r3.reached) problems.push('wave ' + (n + 1) + ' did not start after the countdown');
+        if (n === 1 || n === 3 || n === 4) { await h.advance(700, 100); await h.shot('w' + (n + 1) + '-banner'); }
+        if (r3.victoryEarly) problems.push('victory screen during countdown ' + n);
+      }
+
+      // ---- wave 5: boss
+      await brief('w5 started');
+      await h.advance(700, 100);
+      await h.shot('w5-boss-banner');
+      const rb = await drive({ maxSec: 20, stop: 'boss', shoot: false });
+      if (!rb.reached) problems.push('the boss never appeared');
+      await drive({ maxSec: 2.2, stop: 'never', shoot: false });
+      await h.advance(3400, 850);                          // the HUD banner runs on the (virtual) wall clock: let the 3.6 s boss banner finish before the bar / telegraph shots
+      await page.evaluate(() => { const b = Waves.boss; if (b) { b.mesh.updateMatrixWorld(true); const p = new THREE.Vector3(); b.bones.head.getWorldPosition(p); p.y -= 1.2; Game.camera.lookAt(p); Game.camera.updateMatrixWorld(true); } });
+      await h.advance(150, 75);
+      const bossInfo = await page.evaluate(() => { const b = Waves.boss; return b ? { ctor: b.constructor.name, type: b.type, hp: b.hp, maxHp: b.maxHp, name: b.displayName || null, fallback: Waves.bossFallback, err: Waves.bossError, scale: b.mesh.scale.x, bar: getComputedStyle(document.getElementById('bossBar')).display, barName: document.getElementById('bossName').textContent } : null; });
+      await brief('w5 boss on the field', { bossInfo });
+      await h.shot('w5-boss-intro-bar');
+      if (bossInfo && bossInfo.fallback) problems.push('boss is the STAND-IN knight: ' + bossInfo.err);
+
+      // forced sweep telegraph, then a forced leap telegraph, seen from the player's view (boss at full HP, not shot at yet)
+      await drive({ maxSec: 6, stop: 'never', shoot: false });
+      await page.evaluate(() => { const b = Waves.boss; if (b) { b.atk = null; b.setState('combatIdle'); b._gap = 0; b._leapCd = 99; __dbg.boss.force('sweep'); } });
+      await drive({ maxSec: 0.6, stop: 'never', shoot: false });
+      await page.evaluate(() => { const b = Waves.boss; if (b) { Game.camera.lookAt(b.mesh.position.x, 2.2, b.mesh.position.z); Game.camera.updateMatrixWorld(true); } });
+      await h.advance(60, 30);
+      await h.shot('w5-boss-sweep-telegraph');
+      const tele1 = await page.evaluate(() => __dbg.boss.tele());
+      await drive({ maxSec: 5, stop: 'never', shoot: false });
+      await page.evaluate(() => { const b = Waves.boss; if (b) { b.atk = null; b.setState('combatIdle'); b._gap = 0; b._leapCd = 0; __dbg.boss.force('leap'); } });
+      await drive({ maxSec: 0.55, stop: 'never', shoot: false });
+      await page.evaluate(() => { const b = Waves.boss; if (b) { Game.camera.lookAt(b.mesh.position.x, 1.5, b.mesh.position.z); Game.camera.updateMatrixWorld(true); } });
+      await h.advance(60, 30);
+      await h.shot('w5-boss-leap-telegraph');
+      const tele2 = await page.evaluate(() => __dbg.boss.tele());
+      await drive({ maxSec: 4, stop: 'never', shoot: false });
+      if (await page.evaluate(() => Waves.bossKilled)) problems.push('the boss died before it was shot at');
+
+      let r = await drive({ maxSec: 90, stop: 'bossHalf', shoot: true, bossFirst: true });
+      await h.advance(150, 75);
+      await h.shot('w5-boss-half');
+      await brief('w5 boss <= 50% hp', { reached: r.reached, stepShots: r.shots });
+      if (r.victoryEarly) problems.push('victory screen shown while the boss lived (<=50%)');
+      r = await drive({ maxSec: 150, stop: 'bossDead', shoot: true, bossFirst: true });
+      if (!r.reached) {
+        problems.push('boss not killed by shots within 150 s (fallback killAll)');
+        await h.shot('w5-boss-stuck');
+        await h.killAll(); await drive({ maxSec: 5, stop: 'bossDead', shoot: false });
+      }
+      if (r.victoryEarly) problems.push('victory screen shown before the boss died');
+      const atDeath = await brief('w5 boss dead (death animation)');
+      if (atDeath.victoryShown) problems.push('victory screen is already up at the moment the boss died');
+      const aimCorpse = (y) => page.evaluate((yy) => { const b = Waves.boss || Enemies.list.find((e) => e.type === 'boss'); if (b) { const c = Game.camera; c.lookAt(b.mesh.position.x, yy, b.mesh.position.z); c.updateMatrixWorld(true); } }, y);
+      await aimCorpse(1.6);
+      await h.advance(300, 100);
+      await h.shot('w5-boss-death-0.3s');
+      await drive({ maxSec: 1.3, stop: 'never', shoot: false });
+      await aimCorpse(0.5);
+      await h.advance(60, 30);
+      await h.shot('w5-boss-death-1.6s');
+      const rv = await drive({ maxSec: 15, stop: 'victory', shoot: false });
+      if (!rv.reached) problems.push('victory never came after the boss died');
+      await h.advance(400, 100);
+      await h.shot('victory');
+      const end = await brief('victory', { wallMs: Date.now() - t0 });
+      if (!end.victoryShown) problems.push('victory screen not visible at the end');
+      if (end.kills < 5 + 7 + 9 + 11 + 1) problems.push('kills ' + end.kills + ' < 33');
+
+      const errs = h.errors.slice();
+      if (errs.length) problems.push('console/page errors: ' + errs.slice(0, 3).join(' || ').slice(0, 600));
+      try {
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const { OUT_DIR } = await import('./lib.mjs');
+        fs.mkdirSync(OUT_DIR, { recursive: true });
+        fs.writeFileSync(path.join(OUT_DIR, 'e1-full-run.json'), JSON.stringify({ problems, errors: errs, tele1, tele2, log }, null, 1));
+      } catch (e) { h.log('could not write the log: ' + e.message); }
+      const summary = { ok: problems.length === 0, problems, errors: errs.length, steps: log.length, last: log[log.length - 1], wallSec: Math.round((Date.now() - t0) / 1000) };
+      if (problems.length) throw new Error('e1-full-run problems: ' + JSON.stringify(summary).slice(0, 1500));
+      return summary;
+    },
+  },
+
 };
 
 // C1 helper: advance the game simulation by `sec` seconds WITHOUT rendering (the same per-frame calls main.js makes).
@@ -1732,4 +2204,601 @@ function d1Soak(a) {
   const r = (x) => Math.round(x * 100) / 100;
   const ms = {}; for (const k of Object.keys(maxState)) ms[k] = r(maxState[k]);
   return { sec: a.sec, attacks: cnt, damageToPlayer: dmg, hits, longestInState: ms, minDist: r(minD), maxDist: r(maxD), maxAbsCoord: r(worstXZ), phase: b.phase, minions: Enemies.list.filter((e) => e.isMinion && !e.dead).length, listLen: Enemies.list.length };
+}
+
+// ---- E2 (code review / leak + balance checks). Appended with Object.assign so it never touches the scenario table above.
+//   e2-leak    : waves 1-3 killed through the normal kill path (all hit zones), then a boss run (phases, minions, kill); object /
+//                GPU-resource / pool counts before vs after the corpses despawn, JS heap after a forced GC.
+//   e2-idle    : godMode OFF, wave 1, the player stands still and never fires, 30 s of virtual time: how fast does the HP go?
+//   e2-bots    : godMode OFF, waves 1-5 played by bots of different skill (perfect head aim, sloppy chest aim, retreating).
+Object.assign(scenarios, {
+  'e2-leak': {
+    desc: 'E2: waves 1-3 (+ boss) killed via takeHit; logs scene children / GL geometries+textures / Enemies.list / Combat props / FX pools / JS heap before and after the corpses despawn.',
+    viewport: { width: 400, height: 225 },
+    run: async (page, h) => {
+      const cdp = await page.context().newCDPSession(page);
+      const heapMB = async () => {
+        await cdp.send('HeapProfiler.collectGarbage'); await cdp.send('HeapProfiler.collectGarbage');
+        const r = await cdp.send('Runtime.getHeapUsage');
+        return +(r.usedSize / 1048576).toFixed(2);
+      };
+      const snap = async (label) => { const s = await page.evaluate(e2Snap); s.label = label; h.log(JSON.stringify(s)); return s; };
+      const out = { snaps: [], peaks: { children: 0, objects: 0, enemies: 0, props: 0, glGeometries: 0, materials: 0 }, perf: null, problems: [] };
+      const keep = (s) => {
+        out.snaps.push(s);
+        const p = out.peaks;
+        p.children = Math.max(p.children, s.children); p.objects = Math.max(p.objects, s.objects); p.enemies = Math.max(p.enemies, s.enemies);
+        p.props = Math.max(p.props, s.combatProps); p.glGeometries = Math.max(p.glGeometries, s.glGeometries); p.materials = Math.max(p.materials, s.uniqueMaterials);
+      };
+
+      await h.pause();
+      await h.resetView();
+      await page.evaluate(() => { Waves.stop(); Enemies.clear(); __dbg.freezeAI(false); __dbg.godMode(true); });
+      await h.advance(200, 100);
+      const cold = await snap('cold (title -> started, nothing spawned yet)'); cold.heapMB = await heapMB(); keep(cold);
+
+      // warm-up: one knight killed by a head shot (helmet pops) and one by a torso shot, so first-use GPU uploads / shader programs
+      // are not mistaken for a leak. Everything is then waited out (corpse 8 s + sink 2 s, props 12.5 s + 1.6 s, pools 22 s).
+      await page.evaluate(() => { __dbg.spawn('knight', 6, 0); __dbg.spawn('knight', 7, 30); });
+      await h.advance(300, 100);
+      await page.evaluate(e2Chunk, { sec: 1.2, killEvery: 0.4, zones: ['head', 'torso'], maxKills: 2 });
+      await h.advance(300, 100);
+      await page.evaluate(e2Chunk, { sec: 30, killEvery: 0 });
+      await h.advance(200, 100);
+      const warm = await snap('warm baseline (after one spawn/kill/despawn cycle)'); warm.heapMB = await heapMB(); keep(warm);
+
+      // waves 1-3: kill one enemy every 0.7 s (zones cycle head / torso / limb), render a few frames between 2 s chunks
+      await page.evaluate(() => { Waves.start(1); });
+      let guard = 0, lastWave = 1;
+      for (;;) {
+        const r = await page.evaluate(e2Chunk, { sec: 3, killEvery: 0.7, zones: ['head', 'torso', 'limb', 'torso'] });
+        await h.advance(34, 34);
+        const s = await snap('wave ' + r.wave + ' ' + r.state + ' t=' + r.simT); keep(s);
+        if (r.wave === 3 && r.alive >= 5 && !out.perf) out.perf = await page.evaluate(e2Perf);
+        if (r.wave === 3 && r.state === 'countdown') break;
+        if (r.state === 'error' || r.state === 'victory' || ++guard > 80) { out.problems.push('wave flow ended early: ' + JSON.stringify(r)); break; }
+        lastWave = r.wave;
+      }
+      await page.evaluate(() => { Waves.stop(); });
+      const afterWaves = await snap('waves 1-3 cleared, corpses still lying around'); keep(afterWaves);
+      // let every corpse, loose prop, blood pool and decal expire
+      for (let i = 0; i < 2; i++) { await page.evaluate(e2Chunk, { sec: 16, killEvery: 0 }); await h.advance(34, 34); }
+      const end3 = await snap('after waves 1-3 + 32 s of cleanup'); end3.heapMB = await heapMB(); keep(end3);
+
+      // boss run: wave 5, push it through both phase changes (minions), kill it, wait out the corpses
+      await page.evaluate(() => { Waves.skipTo(5); });
+      let b = null;
+      for (let i = 0; i < 8 && !b; i++) { await page.evaluate(e2Chunk, { sec: 1, killEvery: 0 }); await h.advance(34, 34); b = await page.evaluate(() => !!Waves.boss); }
+      if (!b) out.problems.push('the boss never spawned');
+      await page.evaluate(e2Chunk, { sec: 2.5, killEvery: 0 }); await h.advance(34, 34);
+      await page.evaluate(() => { __dbg.boss.phase(2); });
+      await page.evaluate(e2Chunk, { sec: 5, killEvery: 0 }); await h.advance(34, 34);
+      keep(await snap('boss phase 2 (minions up)'));
+      await page.evaluate(() => { __dbg.boss.phase(3); });
+      await page.evaluate(e2Chunk, { sec: 6, killEvery: 0 }); await h.advance(34, 34);
+      keep(await snap('boss phase 3 (more minions)'));
+      await page.evaluate(() => { const bs = Waves.boss; if (bs) bs.takeHit({ damage: 1e6, zone: 'head', point: new THREE.Vector3(bs.mesh.position.x, 3, bs.mesh.position.z), dir: new THREE.Vector3(0, 0, -1) }); });
+      for (let i = 0; i < 3; i++) { await page.evaluate(e2Chunk, { sec: 15, killEvery: 0 }); await h.advance(34, 34); }
+      await page.evaluate(() => { Waves.stop(); });
+      await page.evaluate(e2Chunk, { sec: 5, killEvery: 0 }); await h.advance(34, 34);
+      const endBoss = await snap('after the boss run + 45 s of cleanup'); endBoss.heapMB = await heapMB(); keep(endBoss);
+
+      // second boss round: the boss shield's geometry is uploaded to the GPU by the first boss (a one-time cost); a second boss must add nothing
+      await page.evaluate(() => { Waves.skipTo(5); });
+      for (let i = 0; i < 8; i++) { await page.evaluate(e2Chunk, { sec: 1, killEvery: 0 }); await h.advance(34, 34); if (await page.evaluate(() => !!Waves.boss)) break; }
+      await page.evaluate(e2Chunk, { sec: 3, killEvery: 0 }); await h.advance(34, 34);
+      await page.evaluate(() => { __dbg.boss.phase(2); });
+      await page.evaluate(e2Chunk, { sec: 5, killEvery: 0 }); await h.advance(34, 34);
+      await page.evaluate(() => { const bs = Waves.boss; if (bs) bs.takeHit({ damage: 1e6, zone: 'torso', point: new THREE.Vector3(bs.mesh.position.x, 3, bs.mesh.position.z), dir: new THREE.Vector3(0, 0, -1) }); });
+      for (let i = 0; i < 3; i++) { await page.evaluate(e2Chunk, { sec: 15, killEvery: 0 }); await h.advance(34, 34); }
+      await page.evaluate(() => { Waves.stop(); });
+      const endBoss2 = await snap('after a SECOND boss run + 45 s of cleanup'); endBoss2.heapMB = await heapMB(); keep(endBoss2);
+
+      // CPU cost of a simulation step with 8 knights on top of the player
+      await page.evaluate(() => { Waves.stop(); Enemies.clear(); for (let i = 0; i < 8; i++) __dbg.spawn('knight', 5 + (i % 3) * 3, i * 45); });
+      await page.evaluate(e2Chunk, { sec: 1, killEvery: 0 });
+      out.perf = await page.evaluate(e2Perf);
+      out.perf0 = await page.evaluate(() => { Enemies.clear(); return null; }).then(() => page.evaluate(e2Perf));
+
+      const dif = (a, b2) => { const d = {}; for (const k of Object.keys(a)) if (typeof a[k] === 'number' && typeof b2[k] === 'number' && a[k] !== b2[k]) d[k] = +(b2[k] - a[k]).toFixed(2); return d; };
+      out.deltaWarmToEndWaves = dif(warm, end3);
+      out.deltaWarmToEndBoss = dif(warm, endBoss);
+      out.deltaBoss1ToBoss2 = dif(endBoss, endBoss2);
+      out.deltaColdToWarm = dif(cold, warm);
+      out.baseline = { cold, warm, end3, endBoss, endBoss2 };
+      out.errors = h.errors.slice();
+      const keys = ['children', 'objects', 'enemies', 'combatProps', 'glGeometries', 'glTextures', 'uniqueMaterials', 'uniqueGeometries', 'programs'];
+      for (const k of keys) {
+        if (endBoss2[k] !== endBoss[k] && !(k === 'programs')) out.problems.push(k + ': after boss 1 ' + endBoss[k] + ' -> after boss 2 ' + endBoss2[k]);
+        if (endBoss[k] !== warm[k] && !(k === 'programs' || k === 'glGeometries')) out.problems.push(k + ': warm ' + warm[k] + ' -> end ' + endBoss[k]);
+        if (end3[k] !== warm[k] && !(k === 'programs')) out.problems.push(k + ': warm ' + warm[k] + ' -> after waves ' + end3[k]);
+      }
+      if (out.errors.length) out.problems.push('console errors: ' + out.errors.slice(0, 3).join(' || '));
+      const fs = await import('node:fs'); const path = await import('node:path'); const { OUT_DIR } = await import('./lib.mjs');
+      fs.mkdirSync(OUT_DIR, { recursive: true });
+      fs.writeFileSync(path.join(OUT_DIR, 'e2-leak.json'), JSON.stringify(out, null, 1));
+      const brief = { deltaBoss1ToBoss2: out.deltaBoss1ToBoss2, perf0: out.perf0, deltaColdToWarm: out.deltaColdToWarm, deltaWarmToEndWaves: out.deltaWarmToEndWaves, deltaWarmToEndBoss: out.deltaWarmToEndBoss, peaks: out.peaks, perf: out.perf,
+        warm: { children: warm.children, objects: warm.objects, glGeometries: warm.glGeometries, glTextures: warm.glTextures, mats: warm.uniqueMaterials, programs: warm.programs, heapMB: warm.heapMB },
+        end3: { children: end3.children, objects: end3.objects, glGeometries: end3.glGeometries, glTextures: end3.glTextures, mats: end3.uniqueMaterials, programs: end3.programs, heapMB: end3.heapMB },
+        endBoss: { children: endBoss.children, objects: endBoss.objects, glGeometries: endBoss.glGeometries, glTextures: endBoss.glTextures, mats: endBoss.uniqueMaterials, programs: endBoss.programs, heapMB: endBoss.heapMB },
+        problems: out.problems };
+      return brief;
+    },
+  },
+
+  'e2-fuzz': {
+    desc: 'E2: seeded random-action fuzz (fire / reload / teleport / spawn / clear / killAll / skipToWave / stop / start / pause / huge+tiny dt) for ~10 min of game time with invariants (finite positions, counts >= 0, no stale list entries); zero console errors required.',
+    viewport: { width: 400, height: 225 },
+    run: async (page, h) => {
+      await h.pause();
+      await h.resetView();
+      await page.evaluate(() => { __dbg.godMode(true); __dbg.freezeAI(false); });
+      const rounds = [];
+      for (let i = 0; i < 6; i++) {
+        const r = await page.evaluate(e2Fuzz, { sec: 100, seed: 1000 + i });
+        rounds.push(r);
+        await h.advance(100, 50);          // a few real rendered frames after each round (catches render-time errors: NaN matrices, disposed resources)
+        h.log(JSON.stringify(r).slice(0, 400));
+        if (r.problems.length) break;
+      }
+      const problems = rounds.flatMap((r) => r.problems);
+      if (h.errors.length) problems.push('console errors: ' + h.errors.slice(0, 3).join(' || ').slice(0, 500));
+      await h.shot('end');
+      if (problems.length) throw new Error('e2-fuzz problems: ' + JSON.stringify(problems).slice(0, 1500));
+      return { ok: true, rounds: rounds.map((r) => ({ ops: r.ops, kills: r.kills, maxList: r.maxList, maxProps: r.maxProps, bossSpawns: r.bossSpawns })) };
+    },
+  },
+
+  'e2-heal': {
+    desc: 'E2: HP is restored when a wave is cleared (+25, capped at 100) and fully before the boss; a dead player is not healed. HP bar follows.',
+    god: false,
+    viewport: { width: 400, height: 225 },
+    run: async (page, h) => {
+      await h.pause();
+      await h.resetView();
+      const r = await page.evaluate(() => {
+        __dbg.godMode(false); __dbg.freezeAI(false); Waves.stop(); Enemies.clear();
+        const log = [], dt = 1 / 30;
+        const hpText = () => document.getElementById('hpText').textContent;
+        const runTo = (pred, maxSec) => { for (let t = 0; t < maxSec; t += dt) { Main.step(dt); __dbg.killAll(); if (pred()) return true; } return false; };
+        Game.playerHP = 40; HUD.updateHP(40);
+        Waves.start(1);
+        // knights could hit the player while we kill them one frame after they appear: keep HP pinned during the fight, check the heal edge
+        const fight = (n) => { const ok = runTo(() => Waves.state === 'countdown' && Waves.current === n, 120); return ok; };
+        const before = [];
+        for (let n = 1; n <= 4; n++) {
+          if (n === 2) { Game.playerHP = 70; HUD.updateHP(70); }
+          if (n === 3) { Game.playerHP = 90; HUD.updateHP(90); }
+          if (n === 4) { Game.playerHP = 10; HUD.updateHP(10); }
+          before.push(Game.playerHP);
+          const ok = fight(n);
+          log.push({ wave: n, cleared: ok, hpBefore: before[n - 1], hpAfter: Game.playerHP, hudText: hpText(), state: Waves.state });
+          // run through the countdown into the next wave
+          for (let t = 0; t < 6 && n < 4; t += dt) { Main.step(dt); if (Waves.current === n + 1) break; }
+        }
+        // a dead player is not healed
+        Game.playerHP = 0; Game.dead = true;
+        const healed = Game.heal(25);
+        log.push({ deadHeal: healed, hp: Game.playerHP });
+        Game.dead = false; Game.playerHP = 100;
+        return log;
+      });
+      h.log(JSON.stringify(r));
+      const problems = [];
+      const w = (n) => r.find((x) => x.wave === n);
+      if (!w(1) || w(1).hpAfter !== 65) problems.push('wave 1: 40 -> ' + (w(1) && w(1).hpAfter) + ' (expected 65)');
+      if (!w(2) || w(2).hpAfter !== 95) problems.push('wave 2: 70 -> ' + (w(2) && w(2).hpAfter) + ' (expected 95)');
+      if (!w(3) || w(3).hpAfter !== 100) problems.push('wave 3: 90 -> ' + (w(3) && w(3).hpAfter) + ' (expected 100, capped)');
+      if (!w(4) || w(4).hpAfter !== 100) problems.push('wave 4: 10 -> ' + (w(4) && w(4).hpAfter) + ' (expected 100: full heal before the boss)');
+      if (r[r.length - 1].deadHeal !== 0) problems.push('dead player was healed');
+      await h.advance(100, 50);
+      await h.shot();
+      if (h.errors.length) problems.push('console errors: ' + h.errors.slice(0, 2).join(' || '));
+      if (problems.length) throw new Error('e2-heal: ' + problems.join(' | '));
+      return { ok: true, log: r };
+    },
+  },
+
+  'e2-boss-idle': {
+    desc: 'E2: godMode OFF, wave 5, the player stands still and never fires: how long does the boss take to kill a player who does not dodge (HP timeline)?',
+    god: false,
+    viewport: { width: 400, height: 225 },
+    run: async (page, h) => {
+      await h.pause();
+      await h.resetView();
+      await page.evaluate(() => { Waves.stop(); Enemies.clear(); __dbg.godMode(false); __dbg.freezeAI(false); Game.playerHP = 100; HUD.updateHP(100); Waves.start(5); });
+      return page.evaluate(e2Bot, { maxSec: 90, shoot: false, stop: 'dead', sample: 2 });
+    },
+  },
+
+  'e2-idle': {
+    desc: 'E2: godMode OFF, wave 1, the player stands still and never fires for 30 s of virtual time: HP over time and who hit when.',
+    god: false,
+    viewport: { width: 640, height: 360 },
+    run: async (page, h) => {
+      await h.pause();
+      await h.resetView();
+      await page.evaluate(() => { Waves.stop(); Enemies.clear(); __dbg.godMode(false); __dbg.freezeAI(false); Game.playerHP = 100; HUD.updateHP(100); Waves.start(1); });
+      const r = await page.evaluate(e2Bot, { maxSec: 30, shoot: false, stop: 'dead', sample: 1 });
+      await h.advance(100, 50);
+      await h.shot('after30s');
+      return r;
+    },
+  },
+
+  'e2-input-blur': {
+    desc: 'E2: a held movement key must not stay stuck when the window loses focus (blur) - the player stops instead of walking on by itself.',
+    run: async (page, h) => {
+      await h.clean();
+      return page.evaluate(() => {
+        const key = (type, code) => document.dispatchEvent(new KeyboardEvent(type, { code: code, bubbles: true }));
+        const out = {};
+        key('keydown', 'KeyW'); key('keydown', 'ShiftLeft');
+        const a = Game.getInput(); out.held = { forward: a.forward, sprint: a.sprint };
+        window.dispatchEvent(new Event('blur'));
+        const b = Game.getInput(); out.afterBlur = { forward: b.forward, sprint: b.sprint };
+        key('keydown', 'KeyA');
+        out.afterNewPress = { left: Game.getInput().left };
+        key('keyup', 'KeyA');
+        out.ok = out.held.forward && out.held.sprint && !out.afterBlur.forward && !out.afterBlur.sprint && out.afterNewPress.left;
+        return out;
+      });
+    },
+  },
+  'e2-stagger': {
+    desc: 'E2: torso shot on an approaching knight 4.5 m ahead (paused virtual clock, one game frame per rendered frame): frames 40 / 100 / 220 ms after the hit. The head and helmet must stay readable (before the fix the flinch piled up on the head bone on every rendered frame).',
+    viewport: { width: 800, height: 450 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await page.evaluate(() => window.Weapon && Weapon.setVisible && Weapon.setVisible(false));
+      const k = await h.spawn('knight', 4.5, 0);
+      await h.freezeAI(false);
+      await h.aimAt(k, 1.2);
+      await h.pause();
+      await h.advance(200, 20);
+      await page.evaluate((i) => { const e = Enemies.list[i]; e.takeHit({ damage: 10, zone: 'torso', point: new THREE.Vector3(e.mesh.position.x, 1.2, e.mesh.position.z + 0.3), dir: new THREE.Vector3(0, 0, -1) }); }, k.i);
+      await h.advance(40, 20); await h.shot('40ms');
+      await h.advance(60, 20); await h.shot('100ms');
+      await h.advance(120, 20); await h.shot('220ms');
+      return page.evaluate((i) => { const e = Enemies.list[i]; return { state: e.state, headAngle: +e.bones.head.quaternion.angleTo(new THREE.Quaternion()).toFixed(2) }; }, k.i);
+    },
+  },
+  'e2-stagger-probe': {
+    desc: 'E2: numeric check of the hit-flinch: angle (rad) between the torso / head bone quaternion before the hit and during the next 0.5 s, for flinch strength 0 / shipped / 0.7 (no rendering). The angle must follow the 0.32 s flinch envelope and not grow frame after frame.',
+    viewport: { width: 400, height: 225 },
+    run: async (page, h) => {
+      const out = {};
+      for (const pow of [0, 'shipped', 0.7]) {
+        await h.clean(); await h.resetView();
+        const k = await h.spawn('knight', 3.2, 0);
+        await h.freezeAI(false);
+        await h.pause();
+        await h.advance(300, 20);
+        out[pow] = await page.evaluate((a) => {
+          const e = Enemies.list[a.i], T = e.bones.torso, H = e.bones.head;
+          const q0 = T.quaternion.clone(), h0 = H.quaternion.clone();
+          e.takeHit({ damage: 10, zone: 'torso', point: new THREE.Vector3(e.mesh.position.x, 1.2, e.mesh.position.z + 0.3), dir: new THREE.Vector3(0, 0, -1) });
+          if (a.pow !== 'shipped') e._flinchPow = a.pow;
+          const rows = [];
+          for (let i = 0; i < 26; i++) { Main.step(0.02); if (i % 2 === 1) { const v = new THREE.Vector3(); H.getWorldPosition(v); rows.push([i + 1, +T.quaternion.angleTo(q0).toFixed(3), +H.quaternion.angleTo(h0).toFixed(3), +e._flinch.toFixed(2), e.state, 'head', +(v.x - e.mesh.position.x).toFixed(3), +v.y.toFixed(3), +(v.z - e.mesh.position.z).toFixed(3)]); } }
+          rows.push({ headRel: (() => { const v = new THREE.Vector3(); H.getWorldPosition(v); return [+(v.x - e.mesh.position.x).toFixed(3), +v.y.toFixed(3), +(v.z - e.mesh.position.z).toFixed(3)]; })(), yaw: +e._yaw.toFixed(2), dist: +Math.hypot(e.mesh.position.x - Game.playerObj.position.x, e.mesh.position.z - Game.playerObj.position.z).toFixed(2) });
+          return rows;
+        }, { i: k.i, pow });
+      }
+      return out;
+    },
+  },
+  'e2-flinch-attack': {
+    desc: 'E2: a knight is shot while it swings (states attack / recover / windup): the torso / head bone angle relative to the pose just before the hit, frame by frame. The flinch is added on top of the mixer output every frame, so it must stay within its envelope (<= ~0.55 rad) and not accumulate when the attack clip value is static.',
+    viewport: { width: 400, height: 225 },
+    run: async (page, h) => {
+      await h.clean(); await h.resetView();
+      await page.evaluate(() => { __dbg.godMode(true); });
+      const out = {};
+      for (const want of ['windup', 'attack', 'recover']) {
+        const k = await h.spawn('knight', 2.2, 0);
+        await h.freezeAI(false);
+        await h.pause();
+        out[want] = await page.evaluate((a) => {
+          const e = Enemies.list[a.i], T = e.bones.torso, H = e.bones.head;
+          let guard = 0;
+          while (e.state !== a.want && guard++ < 1500) Main.step(0.01);
+          if (e.state !== a.want) return { reached: false, state: e.state };
+          // let the state settle a few frames, then hit
+          for (let i = 0; i < 3 && e.state === a.want; i++) Main.step(0.01);
+          const q0 = T.quaternion.clone(), h0 = H.quaternion.clone();
+          e.takeHit({ damage: 10, zone: 'torso', point: new THREE.Vector3(e.mesh.position.x, 1.2, e.mesh.position.z + 0.3), dir: new THREE.Vector3(0, 0, -1) });
+          const rows = [], st0 = e.state;
+          let maxT = 0, maxH = 0;
+          for (let i = 0; i < 40; i++) {
+            Main.step(0.01);
+            const at = T.quaternion.angleTo(q0), ah = H.quaternion.angleTo(h0);
+            maxT = Math.max(maxT, at); maxH = Math.max(maxH, ah);
+            if (i % 4 === 3) rows.push([i + 1, +at.toFixed(2), +ah.toFixed(2), +e._flinch.toFixed(2), e.state]);
+          }
+          return { reached: true, stateAfterHit: st0, maxTorso: +maxT.toFixed(2), maxHead: +maxH.toFixed(2), rows: rows };
+        }, { i: k.i, want });
+        await h.clean();
+      }
+      return out;
+    },
+  },
+  'e2-bots': {
+    desc: 'E2: godMode OFF, waves 1-5 played by bots (head-aim stationary / chest-aim stationary / chest-aim retreating / sloppy): HP per wave, deaths, shots. Wave-clear healing (Game.heal) is active.',
+    god: false,
+    viewport: { width: 640, height: 360 },
+    run: (page, h) => e2BotsRun(page, h, false),
+  },
+  'e2-bots-noheal': {
+    desc: 'E2: same as e2-bots but Game.heal is stubbed out (the behaviour before the wave-clear heal): paired baseline for the balance numbers.',
+    god: false,
+    viewport: { width: 640, height: 360 },
+    run: (page, h) => e2BotsRun(page, h, true),
+  },
+});
+
+// E2 helper: the bot playthrough shared by e2-bots / e2-bots-noheal.
+async function e2BotsRun(page, h, noHeal) {
+  if (noHeal) await page.evaluate(() => { Game.heal = function () { return 0; }; });
+  const variants = [
+    { name: 'head-aim, stands still', aim: 'head', delay: 0.15, retreat: false },
+    { name: 'chest-aim (jitter), stands still', aim: 'chest', delay: 0.35, retreat: false, jitter: 0.12 },
+    { name: 'chest-aim (jitter), backs away from knights < 6 m', aim: 'chest', delay: 0.35, retreat: true, jitter: 0.12 },
+    { name: 'sloppy: chest-aim jitter 0.25, reaction 0.6 s, backs away only < 3 m', aim: 'chest', delay: 0.6, retreat: 3, jitter: 0.25 },
+  ];
+  const results = [];
+  for (const v of variants) {
+    await page.evaluate(() => { Waves.stop(); Enemies.clear(); Combat.clear(); FX.clear(); __dbg.godMode(false); __dbg.freezeAI(false); const g = Game; g.dead = false; g.playerHP = 100; g.ammo = 6; g.reloadTimer = 0; g.shots = 0; g.hits = 0; g.headshots = 0;
+      g.playerObj.position.set(0, 1.7, 0); HUD.updateHP(100); document.getElementById('gameOverScreen').style.display = 'none'; Waves.start(1); });
+    const rows = [];
+    for (let w = 1; w <= 5; w++) {
+      const r = await page.evaluate(e2Bot, Object.assign({ maxSec: 240, shoot: true, stop: w < 5 ? 'countdown' : 'bossDead', wave: w }, v));
+      rows.push({ wave: w, reached: r.reached, secs: r.t, hpEnd: r.hp, lost: r.lost, hitsTaken: r.hitsTaken, shots: r.shots, minHp: r.minHp, dead: r.dead, maxAlive: r.maxAlive, byAttacker: r.byAttacker });
+      if (r.dead || !r.reached) break;
+      if (w < 5) await page.evaluate(e2Bot, { maxSec: 8, shoot: false, stop: 'wave:' + (w + 1), wave: w });
+    }
+    h.log(v.name + ': ' + JSON.stringify(rows.map((x) => ({ w: x.wave, s: x.secs, hp: x.hpEnd, hits: x.hitsTaken, shots: x.shots, dead: x.dead }))));
+    results.push({ variant: v.name, rows });
+  }
+  return results;
+}
+
+// E2 helper: object / resource counts of the scene (runs in the page).
+function e2Snap() {
+  const scene = Game.scene;
+  let objects = 0, skinned = 0, bones = 0, lights = 0, meshes = 0, hidden = 0;
+  const mats = new Set(), geos = new Set();
+  scene.traverse((o) => {
+    objects++;
+    if (o.isMesh) { meshes++; geos.add(o.geometry); (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => mats.add(m)); }
+    if (o.isSkinnedMesh) skinned++;
+    if (o.isBone) bones++;
+    if (o.isLight) lights++;
+    if (o.visible === false) hidden++;
+  });
+  const info = Main.renderer.info;
+  const fx = FX.stats ? FX.stats() : {};
+  const cs = Combat.stats();
+  return {
+    children: scene.children.length, objects, meshes, skinned, bones, lights, hiddenObjects: hidden, uniqueMaterials: mats.size, uniqueGeometries: geos.size,
+    glGeometries: info.memory.geometries, glTextures: info.memory.textures, programs: info.programs ? info.programs.length : null,
+    enemies: Enemies.list.length, combatProps: cs.props, combatTasks: cs.tasks,
+    fxParticles: fx.particles, fxSparks: fx.sparks, fxTracers: fx.tracers, fxPools: fx.pools, fxSplats: fx.splats, fxDecals: fx.decals,
+    wave: Waves.current, wState: Waves.state, kills: Waves.kills,
+  };
+}
+
+// E2 helper: simulate `sec` seconds without rendering (Main.step), killing one live enemy every `killEvery` s through takeHit (zones cycle).
+function e2Chunk(a) {
+  const dt = a.step || 1 / 30;
+  const ZONES = a.zones || ['torso'];
+  let t = 0, nextKill = a.killEvery || 1e9, kills = 0, zi = 0, maxAlive = 0;
+  const S = (window.__e2c = window.__e2c || { T: 0 });
+  const pp = Game.playerObj.position;
+  for (; t < a.sec - 1e-9; t += dt) {
+    Main.step(dt);
+    S.T += dt;
+    let alive = 0; for (const e of Enemies.list) if (!e.dead) alive++;
+    maxAlive = Math.max(maxAlive, alive);
+    if (a.killEvery && t >= nextKill && (a.maxKills === undefined || kills < a.maxKills)) {
+      nextKill = t + a.killEvery;
+      const e = Enemies.list.find((x) => !x.dead && !x.isMinion) || Enemies.list.find((x) => !x.dead);
+      if (e) {
+        const p = e.mesh.position;
+        const dir = new THREE.Vector3(p.x - pp.x, 0, p.z - pp.z).normalize();
+        e.takeHit({ damage: 1e6, zone: ZONES[zi++ % ZONES.length], point: new THREE.Vector3(p.x, 1.2 * (e.sizeScale || 1), p.z), dir });
+        kills++;
+      }
+    }
+  }
+  let alive = 0; for (const e of Enemies.list) if (!e.dead) alive++;
+  return { simT: +S.T.toFixed(1), wave: Waves.current, state: Waves.state, alive, listLen: Enemies.list.length, kills, maxAlive };
+}
+
+// E2 helper: CPU cost of one simulation step with the current enemies (real clock via Date.now; performance.now is virtual here).
+function e2Perf() {
+  const n = 300, dt = 1 / 60;
+  let alive = 0; for (const e of Enemies.list) if (!e.dead) alive++;
+  const t0 = Date.now();
+  for (let i = 0; i < n; i++) Main.step(dt);
+  const ms = Date.now() - t0;
+  return { stepsMeasured: n, aliveEnemies: alive, msPerStep: +(ms / n).toFixed(3) };
+}
+
+// E2 helper: a bot that plays the game (godMode must be off to measure balance). a = { maxSec, shoot, stop, aim:'head'|'chest', delay, retreat, jitter, sample }
+// stop: 'never' | 'dead' | 'countdown' | 'wave:N' | 'bossDead'.  Runs in the page; returns HP bookkeeping.
+function e2Bot(a) {
+  const dt = 1 / 30;
+  const G = Game, cam = G.camera, pp = G.playerObj.position;
+  const S = (window.__e2b = window.__e2b || { T: 0, blocked: new Map(), seen: new Map() });
+  const out = { reached: false, t: 0, hp: G.playerHP, lost: 0, hitsTaken: 0, shots: 0, minHp: G.playerHP, dead: false, maxAlive: 0, byAttacker: {}, timeline: [] };
+  const hp0 = G.playerHP, shots0 = G.shots;
+  let lastHp = G.playerHP, nextSample = 0, t = 0, since = 0, lastTarget = null;
+  const v = new THREE.Vector3();
+  const done = () => {
+    if (a.stop === 'dead') return G.dead;
+    if (G.dead) return true;
+    switch (a.stop) {
+      case 'countdown': return Waves.state === 'countdown';
+      case 'bossDead': return Waves.bossKilled === true;
+      default:
+        if (typeof a.stop === 'string' && a.stop.startsWith('wave:')) return Waves.current === +a.stop.slice(5) && Waves.state === 'fighting';
+        return false;
+    }
+  };
+  // attacker bookkeeping: wrap Player.hurt once
+  if (!Player.__e2wrapped) {
+    const orig = Player.hurt.bind(Player);
+    Player.hurt = function (dmg, from) {
+      const hpBefore = G.playerHP;
+      orig(dmg, from);
+      const lost = hpBefore - G.playerHP;
+      if (lost > 0 && window.__e2b && window.__e2b.cur) {
+        const k = (from && from.type) || 'unknown';
+        window.__e2b.cur.byAttacker[k] = (window.__e2b.cur.byAttacker[k] || 0) + lost;
+        window.__e2b.cur.hitsTaken++;
+      }
+    };
+    Player.__e2wrapped = true;
+  }
+  S.cur = out;
+  const aimPoint = (e, o) => {
+    const sc = e.sizeScale || 1;
+    if (a.aim === 'chest' && e.bones && e.bones.torso) { e.bones.torso.getWorldPosition(o); o.y += 0.05 * sc; }
+    else if (e.bones && e.bones.head) { e.bones.head.getWorldPosition(o); o.y += 0.235 * sc; }
+    else { o.copy(e.mesh.position); o.y += (e.height || 1.8) * (a.aim === 'chest' ? 0.6 : 0.85); }
+    if (a.jitter) { o.x += (Math.random() - 0.5) * a.jitter * 2 * sc; o.y += (Math.random() - 0.5) * a.jitter * 2 * sc; o.z += (Math.random() - 0.5) * a.jitter * 2 * sc; }
+    return o;
+  };
+  while (t < a.maxSec) {
+    if (G.dead) break;
+    // ---- movement: back away from knights closer than 6 m (walk speed 6 m/s, along the line away from the nearest one)
+    if (a.retreat) {
+      let near = null, nd = typeof a.retreat === 'number' ? a.retreat : 6;
+      for (const e of Enemies.list) { if (e.dead || !e.mesh.parent) continue; const d = Math.hypot(e.mesh.position.x - pp.x, e.mesh.position.z - pp.z); if (d < nd) { nd = d; near = e; } }
+      if (near) {
+        const dx = pp.x - near.mesh.position.x, dz = pp.z - near.mesh.position.z, l = Math.hypot(dx, dz) || 1;
+        pp.x = Math.max(-54, Math.min(54, pp.x + dx / l * 6 * dt)); pp.z = Math.max(-54, Math.min(54, pp.z + dz / l * 6 * dt));
+      }
+    }
+    // ---- shooting
+    if (a.shoot) {
+      if (G.reloadTimer <= 0 && G.ammo <= 0) G.tryReload();
+      if (G.reloadTimer <= 0 && G.fireCooldown <= 0 && G.ammo > 0) {
+        let target = null, best = Infinity;
+        for (const e of Enemies.list) {
+          if (e.dead || !e.mesh || !e.mesh.parent) continue;
+          const bu = S.blocked.get(e); if (bu && S.T < bu) continue;
+          const d = Math.hypot(e.mesh.position.x - pp.x, e.mesh.position.z - pp.z) - (e === Waves.boss ? 1000 : 0);
+          if (d < best) { best = d; target = e; }
+        }
+        if (target !== lastTarget) { lastTarget = target; since = 0; }
+        else since += dt;
+        if (target && since >= (a.delay || 0)) {
+          target.mesh.updateMatrixWorld(true);
+          aimPoint(target, v);
+          cam.lookAt(v); cam.updateMatrixWorld(true);
+          const s0 = G.shots, h0 = G.hits;
+          G.tryFire();
+          if (G.shots !== s0 && G.hits === h0) S.blocked.set(target, S.T + 1.0);
+        }
+      }
+    }
+    Main.step(dt);
+    S.T += dt; t += dt;
+    let alive = 0; for (const e of Enemies.list) if (!e.dead) alive++;
+    out.maxAlive = Math.max(out.maxAlive, alive);
+    out.minHp = Math.min(out.minHp, G.playerHP);
+    if (a.sample && t >= nextSample) { nextSample += a.sample; out.timeline.push([+t.toFixed(0), G.playerHP, alive]); }
+    if (G.playerHP !== lastHp) { if (a.sample) out.timeline.push([+t.toFixed(2), G.playerHP, alive, 'hit']); lastHp = G.playerHP; }
+    if (done()) { out.reached = true; break; }
+  }
+  out.t = +t.toFixed(1); out.hp = G.playerHP; out.lost = hp0 - G.playerHP; out.dead = !!G.dead; out.shots = G.shots - shots0;
+  if (!a.sample) delete out.timeline;
+  S.cur = null;
+  return out;
+}
+
+// E2 helper: random-action fuzz inside the page (Main.step, no rendering). a = { sec, seed }. Returns counters + invariant violations.
+function e2Fuzz(a) {
+  let st = a.seed | 0;
+  const rnd = () => { st = (st + 0x6D2B79F5) | 0; let t = Math.imul(st ^ (st >>> 15), 1 | st); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+  const G = Game, pp = G.playerObj.position, cam = G.camera;
+  const problems = [];
+  const out = { ops: {}, kills0: Waves.kills, kills: 0, maxList: 0, maxProps: 0, bossSpawns: 0, problems };
+  const bad = (m) => { if (problems.length < 8) problems.push(m); };
+  const fin = (v) => Number.isFinite(v);
+  const op = (n) => { out.ops[n] = (out.ops[n] || 0) + 1; };
+  const check = (where) => {
+    if (!fin(pp.x) || !fin(pp.y) || !fin(pp.z)) bad(where + ': player position not finite ' + pp.toArray());
+    const q = cam.quaternion; if (!fin(q.x + q.y + q.z + q.w)) bad(where + ': camera quaternion not finite');
+    const seen = new Set();
+    for (const e of Enemies.list) {
+      const p = e.mesh.position;
+      if (!fin(p.x) || !fin(p.y) || !fin(p.z)) bad(where + ': enemy position not finite (' + e.type + ' ' + e.state + ')');
+      if (e._removed) bad(where + ': removed enemy still in Enemies.list');
+      if (seen.has(e)) bad(where + ': enemy listed twice'); seen.add(e);
+      if (!e.dead && !e.mesh.parent) bad(where + ': live enemy without a parent');
+      if (!fin(e.hp)) bad(where + ': enemy hp not finite');
+    }
+    if (!(Waves.alive >= 0) || !(Waves.pending >= 0)) bad(where + ': Waves counts negative ' + Waves.alive + '/' + Waves.pending);
+    if (!fin(G.playerHP) || G.playerHP < 0 || G.playerHP > 100.0001) bad(where + ': player HP out of range ' + G.playerHP);
+    const cs = Combat.stats(); out.maxProps = Math.max(out.maxProps, cs.props);
+    if (cs.props > 40) bad(where + ': Combat props ' + cs.props);
+    out.maxList = Math.max(out.maxList, Enemies.list.length);
+    if (Enemies.list.length > 60) bad(where + ': Enemies.list ' + Enemies.list.length);
+  };
+  const aimAtRandom = () => {
+    const live = Enemies.list.filter((e) => !e.dead && e.mesh.parent);
+    if (live.length && rnd() < 0.8) {
+      const e = pick(live); e.mesh.updateMatrixWorld(true);
+      const v = new THREE.Vector3(); const b = e.bones && e.bones[pick(['head', 'torso', 'hips', 'handR', 'legL', 'armL'])];
+      if (b) b.getWorldPosition(v); else v.copy(e.mesh.position).setY(1);
+      cam.lookAt(v.x + (rnd() - 0.5) * 0.4, v.y + (rnd() - 0.5) * 0.4, v.z + (rnd() - 0.5) * 0.4);
+    } else cam.lookAt(pp.x + (rnd() - 0.5) * 40, rnd() * 6 - 2, pp.z + (rnd() - 0.5) * 40);
+    cam.updateMatrixWorld(true);
+  };
+  const ops = [
+    ['fire', 30, () => { aimAtRandom(); G.tryFire(); }],
+    ['reload', 4, () => G.tryReload()],
+    ['teleport', 6, () => { pp.set((rnd() - 0.5) * 110, 1.7, (rnd() - 0.5) * 110); }],
+    ['teleportToEnemy', 4, () => { const e = pick(Enemies.list); if (e) { pp.x = e.mesh.position.x + (rnd() - 0.5) * 2; pp.z = e.mesh.position.z + (rnd() - 0.5) * 2; } }],
+    ['spawnKnight', 8, () => { if (Enemies.list.length < 25) __dbg.spawn('knight', 3 + rnd() * 25, rnd() * 360); }],
+    ['spawnBoss', 1, () => { if (!Enemies.list.some((e) => e.type === 'boss' && !e.dead)) { __dbg.spawn('boss', 10 + rnd() * 20, rnd() * 360); out.bossSpawns++; } }],
+    ['clear', 1.5, () => Enemies.clear()],
+    ['killAll', 3, () => __dbg.killAll()],
+    ['killOne', 6, () => { const e = pick(Enemies.list.filter((x) => !x.dead)); if (e) e.takeHit({ damage: 1e6, zone: pick(['head', 'torso', 'limb']), point: e.mesh.position.clone().setY(1), dir: new THREE.Vector3(rnd() - 0.5, 0, rnd() - 0.5).normalize() }); }],
+    ['skipToWave', 1.2, () => __dbg.skipToWave(1 + Math.floor(rnd() * 5))],
+    ['wavesStop', 1, () => Waves.stop()],
+    ['wavesStart', 1.2, () => Waves.start(1 + Math.floor(rnd() * 5))],
+    ['pause', 1.5, () => { Main.pause(); for (let i = 0; i < 5; i++) Main.step(0.033); Main.resume(); }],
+    ['bigDt', 3, () => { for (let i = 0; i < 4; i++) Main.step(0.1); }],
+    ['tinyDt', 3, () => { for (let i = 0; i < 6; i++) Main.step(0.0005); Main.step(0); }],
+    ['hurt', 2, () => Player.hurt(5 + rnd() * 20, pick([Enemies.list[0], pp, { x: rnd() * 10, z: rnd() * 10 }, undefined]))],
+    ['restoreHp', 3, () => { G.playerHP = 100; HUD.updateHP(100); }],
+    ['look', 6, () => { cam.rotation.set((rnd() - 0.5) * 2, rnd() * 6.28, 0); }],
+    ['combatClear', 0.5, () => Combat.clear()],
+    ['fxClear', 0.5, () => FX.clear()],
+    ['boss', 3, () => { const b = Enemies.list.find((e) => e.type === 'boss' && !e.dead); if (b && __dbg.boss) { __dbg.boss.force(pick(['sweep', 'leap', 'charge', 'roar'])); if (rnd() < 0.3) __dbg.boss.phase(2 + Math.floor(rnd() * 2)); } }],
+  ];
+  const total = ops.reduce((s2, o) => s2 + o[1], 0);
+  const dt = 1 / 30;
+  let nextOp = 0;
+  for (let t = 0; t < a.sec; t += dt) {
+    if (t >= nextOp) {
+      nextOp = t + 0.1 + rnd() * 0.5;
+      let r = rnd() * total, o = ops[0];
+      for (const c of ops) { r -= c[1]; if (r <= 0) { o = c; break; } }
+      op(o[0]);
+      try { o[2](); } catch (e) { bad('op ' + o[0] + ' threw: ' + (e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e)); }
+      if (G.dead) { G.dead = false; G.playerHP = 100; }
+    }
+    try { Main.step(dt); } catch (e) { bad('Main.step threw at t=' + t.toFixed(1) + ': ' + (e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e)); }
+    if (((t / dt) | 0) % 15 === 0) check('t=' + t.toFixed(1));
+    if (problems.length >= 8) break;
+  }
+  out.kills = Waves.kills - out.kills0;
+  return out;
 }

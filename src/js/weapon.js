@@ -279,12 +279,13 @@
     _makeMaterials: function () {
       const col = (h) => this._col(h);
       this.mats = {
-        dark: new THREE.MeshPhongMaterial({ color: col(0x2c3036), specular: col(0x4c535b), shininess: 38 }),
-        light: new THREE.MeshPhongMaterial({ color: col(0x626972), specular: col(0x7e868f), shininess: 42 }),
+        dark: new THREE.MeshPhongMaterial({ color: col(0x2c3036), specular: col(0x3a4046), shininess: 30 }),
+        light: new THREE.MeshPhongMaterial({ color: col(0x626972), specular: col(0x545b63), shininess: 30 }),
         wood: new THREE.MeshPhongMaterial({ color: col(0x5d3a20), specular: col(0x34271a), shininess: 22 }),
         glove: new THREE.MeshPhongMaterial({ color: col(0x6b4a30), specular: col(0x241a12), shininess: 10, flatShading: true }),
         glove2: new THREE.MeshPhongMaterial({ color: col(0x4d3523), specular: col(0x1a120c), shininess: 8, flatShading: true }),
-        sleeve: new THREE.MeshPhongMaterial({ color: col(0x39424f), specular: col(0x121820), shininess: 6, flatShading: true })
+        sleeve: new THREE.MeshPhongMaterial({ color: col(0x4a5668), specular: col(0x141a22), shininess: 6, flatShading: true }),
+        cuff: new THREE.MeshPhongMaterial({ color: col(0x3a2a1c), specular: col(0x16100a), shininess: 8, flatShading: true })
       };
     },
 
@@ -302,7 +303,7 @@
       this.vmFlashLight = new THREE.PointLight(0xffa850, 0, 0.9, 2);
       sc.add(this.vmFlashLight);
       // world flash light (added to the main scene lazily; see _ensureWorldLight)
-      this.worldLight = new THREE.PointLight(0xffa850, 0, 14, 2);
+      this.worldLight = new THREE.PointLight(0xffa850, 0, 10, 2);
       this.worldLight.castShadow = false;
       this._worldLightAdded = false;
     },
@@ -614,11 +615,12 @@
 
       // wrist: leather cuff then sleeve, running back and DOWN out of the frame
       const wrist = palmC.clone().addScaledVector(u, -0.030).addScaledVector(n, 0.010).add(new V3(0.004, 0, 0));
-      const fdir = new V3(0.30, -0.62, 0.72).normalize();
-      const cuffEnd = wrist.clone().addScaledVector(fdir, 0.055);
+      const fdir = new V3(0.36, -0.54, 0.76).normalize();
+      const cuffEnd = wrist.clone().addScaledVector(fdir, 0.030);
       const elbow = wrist.clone().addScaledVector(fdir, 0.34);
-      R.add(taper(wrist.clone().addScaledVector(fdir, -0.014), cuffEnd, 0.0215, 0.0235, M.glove2, 8));
-      R.add(taper(cuffEnd.clone().addScaledVector(fdir, -0.006), elbow, 0.0275, 0.037, M.sleeve, 8));
+      R.add(taper(wrist.clone().addScaledVector(fdir, -0.014), cuffEnd, 0.0215, 0.0245, M.glove2, 8));
+      R.add(taper(cuffEnd.clone().addScaledVector(fdir, -0.004), cuffEnd.clone().addScaledVector(fdir, 0.016), 0.0285, 0.0285, M.cuff, 8));   // dark leather cuff band
+      R.add(taper(cuffEnd.clone().addScaledVector(fdir, 0.010), elbow, 0.0295, 0.039, M.sleeve, 8));
       this.gunPivot.add(R);
       this.handR = R;
 
@@ -944,7 +946,7 @@
       }
       if (this.worldLight) {
         const wk = on ? clamp(1 - Math.max(0, ft - 0.02) / 0.055, 0, 1) : 0;
-        this.worldLight.intensity = wk * 3.6;
+        this.worldLight.intensity = wk * 1.1;
         if (wk > 0 && this.mainCam) {
           const p = this._tmpB || (this._tmpB = new V3());
           this.scene.updateMatrixWorld(true);

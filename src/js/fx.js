@@ -116,7 +116,7 @@
     '  vec3 side = cross(B - A, toCam);',
     '  float sl = length(side);',
     '  side = sl > 1e-6 ? side / sl : vec3(0.0, 1.0, 0.0);',
-    '  float w = max(iA.w, length(toCam) * 0.0032);',
+    '  float w = max(iA.w, length(toCam) * 0.0052);',
     '  p += side * (position.y * w);',
     '  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);',
     '  vUv = position.xy; vAlpha = iB.w;',
@@ -402,7 +402,7 @@
       transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide, blending: THREE.NormalBlending, fog: true
     });
     const addMat = new THREE.ShaderMaterial({
-      uniforms: fogUniforms({ uHot: { value: 0.7 }, uShade: { value: 0 } }),
+      uniforms: fogUniforms({ uHot: { value: 0.88 }, uShade: { value: 0 } }),
       vertexShader: PARTICLE_VS, fragmentShader: PARTICLE_FS,
       transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false
     });
@@ -411,9 +411,10 @@
     const bloodMat = new THREE.ShaderMaterial(Object.assign({ uniforms: fogUniforms({}), fragmentShader: BLOOD_FS }, decalOpts));
     const bulletMat = new THREE.ShaderMaterial(Object.assign({ uniforms: fogUniforms({}), fragmentShader: BULLET_FS }, decalOpts));
     const tracerMat = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color(1.0, 0.78, 0.38) } },
+      uniforms: { uColor: { value: new THREE.Color(1.0, 0.84, 0.46) } },
       vertexShader: TRACER_VS, fragmentShader: TRACER_FS,
-      transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false
+      // normal blending (not additive): an additive yellow streak turns pale green on the bright meadow and vanishes
+      transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide, blending: THREE.NormalBlending, fog: false
     });
     materials = [normMat, addMat, bloodMat, bulletMat, tracerMat];
 
@@ -445,13 +446,24 @@
     splatD.spawn(x, 0.011, z, r, 0.1, 9, 14, 0.5, rnd());
   }
 
+  // Distance from the camera: impacts far away would otherwise be a few pixels, so their size is scaled up with range
+  // (1.0 up to ~6 m, 2.2 at 20 m and beyond).
+  function rangeScale(point) {
+    const c = cameraRef;
+    if (!c || !point) return 1;
+    const dx = point.x - c.position.x, dy = point.y - c.position.y, dz = point.z - c.position.z;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    return Math.max(1, Math.min(2.2, 0.8 + d * 0.07));
+  }
+
   function sparks(point, normal, count) {
     if (!ready || !point) return;
     const n = count === undefined ? 12 : Math.max(0, Math.min(40, count | 0));
+    const rs = rangeScale(point);
     setNormal(normal, 0, 1, 0); makeBasis();
     const px = point.x + nx * 0.02, py = point.y + ny * 0.02, pz = point.z + nz * 0.02;
     // hot flash at the impact point
-    addP.emit(px, py, pz, 0, 0, 0, 0.08, 0.40, 0.14, 0, 0, 1, 0.88, 0.55, 0.95, 1, 0.6, 0.2, 0, 0, 0, 0, 0, -1);
+    addP.emit(px, py, pz, 0, 0, 0, 0.09, 0.46 * rs, 0.16 * rs, 0, 0, 1, 0.92, 0.62, 0.95, 1, 0.66, 0.26, 0, 0, 0, 0, 0, -1);
     for (let i = 0; i < n; i++) {
       const a = rnd() * TAU, r = Math.sqrt(rnd()) * 1.05, h = 0.3 + rnd() * 0.7;
       const ca = Math.cos(a) * r, sa = Math.sin(a) * r;
@@ -459,8 +471,8 @@
       const life = 0.22 + rnd() * 0.42;
       addP.emit(px, py, pz,
         (nx * h + tx * ca + bx * sa) * sp, (ny * h + ty * ca + by * sa) * sp, (nz * h + tz * ca + bz * sa) * sp,
-        life, 0.04 + rnd() * 0.025, 0.022, 0, 0,
-        1, 0.86 - rnd() * 0.2, 0.5 - rnd() * 0.2, 1, 1, 0.34, 0.06, 0,
+        life, (0.05 + rnd() * 0.03) * rs, 0.03 * rs, 0, 0,
+        1, 0.93 - rnd() * 0.12, 0.62 - rnd() * 0.2, 1, 1, 0.5, 0.12, 0,
         9.8, 0.7, 2, 0.028, -1);
     }
   }
@@ -495,17 +507,18 @@
   function dust(point, normal, scale) {
     if (!ready || !point) return;
     const sc = scale === undefined ? 1 : Math.max(0.2, Math.min(4, +scale || 1));
+    const rs = rangeScale(point);                      // far impacts get bigger, longer-lived puffs so they stay readable
     setNormal(normal, 0, 1, 0); makeBasis();
     const px = point.x + nx * 0.03, py = point.y + ny * 0.03, pz = point.z + nz * 0.03;
-    const puffs = Math.min(10, Math.round(5 * sc));
+    const puffs = Math.min(12, Math.round(6 * sc));
     for (let i = 0; i < puffs; i++) {
       const a = rnd() * TAU, r = (0.4 + rnd() * 0.9) * sc;
       const up = (0.5 + rnd() * 0.9) * (0.7 + 0.3 * sc);
-      const g = 0.50 + rnd() * 0.1;
+      const g = 0.58 + rnd() * 0.1;
       normP.emit(px, py, pz,
         nx * up + (tx * Math.cos(a) + bx * Math.sin(a)) * r, ny * up + (ty * Math.cos(a) + by * Math.sin(a)) * r, nz * up + (tz * Math.cos(a) + bz * Math.sin(a)) * r,
-        0.5 + rnd() * 0.5, 0.14 * sc, (0.5 + rnd() * 0.3) * sc, rnd() * TAU, (rnd() - 0.5) * 2,
-        g + 0.08, g + 0.02, g - 0.1, 0.7, g, g - 0.05, g - 0.14, 0,
+        0.6 + rnd() * 0.5, 0.2 * sc * rs, (0.5 + rnd() * 0.3) * sc * rs, rnd() * TAU, (rnd() - 0.5) * 2,
+        g + 0.10, g + 0.03, g - 0.10, 0.9, g + 0.02, g - 0.03, g - 0.14, 0,
         -0.25, 2.6, 1, 0, rnd());
     }
     const chips = Math.min(14, Math.round(5 * sc));
@@ -516,7 +529,7 @@
         (nx * (0.7 + rnd() * 0.6) + (tx * Math.cos(a) + bx * Math.sin(a)) * r) * sp,
         (ny * (0.7 + rnd() * 0.6) + (ty * Math.cos(a) + by * Math.sin(a)) * r) * sp,
         (nz * (0.7 + rnd() * 0.6) + (tz * Math.cos(a) + bz * Math.sin(a)) * r) * sp,
-        0.55, 0.028, 0.028, 0, 0,
+        0.55, 0.028 * rs, 0.028 * rs, 0, 0,
         0.30, 0.22, 0.14, 1, 0.26, 0.19, 0.12, 1,
         12, 0.3, 3, 0.025, -1);
     }
@@ -548,7 +561,7 @@
     S[o + 3] = dx / dist; S[o + 4] = dy / dist; S[o + 5] = dz / dist;
     S[o + 6] = dist; S[o + 7] = 0;
     S[o + 8] = Math.min(0.32, (dist + Math.min(TRACER_SEG, dist)) / TRACER_SPEED + 0.02);   // head life
-    S[o + 9] = 0.16;                                                                            // faint trail life
+    S[o + 9] = 0.2;                                                                             // faint trail life
   }
 
   function bloodPool(position, radius) {
@@ -561,7 +574,7 @@
   function impactDecal(point, normal) {
     if (!ready || !point) return;
     setNormal(normal, 0, 1, 0); makeBasis(); rotateBasis(rnd() * TAU);
-    bulletD.spawn(point.x + nx * 0.012, point.y + ny * 0.012, point.z + nz * 0.012, 0.07 + rnd() * 0.04, 0.01, 30, 40, 1, rnd());
+    bulletD.spawn(point.x + nx * 0.012, point.y + ny * 0.012, point.z + nz * 0.012, (0.07 + rnd() * 0.04) * Math.min(1.6, rangeScale(point)), 0.01, 30, 40, 1, rnd());
   }
 
   function shake(amount) {
@@ -590,11 +603,11 @@
       // hot head: tail point (w = half width) -> head point (w = alpha)
       let q = (i * 2) * 4;
       let ha = age < headLife ? 1 : 0;
-      A[q] = fx + dx * tail; A[q + 1] = fy + dy * tail; A[q + 2] = fz + dz * tail; A[q + 3] = 0.012;
+      A[q] = fx + dx * tail; A[q + 1] = fy + dy * tail; A[q + 2] = fz + dz * tail; A[q + 3] = 0.016;
       B[q] = fx + dx * head; B[q + 1] = fy + dy * head; B[q + 2] = fz + dz * head; B[q + 3] = ha * 0.95;
       // faint trail from the muzzle to the head
       q += 4;
-      const ta = age < trailLife ? 0.28 * (1 - age / trailLife) : 0;
+      const ta = age < trailLife ? 0.42 * (1 - age / trailLife) : 0;
       A[q] = fx; A[q + 1] = fy; A[q + 2] = fz; A[q + 3] = 0.005;
       B[q] = fx + dx * head; B[q + 1] = fy + dy * head; B[q + 2] = fz + dz * head; B[q + 3] = ta;
       i++;
