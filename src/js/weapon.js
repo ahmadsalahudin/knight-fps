@@ -5,7 +5,7 @@
    can never clip into knights, trees or rocks.
 
    Public API (docs/FIX_PLAN.md "Weapon"):
-     init(camera, renderer)           build the viewmodel (revolver + gloved hands), lights, flash
+     init(camera, renderer)           build the viewmodel (revolver + bare pale hands), lights, flash
      fire() -> THREE.Vector3          recoil spring + hammer drop + cylinder step + muzzle flash + world PointLight;
                                       returns the muzzle position in WORLD space (for tracers)
      reload(ms)                       tilt, swing the cylinder out, spin, snap it back; timed to ms (dt driven)
@@ -66,6 +66,33 @@
     c.width = w; c.height = h;
     draw(c.getContext('2d'), w, h);
     const t = new THREE.CanvasTexture(c);
+    return t;
+  }
+
+  // pale skin: warm base, soft blotches, fine pores, faint blue-green veins and creases (generated, 256 px, wraps)
+  function makeSkinTexture(base, shade) {
+    const t = canvasTex(256, 256, (g, w, h) => {
+      g.fillStyle = base; g.fillRect(0, 0, w, h);
+      const wrap = (x, y, r, fn) => { for (const ox of [-w, 0, w]) for (const oy of [-h, 0, h]) { if (x + ox + r < 0 || x + ox - r > w || y + oy + r < 0 || y + oy - r > h) continue; fn(x + ox, y + oy); } };
+      let seed = 1337; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+      for (let i = 0; i < 70; i++) {                       // soft blood-flush and shade blotches
+        const x = rnd() * w, y = rnd() * h, r = 18 + rnd() * 40, warm = rnd() < 0.5;
+        wrap(x, y, r, (cx, cy) => { const gr = g.createRadialGradient(cx, cy, 0, cx, cy, r); const c = warm ? '255,150,130' : shade; gr.addColorStop(0, 'rgba(' + c + ',0.10)'); gr.addColorStop(1, 'rgba(' + c + ',0)'); g.fillStyle = gr; g.fillRect(cx - r, cy - r, r * 2, r * 2); });
+      }
+      g.lineCap = 'round';
+      for (let i = 0; i < 9; i++) {                        // faint veins
+        const x = rnd() * w, y = rnd() * h, a = rnd() * 6.28; g.strokeStyle = 'rgba(120,140,170,0.10)'; g.lineWidth = 2 + rnd() * 2.5; g.beginPath(); g.moveTo(x, y);
+        g.bezierCurveTo(x + Math.cos(a) * 30, y + Math.sin(a) * 30, x + Math.cos(a + 1) * 60, y + Math.sin(a + 1) * 60, x + Math.cos(a + 0.4) * 90, y + Math.sin(a + 0.4) * 90); g.stroke();
+      }
+      g.strokeStyle = 'rgba(150,100,85,0.16)';             // skin creases
+      for (let i = 0; i < 26; i++) { const x = rnd() * w, y = rnd() * h, l = 14 + rnd() * 26; g.lineWidth = 0.8 + rnd() * 0.8; g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + l / 2, y + (rnd() - 0.5) * 8, x + l, y + (rnd() - 0.5) * 6); g.stroke(); }
+      const img = g.getImageData(0, 0, w, h), d = img.data;   // fine grain + pores
+      for (let i = 0; i < d.length; i += 4) { const n = (rnd() - 0.5) * 14; d[i] += n; d[i + 1] += n * 0.9; d[i + 2] += n * 0.8; }
+      g.putImageData(img, 0, 0);
+      for (let i = 0; i < 900; i++) { g.fillStyle = 'rgba(120,70,60,' + (0.05 + rnd() * 0.07) + ')'; g.beginPath(); g.arc(rnd() * w, rnd() * h, 0.6 + rnd() * 0.7, 0, 6.28); g.fill(); }
+    });
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = 4;
     return t;
   }
 
@@ -278,14 +305,17 @@
 
     _makeMaterials: function () {
       const col = (h) => this._col(h);
+      const skin = (b, sh) => { const t = makeSkinTexture(b, sh); if (this.srgb) t.encoding = THREE.sRGBEncoding; return t; };
       this.mats = {
         dark: new THREE.MeshPhongMaterial({ color: col(0x2c3036), specular: col(0x3a4046), shininess: 30 }),
         light: new THREE.MeshPhongMaterial({ color: col(0x626972), specular: col(0x545b63), shininess: 30 }),
         wood: new THREE.MeshPhongMaterial({ color: col(0x5d3a20), specular: col(0x34271a), shininess: 22 }),
-        glove: new THREE.MeshPhongMaterial({ color: col(0x6b4a30), specular: col(0x241a12), shininess: 10, flatShading: true }),
-        glove2: new THREE.MeshPhongMaterial({ color: col(0x4d3523), specular: col(0x1a120c), shininess: 8, flatShading: true }),
-        sleeve: new THREE.MeshPhongMaterial({ color: col(0x4a5668), specular: col(0x141a22), shininess: 6, flatShading: true }),
-        cuff: new THREE.MeshPhongMaterial({ color: col(0x3a2a1c), specular: col(0x16100a), shininess: 8, flatShading: true })
+        // bare, pale hands: generated skin textures, smooth shading, a little warm emissive so the shade side never goes grey
+        skin: new THREE.MeshPhongMaterial({ color: 0xffffff, map: skin('#efcdb8', '200,150,140'), specular: col(0x3a2e2a), shininess: 20, emissive: col(0x2a120c) }),
+        skin2: new THREE.MeshPhongMaterial({ color: 0xf2dccf, map: skin('#e6bfa8', '190,140,135'), specular: col(0x30262a), shininess: 16, emissive: col(0x26100b) }),
+        nail: new THREE.MeshPhongMaterial({ color: col(0xf2d6cf), specular: col(0x9a8f8c), shininess: 70, emissive: col(0x1c0d0a) }),
+        sleeve: new THREE.MeshPhongMaterial({ color: col(0x4a5668), specular: col(0x141a22), shininess: 6 }),
+        cuff: new THREE.MeshPhongMaterial({ color: col(0x3a2a1c), specular: col(0x16100a), shininess: 8 })
       };
     },
 
@@ -534,113 +564,177 @@
     },
 
     // -----------------------------------------------------------------------------------------------------
-    // hands (simple low-poly gloved hand + sleeve)
+    // hands: bare, pale, smooth. Built from ellipsoids and tapered tubes with a ball at every joint, so there are no
+    // facets or seams. The right hand is a fist around the grip (finger paths are computed from the grip geometry);
+    // the left hand is a rig (palm + 4 fingers x 3 joints + thumb) whose fingers curl during the reload.
     // -----------------------------------------------------------------------------------------------------
     _buildHands: function () {
       const M = this.mats, lm = this.lm;
       if (!lm) return;
-      const up = new V3(0, 1, 0);
-      const limb = (a, b, r, mat, seg) => {            // capsule from a to b
+      const UP = new V3(0, 1, 0);
+      const mesh = (geo, mat) => { const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; return m; };
+      // tapered tube from a to b (radius ra at a, rb at b)
+      const tube = (a, b, ra, rb, mat) => {
         const d = new V3().subVectors(b, a), len = d.length();
-        const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.0005, len - 2 * r), 2, seg || 6), mat);
+        const m = mesh(new THREE.CylinderGeometry(rb, ra, Math.max(1e-4, len), 20, 1), mat);
         m.position.copy(a).add(b).multiplyScalar(0.5);
-        m.quaternion.setFromUnitVectors(up, d.normalize());
-        m.frustumCulled = false;
+        m.quaternion.setFromUnitVectors(UP, d.normalize());
         return m;
       };
-      const taper = (a, b, ra, rb, mat, seg) => {      // cone frustum, radius ra at a, rb at b
-        const d = new V3().subVectors(b, a), len = d.length();
-        const m = new THREE.Mesh(new THREE.CylinderGeometry(rb, ra, len, seg || 8, 1), mat);
-        m.position.copy(a).add(b).multiplyScalar(0.5);
-        m.quaternion.setFromUnitVectors(up, d.normalize());
-        m.frustumCulled = false;
-        return m;
-      };
-      const slab = (c, sx, sy, sz, mat, q) => {
-        const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat);
-        m.position.copy(c);
+      // ellipsoid (radii rx, ry, rz) at c, optionally rotated by q
+      const ball = (c, rx, ry, rz, mat, q) => {
+        const m = mesh(new THREE.SphereGeometry(1, 28, 20), mat);
+        m.scale.set(rx, ry, rz); m.position.copy(c);
         if (q) m.quaternion.copy(q);
-        m.frustumCulled = false;
         return m;
+      };
+      const basisQ = (x, y, z) => new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+      // fingernail: a flat, glossy shield on the back of the last segment (a -> b), `dorsal` is the direction of the back of the finger
+      const nail = (parent, a, b, dorsal, r) => {
+        const dir = new V3().subVectors(b, a), len = dir.length(); dir.normalize();
+        const y = dorsal.clone().addScaledVector(dir, -dorsal.dot(dir)).normalize();
+        const x = new V3().crossVectors(y, dir);
+        const c = a.clone().lerp(b, 0.58).addScaledVector(y, r * 0.78);
+        parent.add(ball(c, r * 0.62, r * 0.26, Math.max(len * 0.36, r * 0.7), M.nail, basisQ(x, y, dir)));
+      };
+      // a finger through the waypoints pts (radii[i] at pts[i]); balls at the joints make the bends smooth
+      const chain = (parent, pts, radii, mat, dorsal, nailR) => {
+        for (let i = 0; i < pts.length - 1; i++) parent.add(tube(pts[i], pts[i + 1], radii[i], radii[i + 1], mat));
+        for (let i = 0; i < pts.length; i++) parent.add(ball(pts[i], radii[i], radii[i], radii[i], mat));
+        if (nailR) nail(parent, pts[pts.length - 2], pts[pts.length - 1], dorsal, nailR);
       };
 
-      // ---------------------------------------------------------------- right (shooting) hand, on the grip
+      // ---------------------------------------------------------------- right (shooting) hand: a fist round the grip
       const g = lm.grip;
-      const topY = g.max.y, botY = g.min.y;
-      const gT = new V3(0, topY - 0.010, lm.gripTopZ);
-      const gB = new V3(0, botY + 0.006, lm.gripBotZ);
+      const gT = new V3(0, g.max.y - 0.010, lm.gripTopZ);
+      const gB = new V3(0, g.min.y + 0.006, lm.gripBotZ);
       const u = new V3().subVectors(gB, gT).normalize();          // down along the grip
       const n = new V3(0, u.z, -u.y).normalize();                 // rearwards, perpendicular to the grip
+      const X = new V3(1, 0, 0);
       const halfD = 0.0185;                                       // half grip depth (front-back)
-      const mid = gT.clone().add(gB).multiplyScalar(0.5);
       const R = new THREE.Group();
       R.name = 'rightHand';
+      const at = (v, side, depth) => gT.clone().addScaledVector(u, v).addScaledVector(X, side).addScaledVector(n, depth);
+      // the three lower fingers: knuckle on the right of the grip, across the front strap, tip curling onto the left side
+      const rf = [0.0082, 0.0076, 0.0070, 0.0064];
+      const fing = [
+        { v: 0.025, L: [0.034, 0.021, 0.017], k: 1.00 },
+        { v: 0.042, L: [0.032, 0.020, 0.016], k: 0.94 },
+        { v: 0.058, L: [0.026, 0.016, 0.014], k: 0.86 },
+      ];
+      const away = new V3(-1, 0.25, -0.6).normalize();            // the back of the curled fingertips faces left / forward
+      const mcps = [];
+      fing.forEach((f) => {
+        const r = rf.map((x) => x * f.k);
+        const p0 = at(f.v, 0.0155, -(halfD + r[0] + 0.001));
+        const p1 = p0.clone().addScaledVector(X, -f.L[0]);
+        const p2 = p1.clone().addScaledVector(n, f.L[1]);
+        const p3 = p2.clone().addScaledVector(n, Math.cos(0.45) * f.L[2]).addScaledVector(X, Math.sin(0.45) * f.L[2]);
+        chain(R, [p0, p1, p2, p3], r, M.skin, away, r[3] * 1.05);
+        mcps.push(p0);
+      });
+      // index finger lies along the left of the frame and rests on the trigger
+      const i0 = at(0.004, 0.0150, -(halfD + 0.004));
+      const i1 = new V3(-0.0172, i0.y - 0.001, i0.z - 0.004);
+      const i2 = new V3(-0.0172, -0.0105, -0.0455);
+      const i3 = new V3(-0.0050, -0.0215, -0.0605);
+      chain(R, [i0, i1, i2, i3], [0.0086, 0.0080, 0.0074, 0.0068], M.skin, new V3(-0.6, 0.8, 0), 0.0072);
+      mcps.unshift(i0);
+      // thumb lying along the left side of the frame, root in the web above the grip
+      const t0 = new V3(0.0125, 0.0215, 0.0150);
+      const t1 = new V3(-0.0045, 0.0290, 0.0010);
+      const t2 = new V3(-0.0165, 0.0295, -0.0205);
+      const t3 = new V3(-0.0188, 0.0275, -0.0385);
+      chain(R, [t0, t1, t2, t3], [0.0128, 0.0108, 0.0096, 0.0084], M.skin2, new V3(-0.2, 1, 0), 0.0086);
 
-      // back of the hand: faceted ellipsoid behind (and to the right of) the grip, tilted with the grip rake
-      const blob = (c, rx, ry, rz, mat, q) => {
-        const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), mat);
-        m.scale.set(rx, ry, rz);
-        m.position.copy(c);
-        if (q) m.quaternion.copy(q);
-        m.frustumCulled = false;
-        return m;
-      };
-      const basis = new THREE.Matrix4().makeBasis(new V3(1, 0, 0), u.clone().negate(), n);
-      const palmQ = new THREE.Quaternion().setFromRotationMatrix(basis);
-      const palmC = mid.clone().addScaledVector(n, halfD + 0.010).add(new V3(0.010, 0.0, 0));
-      R.add(blob(palmC, 0.031, 0.043, 0.024, M.glove, palmQ));
-      // heel of the hand / web between thumb and index finger, over the top strap
-      const webC = gT.clone().addScaledVector(n, halfD + 0.002).addScaledVector(u, -0.006).add(new V3(0.0, 0.0, 0));
-      R.add(blob(webC, 0.022, 0.016, 0.019, M.glove2, palmQ));
-      // palm side covering the right of the grip
-      R.add(blob(mid.clone().add(new V3(0.016, 0.003, -0.002)), 0.016, 0.040, 0.025, M.glove2, palmQ));
-
-      // three fingers wrapped around the front of the grip (tips curl round to the left side)
-      for (let i = 0; i < 3; i++) {
-        const sOff = 0.032 + i * 0.019;
-        const c = gT.clone().addScaledVector(u, sOff).addScaledVector(n, -(halfD + 0.007));
-        const a = c.clone().add(new V3(-0.0195 + i * 0.0015, 0, 0));
-        const b = c.clone().add(new V3(0.024, 0, 0));
-        R.add(limb(a, b, 0.0088 - i * 0.0007, i % 2 ? M.glove2 : M.glove, 6));
-      }
-      // index finger along the left of the frame, resting on the trigger
-      const knuckle = gT.clone().addScaledVector(n, -(halfD + 0.002)).add(new V3(-0.0135, 0.0045, 0));
-      const trig = new V3(-0.0045, -0.0215, -0.0625);
-      R.add(limb(knuckle, trig, 0.0074, M.glove, 6));
-      // thumb lying along the left side of the frame
-      const thumbRoot = gT.clone().addScaledVector(n, halfD - 0.004).add(new V3(-0.009, 0.013, 0));
-      const thumbTip = new V3(-0.0195, 0.0265, -0.040);
-      R.add(blob(thumbRoot, 0.012, 0.012, 0.014, M.glove2, null));
-      R.add(limb(thumbRoot, thumbTip, 0.0090, M.glove2, 6));
-
-      // wrist: leather cuff then sleeve, running back and DOWN out of the frame
-      const wrist = palmC.clone().addScaledVector(u, -0.030).addScaledVector(n, 0.010).add(new V3(0.004, 0, 0));
-      const fdir = new V3(0.36, -0.54, 0.76).normalize();
-      const cuffEnd = wrist.clone().addScaledVector(fdir, 0.030);
-      const elbow = wrist.clone().addScaledVector(fdir, 0.34);
-      R.add(taper(wrist.clone().addScaledVector(fdir, -0.014), cuffEnd, 0.0215, 0.0245, M.glove2, 8));
-      R.add(taper(cuffEnd.clone().addScaledVector(fdir, -0.004), cuffEnd.clone().addScaledVector(fdir, 0.016), 0.0285, 0.0285, M.cuff, 8));   // dark leather cuff band
-      R.add(taper(cuffEnd.clone().addScaledVector(fdir, 0.010), elbow, 0.0295, 0.039, M.sleeve, 8));
+      // palm and back of the hand: one ellipsoid on the knuckle row, turned a little towards the rear of the grip
+      const phi = 0.5;
+      const Yc = X.clone().multiplyScalar(Math.cos(phi)).addScaledVector(n, Math.sin(phi)).normalize();     // back of the hand
+      const Xc = u.clone();                                                                                // towards the little finger
+      const Zc = new V3().crossVectors(Xc, Yc).normalize();                                                // towards the wrist
+      const palmQ = basisQ(Xc, Yc, Zc);
+      const mcpMid = new V3();
+      mcps.forEach((p) => mcpMid.add(p)); mcpMid.multiplyScalar(1 / mcps.length);
+      const palmC = mcpMid.clone().addScaledVector(Yc, 0.016).addScaledVector(Zc, 0.036);
+      R.add(ball(palmC, 0.0405, 0.0185, 0.0440, M.skin, palmQ));                                          // palm / back of the hand
+      R.add(ball(palmC.clone().addScaledVector(Yc, 0.006).addScaledVector(Xc, -0.012).addScaledVector(Zc, 0.020), 0.0200, 0.0150, 0.0300, M.skin2, palmQ));   // thumb muscle
+      R.add(ball(palmC.clone().addScaledVector(Xc, 0.020).addScaledVector(Zc, 0.026), 0.0160, 0.0140, 0.0260, M.skin2, palmQ));                         // heel of the hand
+      // wrist: skin, a dark leather band, then the sleeve, running back and down out of the frame
+      const wrist = palmC.clone().addScaledVector(Zc, 0.040);
+      const fdir = Zc.clone().multiplyScalar(0.55).add(new V3(0.30, -0.55, 0.78).multiplyScalar(0.45)).normalize();
+      const skinEnd = wrist.clone().addScaledVector(fdir, 0.050);
+      const elbow = wrist.clone().addScaledVector(fdir, 0.36);
+      R.add(tube(wrist.clone().addScaledVector(fdir, -0.012), skinEnd, 0.0235, 0.0250, M.skin2));
+      R.add(ball(wrist.clone().addScaledVector(fdir, -0.012), 0.0235, 0.0235, 0.0235, M.skin2));
+      R.add(tube(skinEnd.clone().addScaledVector(fdir, -0.004), skinEnd.clone().addScaledVector(fdir, 0.018), 0.0285, 0.0285, M.cuff));
+      R.add(tube(skinEnd.clone().addScaledVector(fdir, 0.012), elbow, 0.0300, 0.0400, M.sleeve));
       this.gunPivot.add(R);
       this.handR = R;
 
       // ---------------------------------------------------------------- left (reload) hand, hidden until reload
+      // rig frame: palm down, fingers point -z, thumb on +x, back of the hand +y; the outer group Lo puts the palm
+      // against the gun (palm faces +x, thumb up), L is moved by handsUpdate
       const L = new THREE.Group();
       L.name = 'leftHand';
-      // canonical pose: palm faces +x (towards the gun), fingers point -z, thumb up
-      L.add(slab(new V3(0, 0, 0), 0.016, 0.042, 0.046, M.glove, null));
-      for (let i = 0; i < 4; i++) {
-        const y = -0.015 + i * 0.0105;
-        L.add(limb(new V3(0.002, y, -0.020), new V3(0.002, y + 0.002, -0.058 + (i === 1 ? -0.004 : 0)), 0.0068, i % 2 ? M.glove2 : M.glove, 6));
-      }
-      L.add(limb(new V3(0.0, 0.017, -0.004), new V3(0.004, 0.034, -0.030), 0.0078, M.glove2, 6));
-      const lw = new V3(-0.002, -0.004, 0.026);
+      const Lo = new THREE.Group();
+      Lo.quaternion.copy(basisQ(new V3(0, 1, 0), new V3(-1, 0, 0), new V3(0, 0, 1)));
+      L.add(Lo);
+      Lo.add(ball(new V3(0, 0, 0), 0.0345, 0.0165, 0.0430, M.skin, null));
+      Lo.add(ball(new V3(0.016, -0.004, 0.008), 0.0190, 0.0130, 0.0290, M.skin2, null));       // thumb muscle (palm side)
+      Lo.add(ball(new V3(-0.022, -0.002, 0.024), 0.0150, 0.0135, 0.0240, M.skin2, null));      // heel of the hand
+      const rig = (parent, pos, lens, radii, mat, nailR, yaw) => {
+        const root = new THREE.Group(); root.position.copy(pos); if (yaw) root.rotation.y = yaw; parent.add(root);
+        const joints = []; let cur = root;
+        for (let i = 0; i < lens.length; i++) {
+          const j = new THREE.Group(); if (i > 0) j.position.set(0, 0, -lens[i - 1]);
+          cur.add(j); joints.push(j);
+          j.add(tube(new V3(0, 0, 0), new V3(0, 0, -lens[i]), radii[i], radii[i + 1], mat));
+          j.add(ball(new V3(0, 0, 0), radii[i], radii[i], radii[i], mat));
+          cur = j;
+        }
+        const last = joints[joints.length - 1], tip = new V3(0, 0, -lens[lens.length - 1]);
+        last.add(ball(tip, radii[lens.length], radii[lens.length], radii[lens.length], mat));
+        if (nailR) nail(last, new V3(0, 0, 0), tip, UP, nailR);
+        return joints;
+      };
+      this.handLFingers = [
+        rig(Lo, new V3(0.0255, -0.002, -0.040), [0.034, 0.021, 0.017], [0.0082, 0.0076, 0.0070, 0.0064], M.skin, 0.0068),
+        rig(Lo, new V3(0.0085, -0.002, -0.042), [0.036, 0.023, 0.018], [0.0084, 0.0078, 0.0072, 0.0066], M.skin, 0.0070),
+        rig(Lo, new V3(-0.0085, -0.002, -0.040), [0.034, 0.021, 0.017], [0.0080, 0.0074, 0.0068, 0.0062], M.skin, 0.0066),
+        rig(Lo, new V3(-0.0235, -0.002, -0.034), [0.027, 0.016, 0.014], [0.0072, 0.0066, 0.0061, 0.0056], M.skin, 0.0060),
+      ];
+      this.handLThumb = rig(Lo, new V3(0.029, -0.006, -0.012), [0.030, 0.022, 0.018], [0.0112, 0.0098, 0.0088, 0.0078], M.skin2, 0.0086, 0.55);
+      // forearm: skin wrist, leather band, sleeve, back and out of the frame
+      const lw = new V3(0, 0, 0.038);
       const ldir = new V3(-0.25, -0.3, 0.92).normalize();
-      L.add(taper(lw, lw.clone().addScaledVector(ldir, 0.05), 0.0215, 0.0245, M.glove2, 8));
-      L.add(taper(lw.clone().addScaledVector(ldir, 0.05), lw.clone().addScaledVector(ldir, 0.36), 0.0265, 0.039, M.sleeve, 8));
+      const lq = new V3(0, 0, 0);
+      L.add(tube(lw.clone().addScaledVector(ldir, -0.012), lw.clone().addScaledVector(ldir, 0.05), 0.0225, 0.0245, M.skin2));
+      L.add(ball(lw.clone().addScaledVector(ldir, -0.012), 0.0225, 0.0225, 0.0225, M.skin2));
+      L.add(tube(lw.clone().addScaledVector(ldir, 0.046), lw.clone().addScaledVector(ldir, 0.066), 0.0285, 0.0285, M.cuff));
+      L.add(tube(lw.clone().addScaledVector(ldir, 0.058), lw.clone().addScaledVector(ldir, 0.38), 0.0295, 0.0400, M.sleeve));
+      void lq;
       L.visible = false;
       this.gunPivot.add(L);
       this.handL = L;
+      this._curlLeft(0);
+    },
+
+    // curl the left hand's fingers: c = 0 relaxed .. 1 firmly closed (the fingers follow with a slight delay each)
+    _curlLeft: function (c, wave) {
+      if (!this.handLFingers) return;
+      const w = wave || 0;
+      this.handLFingers.forEach((j, i) => {
+        const k = clamp(c + w * (0.12 - i * 0.05), 0, 1);
+        const f = 1 + i * 0.07;
+        j[0].rotation.x = -(0.22 + 0.55 * k) * f;
+        j[1].rotation.x = -(0.30 + 0.85 * k) * f;
+        j[2].rotation.x = -(0.18 + 0.55 * k) * f;
+      });
+      const t = this.handLThumb;
+      if (t) {
+        const k = clamp(c, 0, 1);
+        t[0].rotation.x = -(0.10 + 0.25 * k); t[1].rotation.x = -(0.14 + 0.35 * k); t[2].rotation.x = -(0.10 + 0.30 * k);
+      }
     },
 
     // reload choreography of the left hand (gun space)
@@ -651,12 +745,13 @@
       if (p < 0 || !this.rel) { if (L.visible) L.visible = false; return; }
       const k = this._relHand;
       L.visible = k > 0.01;
-      // approach from below-left, hold beside the cylinder, dip twice to "load", then withdraw
+      // approach from below-left (fingers open), hold beside the cylinder, dip twice to "load" (fingers close), then withdraw
       const dip = kf(p, [[0.48, 0], [0.54, 1], [0.6, 0], [0.64, 1], [0.7, 0]]);
       const far = new V3(-0.16, -0.17, 0.10);
       const near = new V3(-0.058, -0.022 - dip * 0.020, -0.050 - dip * 0.006);
       L.position.lerpVectors(far, near, smooth(k));
       L.rotation.set(0.10 * (1 - k), 0.05 + 0.5 * (1 - k), -0.2 * (1 - k) + dip * 0.15);
+      this._curlLeft(0.75 * (1 - smooth(k)) * 0 + 0.35 * smooth(k) + 0.55 * dip, 0.5 * dip);
     },
 
     // -----------------------------------------------------------------------------------------------------
