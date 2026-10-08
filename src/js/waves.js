@@ -2,7 +2,8 @@
 
    Flow:  waves 1-4 = 5 / 7 / 9 / 11 knights, spawned ONE AT A TIME on a ring (radius ~30) around the arena centre,
           preferring points behind / beside the player's view, never on a collider and never near the player.
-          A wave is complete only when pending == 0 AND alive == 0.  Then a 4 s countdown banner, then the next wave.
+          A wave is complete only when pending == 0 AND alive == 0.  Then the player is healed (25 HP, everything
+          before the boss) via Game.heal, a 4 s countdown banner, then the next wave.
           Wave 5 = the Boss (intro banner + Sfx.bossRoar, boss bar). Victory only after the boss dies -> HUD.victory(stats).
    Everything is driven by update(dt) timers (no setTimeout), so the QA virtual clock and freezeAI behave.
 
@@ -31,6 +32,8 @@
   const RING_RADIUS = 30;
   const MIN_FROM_PLAYER = 18;            // never spawn closer than this to the player
   const COUNTDOWN = 4;                   // seconds between waves
+  const HEAL_PER_WAVE = 25;              // HP restored when a wave is cleared (100 HP, 15 per knight hit, no other healing);
+                                         // the break before the boss restores everything (the boss does 22-36 per hit)
   const BOSS_DELAY = 1.8;                // boss appears this long after the intro banner / roar
   const VICTORY_DELAY = 3.0;             // let the boss death play out before the victory screen
   const MAX_ALIVE = 8;                   // never more than this many wave knights alive at once
@@ -393,6 +396,7 @@
       this.countdown = COUNTDOWN;
       this._cdShown = -1;
       if (window.HUD && HUD.setEnemiesLeft) HUD.setEnemiesLeft(0);
+      if (window.Game && Game.heal) Game.heal(done === TOTAL - 1 ? 100 : HEAL_PER_WAVE);
       saveBest(done);
     },
 

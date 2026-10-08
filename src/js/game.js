@@ -19,6 +19,9 @@ window.getInput = function () {
     if (e.code === 'KeyR') { if (window.Game && Game.tryReload) Game.tryReload(); }
   });
   document.addEventListener('keyup', function (e) { keys[e.code] = false; });
+  // A key released while the window was in the background (alt-tab, Esc pause + alt-tab) never delivers its keyup: without
+  // this the player would keep walking / sprinting on its own after coming back.
+  window.addEventListener('blur', function () { for (const k in keys) keys[k] = false; });
   return function () {
     input.forward = !!(keys['KeyW'] || keys['ArrowUp']);
     input.backward = !!(keys['KeyS'] || keys['ArrowDown']);
@@ -31,6 +34,7 @@ window.getInput = function () {
 
 (function () {
   const MAX_AMMO = 6;
+  const MAX_HP = 100;
   const RELOAD_MS = 1600;
   const FIRE_GATE_MS = 350;
   const FALLBACK_DAMAGE = 34;     // used only when Combat.damageFor is absent
@@ -77,7 +81,7 @@ window.getInput = function () {
   }
 
   window.Game = {
-    playerHP: 100,
+    playerHP: MAX_HP,
     shots: 0,
     hits: 0,
     headshots: 0,
@@ -208,7 +212,7 @@ window.getInput = function () {
       }
 
       if (window.FX && FX.tracer) FX.tracer(muzzle, endPoint);
-      if (hitInfo) window.__lastHitInfo = hitInfo;
+      if (hitInfo && window.__dbg) window.__lastHitInfo = hitInfo;      // QA only (?debug=1): production keeps no reference to the last enemy
       return hitInfo || undefined;
     },
 
@@ -309,6 +313,16 @@ window.getInput = function () {
             accuracy: st.accuracy, best: Math.max(best, wave) }, ws || {}, { newBest: isBest, isBest: isBest }));
         }
       }
+    },
+
+    // Restore HP (capped at 100). Waves calls it when a wave is cleared: there is no other healing, so damage taken early
+    // would otherwise carry into the boss fight for good. Returns the HP actually restored.
+    heal: function (amount) {
+      if (this.dead || !(amount > 0)) return 0;
+      const before = this.playerHP;
+      this.playerHP = Math.min(MAX_HP, before + amount);
+      if (this.playerHP !== before && window.HUD && HUD.updateHP) HUD.updateHP(this.playerHP);
+      return this.playerHP - before;
     },
 
     _wave: function () {

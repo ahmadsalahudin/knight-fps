@@ -9,7 +9,7 @@
    API (docs/FIX_PLAN.md "HUD and Sfx"):
      shoot, dryFire, reload, cock, swing(heavy?), clang, armorHit, fleshHit, hurt, death, bossRoar,
      footstep(kind?), waveStart, victory
-   Extras: init() (call from a gesture), volume(v), mute(on), plus the legacy aliases hit -> armorHit, roar -> bossRoar.
+   Extras: init() (call from a gesture), volume(v), mute(on).
    Test hook: Sfx._useContext(ctx) swaps in e.g. an OfflineAudioContext so a sound can be rendered and measured. */
 (function () {
   'use strict';
@@ -392,9 +392,6 @@
 
     _useContext: function (c) { S.force = true; S.last = Object.create(null); build(c); return true; },
   };
-
-  Sfx.hit = Sfx.armorHit;     // legacy names
-  Sfx.roar = Sfx.bossRoar;
 
   window.Sfx = Sfx;
 })();

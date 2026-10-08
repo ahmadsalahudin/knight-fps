@@ -25,14 +25,14 @@
         startWindup()/startStrike()/onDamageFrame(): the damage frame, default = sword reach test + Player.hurt(damage, this)
         speedFor(dist, wave)     {gait:'Walking'|'Run', speed} while approaching
         die(hit) / takeHit(hit)  call super
-   Public: takeHit({damage, zone, point, dir}), die(hit), hurt(damage) (legacy), applyImpulse(Vector3), setState(name),
+   Public: takeHit({damage, zone, point, dir}), die(hit), applyImpulse(Vector3), setState(name),
         update(dt, playerPos, waveNumber), dispose().
    Knockback protocol with combat.js: Combat calls enemy.applyImpulse(Vector3) (m/s); the knight owns decay and movement.
    Loose gear: combat.js re-parents helmet / sword / shield into physics holders on death (userData.loose = true); after that this
         module never touches them again.
 
    ---- Enemies --------------------------------------------------------------------------------------------------------------
-   list, add(e), update(dt, playerPos), rayTargets(), aliveCount(), findByObject(obj), clear(), remove(e), hurt(obj, dmg, point)
+   list, add(e), update(dt, playerPos), rayTargets(), aliveCount(), findByObject(obj), clear(), remove(e)
    Debug (?debug=1, installed lazily): __dbg.knight.pose(i, state, progress), .gear(i), .info(i).
 */
 (() => {
@@ -77,7 +77,7 @@
   const UPPER_RE = /^(Abdomen|Torso|Neck|Head|Shoulder|UpperArm|LowerArm|Palm|MiddleHand|Fingers|Thumb)/;
 
   // scratch
-  const _v1 = new V3(), _v2 = new V3(), _q1 = new Q(), _q2 = new Q();
+  const _v1 = new V3(), _q1 = new Q(), _q2 = new Q();
   const AX = new V3(1, 0, 0), AZ = new V3(0, 0, 1);
 
   // Split every clip once into a lower and an upper body clip (clips are shared by all knights).
@@ -185,6 +185,7 @@
       this._flinch = 0;                           // procedural hit reaction 1 -> 0
       this._flinchDir = new V3();
       this._flinchPow = 0.4;
+      this._pT = new Q(); this._pH = new Q(); this._pOn = false;    // procedural rotation currently added on top of the torso / head bone
       this._vel = new V3();
       this._speed = 0;
       this._yaw = 0;
@@ -193,7 +194,7 @@
       this._deadT = 0;
       this._removed = false;
       this._targetYaw = null;
-      this._ctx = { dist: 99, dx: 0, dz: 1, nx: 0, nz: 1, wave: 1, dy: 0 };
+      this._ctx = { dist: 99, dx: 0, dz: 1, nx: 0, nz: 1, wave: 1 };
       this._playStateAnim('approach', 0);
     }
 
@@ -439,7 +440,7 @@
       const p = this.mesh.position;
       const ctx = this._ctx;
       if (playerPos) {
-        ctx.dx = playerPos.x - p.x; ctx.dz = playerPos.z - p.z; ctx.dy = playerPos.y - p.y;
+        ctx.dx = playerPos.x - p.x; ctx.dz = playerPos.z - p.z;
         ctx.dist = Math.hypot(ctx.dx, ctx.dz);
         if (ctx.dist > 1e-5) { ctx.nx = ctx.dx / ctx.dist; ctx.nz = ctx.dz / ctx.dist; }
       }
@@ -596,9 +597,21 @@
         // attack layer timing must not advance on its own
         if (a) a.setEffectiveTimeScale(0);
       }
+      this._undoProcedural();
       this.mixer.update(dt);
       this._proceduralPose(dt);
       this._footsteps(ctx);
+    }
+
+    // The flinch is added on top of the mixer's pose every frame. The mixer only writes a bone when its clip value CHANGED, so a bone
+    // whose clip is static at that moment (the head during the sword swing) would keep last frame's rotation and gain a new one every
+    // frame: a knight shot mid-swing spun its head round by up to ~3 rad. So the added rotation is taken off again before the mixer runs.
+    _undoProcedural() {
+      if (!this._pOn) return;
+      this._pOn = false;
+      const torso = this.bones.torso, head = this.bones.head;
+      if (torso) torso.quaternion.multiply(_q1.copy(this._pT).invert());
+      if (head) head.quaternion.multiply(_q1.copy(this._pH).invert());
     }
 
     _proceduralPose(dt) {
@@ -612,13 +625,16 @@
         // push along the bullet direction (knight-local x / z): about X tilts toward +Z, about Z toward -X
         _q1.setFromAxisAngle(AX, amt * d.z);
         _q2.setFromAxisAngle(AZ, -amt * d.x);
-        torso.quaternion.multiply(_q1).multiply(_q2);
+        this._pT.copy(_q1).multiply(_q2);
+        torso.quaternion.multiply(this._pT);
       }
       if (head) {
         _q1.setFromAxisAngle(AX, amt * 0.7 * d.z);
         _q2.setFromAxisAngle(AZ, -amt * 0.7 * d.x);
-        head.quaternion.multiply(_q1).multiply(_q2);
+        this._pH.copy(_q1).multiply(_q2);
+        head.quaternion.multiply(this._pH);
       }
+      this._pOn = true;
     }
 
     // a boot-on-ground sound once per half stride, only close by and rate limited
@@ -664,11 +680,6 @@
       return false;
     }
 
-    // legacy entry point (Enemies.hurt / old callers)
-    hurt(damage) {
-      return this.takeHit({ damage: damage, zone: 'torso', dir: new V3(0, 0, -1) });
-    }
-
     _reactToHit(hit) {
       const zone = hit.zone || 'torso';
       // procedural torso pitch, in the knight's own frame
@@ -681,7 +692,7 @@
         this._flinchDir.copy(_v1);
       } else this._flinchDir.set(0, 0, -1);
       this._flinch = 1;
-      this._flinchPow = zone === 'head' ? 0.55 : (zone === 'limb' ? 0.3 : 0.42);
+      this._flinchPow = zone === 'head' ? 0.55 : (zone === 'limb' ? 0.3 : 0.42);       // peak torso pitch (rad); the head adds 0.7x of it on top
       // a hit while winding up breaks the telegraph; the strike itself is not interrupted
       if (this.state === 'attack' || this.state === 'recover') return;
       if (this.state !== 'stagger') this.setState('stagger');
@@ -726,6 +737,7 @@
         p.x += this.knockback.x * dt; p.z += this.knockback.z * dt;
         this._decayKnockback(dt);
       }
+      this._undoProcedural();
       this.mixer.update(dt);
       if (this._deadT > LINGER) {
         const u = clamp((this._deadT - LINGER) / SINK, 0, 1);
@@ -837,13 +849,6 @@
       }
     },
 
-    // legacy fallback used by game.js / waves.js when an enemy has no takeHit
-    hurt(obj, damage, point) {
-      const e = this.findByObject(obj);
-      if (!e) return;
-      if (e.takeHit) e.takeHit({ damage: damage, zone: 'torso', point: point || null, dir: new V3(0, 0, -1) });
-      else if (e.hurt) e.hurt(damage);
-    },
   };
 
   // ------------------------------------------------------------------------------------------------------------------------

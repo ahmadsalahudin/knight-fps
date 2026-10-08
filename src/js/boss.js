@@ -43,7 +43,7 @@
   const SIZE = 2.8;                       // x the 1.8 m knight = 5.0 m
   const HP = 1500;                        // 38 torso shots (40), 10 head shots (150): about 30-45 body shots, fewer with head shots
   const NAME = 'The Iron Warlord';
-  const IDLE = 'Idle_swordRight', ATTACK = 'Run_swordAttack', JUMP = 'swordAttackJump';
+  const ATTACK = 'Run_swordAttack', JUMP = 'swordAttackJump';
   const ATK_RAISE = 0.17;                 // clip time of the raised sword in Run_swordAttack (see enemies.js)
   const J = { takeoff: 0.42, land: 0.66 }; // clip times of swordAttackJump: gather + sword back (0-0.42), sword overhead in flight, slam pose (0.66+)
 
@@ -80,6 +80,8 @@
     pauldron: [0.07, 0.07, 0.08],
     blade: [0.74, 0.76, 0.82],
   };
+
+  const FAN_EDGES = ['fanEdgeL', 'fanEdgeR'], STRIP_EDGES = ['stripEdgeL', 'stripEdgeR'], EDGE_SIGN = [1, -1];   // telegraph edge meshes (no per-frame arrays)
 
   function sceneOf() { return (window.Game && Game.scene) || (window.Main && Main.scene) || null; }
   function playerPos() { return window.Game && Game.playerObj ? Game.playerObj.position : null; }
@@ -883,13 +885,14 @@
       mk('stripEdgeL', edge, mat(0xffa040, 0.95), 6);
       mk('stripEdgeR', edge, mat(0xffa040, 0.95), 6);
       mk('wave', wave, mat(0xffd9a0, 0.8), 7);
-      this._tele = { meshes: meshes, geos: geos, mats: mats };
+      this._tele = { meshes: meshes, geos: geos, mats: mats, names: Object.keys(meshes) };     // names: cached, _updateTele runs every frame
       return this._tele;
     }
 
     _hideTele() {
-      if (!this._tele) return;
-      for (const k of Object.keys(this._tele.meshes)) this._tele.meshes[k].visible = false;
+      const T = this._tele;
+      if (!T) return;
+      for (let i = 0; i < T.names.length; i++) T.meshes[T.names[i]].visible = false;
     }
 
     _updateTele(dt) {
@@ -900,7 +903,7 @@
       const T = this._ensureTele();
       if (!T) return;
       const M = T.meshes;
-      for (const k of Object.keys(M)) if (k !== 'wave') M[k].visible = false;
+      for (let i = 0; i < T.names.length; i++) if (T.names[i] !== 'wave') M[T.names[i]].visible = false;
       const p = this.mesh.position;
       const pulse = 0.5 + 0.5 * Math.sin(this._t * 14);
       this._teleFlash = Math.max(0, (this._teleFlash || 0) - dt * 4);
@@ -917,7 +920,8 @@
           M.fanFill.material.opacity = st === 'windup' ? 0.32 + 0.3 * u : 0.6 + 0.4 * this._teleFlash;
           const half = Math.acos(SWEEP_COS);
           M.fanArc.visible = true; M.fanArc.position.set(p.x, 0.06, p.z); M.fanArc.rotation.y = this._yaw; M.fanArc.scale.set(R, 1, R);
-          for (const [k, sg] of [['fanEdgeL', 1], ['fanEdgeR', -1]]) {
+          for (let i = 0; i < 2; i++) {
+            const k = FAN_EDGES[i], sg = EDGE_SIGN[i];
             M[k].visible = true; M[k].position.set(p.x, 0.06, p.z); M[k].rotation.y = this._yaw + sg * half; M[k].scale.set(0.16, 1, R);
           }
         } else if (st === 'leapWind' || st === 'leap') {
@@ -940,7 +944,8 @@
           M.stripFill.scale.set(w, 1, len * (st === 'chargeWind' ? lerp(0.08, 1, smooth(u)) : 1));
           M.stripFill.material.opacity = st === 'chargeWind' ? 0.3 + 0.3 * u : 0.45;
           const px = Math.cos(yaw), pz = -Math.sin(yaw);               // the strip's sideways axis
-          for (const [k, sg] of [['stripEdgeL', 1], ['stripEdgeR', -1]]) {
+          for (let i = 0; i < 2; i++) {
+            const k = STRIP_EDGES[i], sg = EDGE_SIGN[i];
             M[k].visible = true; M[k].position.set(sx + px * sg * w / 2, 0.06, sz + pz * sg * w / 2); M[k].rotation.y = yaw; M[k].scale.set(0.16, 1, len);
           }
         }
