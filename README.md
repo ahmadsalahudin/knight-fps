@@ -29,6 +29,37 @@ Head shots kill a knight outright. Torso shots take about 3 hits and limbs about
 Add `?debug=1` to the URL to enable `window.__dbg`: `godMode`, `skipToWave`, `spawn`, `freezeAI`,
 `lookAt`, `killAll`, `state()` and more.
 
+## Deploy to a VPS
+
+`deploy/install.sh` sets everything up from the VPS's own terminal. It installs a web server (Caddy, or the nginx
+that is already running), downloads `knights_out_final.html` from this repo, serves it as the site's page, and
+sets up HTTPS for a domain. It supports Debian/Ubuntu and Fedora/RHEL-family servers with systemd.
+
+1. In your DNS provider, add an `A` record for the game's host name (for example `knights` under
+   `ahmadsalahudin.tech`) pointing to the VPS's IP address.
+2. On the VPS, run:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ahmadsalahudin/knight-fps/main/deploy/install.sh \
+     | sudo bash -s -- --domain knights.ahmadsalahudin.tech --email you@example.com
+   ```
+
+3. Open `https://knights.ahmadsalahudin.tech/`. The certificate is issued as soon as the DNS record reaches the
+   server, so the first visit may take a minute after the record is created.
+
+Without a domain, run the same command with no options and play at `http://<server-ip>/`.
+
+| Later | Command (append to `curl -fsSL …/deploy/install.sh \| sudo bash -s --`) |
+|---|---|
+| Update to the latest game | `--update` |
+| Undo the last update | `--rollback` |
+| See what is deployed | `--status` |
+| Remove the site | `--uninstall` |
+
+Other options: `--server caddy|nginx`, `--port N` (no domain), `--ref <branch/tag/commit>`, `--dir <web root>`;
+see `--help`. Settings are saved in `/etc/knights-deploy.conf`, so a later run with no options repeats the same
+setup. If Apache already uses port 80, the script stops and explains the options instead of breaking the site.
+
 ## Develop
 
 The HTML is a build output, so don't edit it by hand. The source lives in `src/`:
