@@ -1,7 +1,7 @@
 /* main.js - bootstrap: renderer, scene, lights, module init, start button, pause overlay, render loop.
    Every module call is guarded (missing module => skipped, throwing module => logged, loop keeps running).
    Boot order:  Assets.load -> World.build -> FX.init -> Weapon.init -> Game.init -> HUD.init
-   Frame order (Main.step): Game.update, Enemies.update, Waves.update, Combat.update, FX.update, Weapon.update;
+   Frame order (Main.step): Game.update, Sfx.update, Enemies.update, Waves.update, Combat.update, FX.update, Weapon.update;
                 then renderer.render, Weapon.render (the viewmodel is drawn over the world).
    Exposes (for debug.js / QA): window.Main = { scene, camera, renderer, begin(), start(), step(dt), isStarted(),
    isPaused(), pause(), resume(), autoPause } and sets window.__bootReady = true once boot finished,
@@ -88,6 +88,8 @@
         window.__gameStarted = true;
         document.body.classList.add('playing');
         if (lockEl) lockEl.style.display = 'none';
+        call('Sfx', 'init');                                 // START is a user gesture: the AudioContext may start now
+        call('Sfx', 'ambient', true);                        // meadow wind and birds
         return true;
       }
       function startWaves() {
@@ -107,6 +109,7 @@
         if (!started || paused || window.Game.dead) return;
         const frozen = !!(window.__dbg && window.__dbg.frozen);   // ?debug=1: __dbg.freezeAI(true)
         call('Game', 'update', dt);
+        call('Sfx', 'update', dt, window.Game.camera);       // the 3D audio listener follows the camera
         if (!frozen) {
           call('Enemies', 'update', dt, window.Game.playerObj.position);
           call('Waves', 'update', dt);

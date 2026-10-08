@@ -85,6 +85,10 @@
 
   function sceneOf() { return (window.Game && Game.scene) || (window.Main && Main.scene) || null; }
   function playerPos() { return window.Game && Game.playerObj ? Game.playerObj.position : null; }
+  // Difficulty (waves.js): boss HP, damage to the player and attack reach. Read when used, so a missing module means Normal.
+  const diff = () => (window.Difficulty && Difficulty.get()) || { dmg: 1, boss: 1, reach: 1 };
+  const bossHp = () => Math.round(HP * diff().boss);
+  const dmgOf = (base) => Math.max(1, Math.round(base * diff().dmg));
 
   // ------------------------------------------------------------------------------------------------------------------------
   // Boss
@@ -93,10 +97,10 @@
     constructor(opts) {
       opts = opts || {};
       super(Object.assign({
-        type: 'boss', displayName: NAME, scale: SIZE, hp: HP, maxHp: HP, damage: DMG.sweep, knockbackScale: 0.1, gear: GEAR,
+        type: 'boss', displayName: NAME, scale: SIZE, hp: bossHp(), maxHp: bossHp(), damage: DMG.sweep, knockbackScale: 0.1, gear: GEAR,
       }, opts));
       // timings of the base attack (sweep); everything else is driven by the phase table
-      this.attackStart = 2.2 * this.sizeScale;     // starts a sweep from here (the sweep reaches 6.4 m)
+      this.attackStart = 2.2 * this.sizeScale * diff().reach;     // starts a sweep from here (the sweep reaches 6.4 m on Normal)
       this.stopDist = 1.55 * this.sizeScale;
       this.lungeSpeed = 1.2 * this.sizeScale;      // a small step into the swing
       this.turnRate = 3.2;
@@ -366,7 +370,7 @@
 
     startStrike() {
       this.setState('attack');
-      if (window.Sfx && Sfx.swing) { try { Sfx.swing(true); } catch (e) { /* ignore */ } }
+      if (window.Sfx && Sfx.swing) { try { Sfx.swing(true, this.mesh.position); } catch (e) { /* ignore */ } }
     }
 
     // damage frame of the sweep: the player inside the fan drawn on the ground
@@ -379,12 +383,12 @@
       this._shake(0.28);
       this._dustAt(p.x + Math.sin(this._yaw) * 2.6, p.z + Math.cos(this._yaw) * 2.6, 0.8);
       this._tele && (this._teleFlash = 1);
-      if (dist > SWEEP_R) return;
+      if (dist > SWEEP_R * diff().reach) return;
       const fx = Math.sin(this._yaw), fz = Math.cos(this._yaw);
       const cos = dist > 1e-4 ? (fx * dx + fz * dz) / dist : 1;
       if (cos < SWEEP_COS) return;
-      if (window.Sfx && Sfx.clang) { try { Sfx.clang(); } catch (e) { /* ignore */ } }
-      Player.hurt(Math.round(DMG.sweep * (1 + 0.1 * (this.phase - 1))), this);
+      if (window.Sfx && Sfx.clang) { try { Sfx.clang(this.mesh.position); } catch (e) { /* ignore */ } }
+      Player.hurt(dmgOf(DMG.sweep * (1 + 0.1 * (this.phase - 1))), this);
     }
 
     // -------------------------------------------------------------------------------------------------------------------
@@ -421,7 +425,7 @@
       }
       this._endT = P.leapEnd;
       this.setState('leapEnd');
-      this._slam(p.x, p.z, P.slam);
+      this._slam(p.x, p.z, P.slam * diff().reach);
     }
 
     // the ground slam: AoE damage + shockwave ring + dust ring + shake
@@ -435,10 +439,10 @@
       }
       if (window.FX && FX.sparks) { try { FX.sparks(new V3(x, 0.2, z), new V3(0, 1, 0), 26); } catch (e) { /* ignore */ } }
       if (window.Sfx) {
-        try { if (Sfx.footstep) Sfx.footstep('boss'); if (Sfx.clang) Sfx.clang(); if (Sfx.armorHit) Sfx.armorHit(); } catch (e) { /* ignore */ }
+        try { if (Sfx.footstep) Sfx.footstep('boss', this.mesh.position); if (Sfx.clang) Sfx.clang(this.mesh.position); if (Sfx.armorHit) Sfx.armorHit(this.mesh.position); } catch (e) { /* ignore */ }
       }
       if (!pp || !window.Player || !Player.hurt) return;
-      if (Math.hypot(pp.x - x, pp.z - z) <= R) Player.hurt(Math.round(DMG.slam * (1 + 0.1 * (this.phase - 1))), this);
+      if (Math.hypot(pp.x - x, pp.z - z) <= R) Player.hurt(dmgOf(DMG.slam * (1 + 0.1 * (this.phase - 1))), this);
     }
 
     // -------------------------------------------------------------------------------------------------------------------
@@ -481,8 +485,8 @@
       if (!this._cHit && pp && Math.hypot(pp.x - p.x, pp.z - p.z) < CHARGE_HIT_R) {
         this._cHit = true;
         if (window.Player && Player.hurt) {
-          if (window.Sfx && Sfx.clang) { try { Sfx.clang(); } catch (e) { /* ignore */ } }
-          Player.hurt(Math.round(DMG.charge * (1 + 0.1 * (this.phase - 1))), this);
+          if (window.Sfx && Sfx.clang) { try { Sfx.clang(this.mesh.position); } catch (e) { /* ignore */ } }
+          Player.hurt(dmgOf(DMG.charge * (1 + 0.1 * (this.phase - 1))), this);
         }
         end = true;
       }
@@ -493,7 +497,7 @@
         this._shake(0.7);
         this._dustAt(p.x + dir.x * 1.5, p.z + dir.z * 1.5, 1.2);
         this._dustAt(p.x + dir.x * 1.5 + 1, p.z + dir.z * 1.5, 1.0);
-        if (window.Sfx && Sfx.clang) { try { Sfx.clang(); } catch (e) { /* ignore */ } }
+        if (window.Sfx && Sfx.clang) { try { Sfx.clang(this.mesh.position); } catch (e) { /* ignore */ } }
       }
       if (end) {
         this._endT = P.chargeEnd + (this._cCrash ? 0.8 : 0);
@@ -520,7 +524,7 @@
         this._shake(0.55);
         this._wave = { t: 0, x: this.mesh.position.x, z: this.mesh.position.z, R: 11 };
         if (this._roarKind === 'phase') {
-          if (window.Sfx && Sfx.bossRoar) { try { Sfx.bossRoar(); } catch (e) { /* ignore */ } }
+          if (window.Sfx && Sfx.bossRoar) { try { Sfx.bossRoar(this.mesh.position); } catch (e) { /* ignore */ } }
           this._summon(2);
         }
       }
@@ -600,7 +604,7 @@
         case 'charge':
           this._cTravel = 0; this._cSpeed = 1.5; this._cHit = false; this._cCrash = false;
           this.gait = 'Run'; this._playBoth('Run', 0.2); this.currentClip = 'Run';
-          if (window.Sfx && Sfx.swing) { try { Sfx.swing(true); } catch (e) { /* ignore */ } }
+          if (window.Sfx && Sfx.swing) { try { Sfx.swing(true, this.mesh.position); } catch (e) { /* ignore */ } }
           break;
         case 'chargeEnd': this._playStateAnim('combatIdle', 0.35); break;
         default: break;
@@ -678,7 +682,7 @@
       if (step !== this._stepPhase) {
         this._stepPhase = step;
         if (ctx.dist > 40) return;
-        try { Sfx.footstep('boss'); } catch (e) { /* ignore */ }
+        try { Sfx.footstep('boss', this.mesh.position); } catch (e) { /* ignore */ }
         this._shake(s === 'charge' ? 0.16 : 0.07);
       }
     }
@@ -784,14 +788,14 @@
           if (FX.smoke) FX.smoke(c, new V3(0, 1, 0), 2.2);
         } catch (e) { /* ignore */ }
       }
-      if (window.Sfx && Sfx.bossRoar) { try { Sfx.bossRoar(); } catch (e) { /* ignore */ } }
+      if (window.Sfx && Sfx.bossRoar) { try { Sfx.bossRoar(this.mesh.position); } catch (e) { /* ignore */ } }
       const at = (t, fn) => this._deathEvents.push({ t: t, fn: fn, done: false });
-      at(0.9, () => { this._shake(0.35); if (window.Sfx && Sfx.footstep) { try { Sfx.footstep('boss'); } catch (e) { /* ignore */ } } });
+      at(0.9, () => { this._shake(0.35); if (window.Sfx && Sfx.footstep) { try { Sfx.footstep('boss', this.mesh.position); } catch (e) { /* ignore */ } } });
       at(DEATH_IMPACT, () => {
         this._shake(1.0);
         const q = this.mesh.position;
         const f = new V3(Math.sin(this._yaw), 0, Math.cos(this._yaw));
-        if (window.Sfx) { try { if (Sfx.footstep) Sfx.footstep('boss'); if (Sfx.clang) Sfx.clang(); } catch (e) { /* ignore */ } }
+        if (window.Sfx) { try { if (Sfx.footstep) Sfx.footstep('boss', this.mesh.position); if (Sfx.clang) Sfx.clang(this.mesh.position); } catch (e) { /* ignore */ } }
         for (let i = 0; i < 12; i++) { const a = i / 12 * TAU; this._dustAt(q.x + f.x * 2.2 + Math.cos(a) * 2.6, q.z + f.z * 2.2 + Math.sin(a) * 2.6, 1.4); }
         this._wave = { t: 0, x: q.x + f.x * 2.2, z: q.z + f.z * 2.2, R: 9 };
       });
@@ -912,7 +916,7 @@
         const P = this.P;
         if ((st === 'windup' || st === 'attack') && this.atk === 'sweep') {
           const u = st === 'windup' ? clamp(this.stateT / this.windupTime, 0, 1) : 1;
-          const R = SWEEP_R;
+          const R = SWEEP_R * diff().reach;
           M.fanBase.visible = true; M.fanBase.position.set(p.x, 0.05, p.z); M.fanBase.rotation.y = this._yaw; M.fanBase.scale.set(R, 1, R);
           M.fanBase.material.opacity = 0.28 + 0.08 * pulse;
           const f = st === 'windup' ? lerp(0.12, 1, smooth(u)) : 1;
@@ -925,7 +929,7 @@
             M[k].visible = true; M[k].position.set(p.x, 0.06, p.z); M[k].rotation.y = this._yaw + sg * half; M[k].scale.set(0.16, 1, R);
           }
         } else if (st === 'leapWind' || st === 'leap') {
-          const L = this._leap, R = P.slam;
+          const L = this._leap, R = P.slam * diff().reach;
           const u = st === 'leapWind' ? clamp(this.stateT / P.leapWind, 0, 1) : 1;
           M.discBase.visible = true; M.discBase.position.set(L.tx, 0.05, L.tz); M.discBase.scale.set(R, 1, R);
           M.discBase.material.opacity = 0.26 + 0.08 * pulse;

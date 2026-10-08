@@ -57,3 +57,9 @@ A scenario may also be a bare `async (page, h) => {}`. Options: `start:false` (t
 - `h.fire()` dispatches a synthetic `mousedown` on the canvas (a real Playwright click while
   pointer-locked spins the camera), then falls back to `__dbg.fire` / `Game.tryFire`.
 - Console errors, page errors, failed or 4xx/5xx local requests are collected in `session.errors`.
+
+## Audio check (`audio-check.mjs`, `npm run audio`)
+Headless runs cannot be listened to, so every `Sfx` sound is rendered into an `OfflineAudioContext` (through `Sfx._useContext`) and measured:
+not silent, peak below 1.0, a 60-sound pile-up that does not clip, distance falloff, HRTF left/right placement, mute, volume + `localStorage`,
+and that nothing throws when `AudioContext` does not exist. Prints a PASS/FAIL table and exits 1 on any failure. It proves the sounds are
+present and bounded, not that they sound good.

@@ -268,9 +268,9 @@
       if (FX.sparks) guard(function () { FX.sparks(pt, toShooter, zone === 'head' ? 11 : 8); }, 'sparks');
       if (FX.blood) guard(function () { FX.blood(pt, d, BLOOD_HIT[zone]); }, 'blood');
     }
-    if (window.Sfx) {
-      if (Sfx.armorHit) guard(function () { Sfx.armorHit(); }, 'sfx');
-      if (zone === 'head' && Sfx.fleshHit) guard(function () { Sfx.fleshHit(); }, 'sfx');
+    if (window.Sfx) {      // head shot = a sharp ping, anything else = an armour clank, both played where the bullet landed
+      if (zone === 'head' && Sfx.headshot) guard(function () { Sfx.headshot(pt); }, 'sfx');
+      else if (Sfx.armorHit) guard(function () { Sfx.armorHit(pt); }, 'sfx');
     }
     push(enemy, d.x, d.z, KNOCK[zone]);
     return zone === 'head' ? 'head' : 'hit';
@@ -293,9 +293,9 @@
       if (FX.sparks) guard(function () { FX.sparks(pt, new V3().copy(d).negate(), zone === 'head' ? 12 : 9); }, 'sparks');
       if (FX.blood) guard(function () { FX.blood(pt, d, BLOOD_KILL[zone]); }, 'blood');
     }
-    if (window.Sfx) {
-      if (Sfx.armorHit) guard(function () { Sfx.armorHit(); }, 'sfx');
-      if (Sfx.death) guard(function () { Sfx.death(); }, 'sfx');
+    if (window.Sfx) {      // the killing blow: the ping for a head shot, then the heavy crunch and the fall of body and armour
+      if (zone === 'head' && Sfx.headshot) guard(function () { Sfx.headshot(pt); }, 'sfx');
+      if (Sfx.kill) guard(function () { Sfx.kill(pt); }, 'sfx');
     }
     push(enemy, d.x, d.z, KNOCK_KILL[zone]);
 
@@ -528,7 +528,7 @@
     if (impact > 1.6 && b.clangCd <= 0) {
       b.clangCd = 0.16;
       guard(function () {
-        if (window.Sfx && Sfx.clang && (b.kind !== 'helmet' || impact > 2.2)) Sfx.clang();
+        if (window.Sfx && Sfx.clang && (b.kind !== 'helmet' || impact > 2.2)) Sfx.clang(b.p);
         if (impact > 3.2 && window.FX && FX.dust) FX.dust(new V3(b.p.x, 0.02, b.p.z), UP, 0.35);
       }, 'impact fx');
     }

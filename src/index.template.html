@@ -21,6 +21,15 @@
   #lock .hint{margin:14px 0 18px;font-size:13px;opacity:.7}
   #startBtn{flex:none;margin-top:18px;padding:12px 34px;font-size:20px;background:#2e5d2e;color:#fff;border:1px solid #7fae7f;border-radius:8px;cursor:pointer}
   #startBtn:hover{background:#3e7d3e}
+  #lock .opts{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:16px;color:#d6e8d6;font-size:13px;letter-spacing:.14em}
+  #lock .opts .row{display:flex;align-items:center;gap:10px}
+  #lock .opts .lbl{min-width:6.5em;text-align:right;color:#f3ead0}
+  .diffBtn{padding:7px 16px;font-size:14px;letter-spacing:.08em;background:rgba(0,0,0,.35);color:#d6e8d6;border:1px solid rgba(127,174,127,.45);border-radius:6px;cursor:pointer}
+  .diffBtn:hover{background:rgba(62,125,62,.45)}
+  .diffBtn.on{background:#2e5d2e;color:#fff;border-color:#9fd09f;box-shadow:0 0 0 1px #9fd09f}
+  .diffBtn[data-diff=hard].on{background:#6a2a1c;border-color:#e08a6a;box-shadow:0 0 0 1px #e08a6a}
+  #volSlider{width:170px;accent-color:#7fae7f;cursor:pointer}
+  #volVal{min-width:3.4em;text-align:left;font-variant-numeric:tabular-nums}
   @media (max-height:480px),(max-width:620px){
     #lock h1{font-size:28px;margin:.1em}
     #lock .goal{margin-top:4px;font-size:13px;line-height:1.3}
@@ -28,6 +37,9 @@
     #lock .controls div{gap:6px}
     #lock .controls b{flex:none;width:auto;text-align:left}
     #startBtn{margin-top:10px;padding:8px 26px;font-size:17px}
+    #lock .opts{margin-top:8px;gap:5px;font-size:11px}
+    .diffBtn{padding:4px 12px;font-size:12px}
+    #volSlider{width:130px}
     #lock .hint{margin:8px 0 10px;font-size:11px}
   }
   #lock > :first-child{margin-top:auto}   /* centred when it fits, scrollable (not clipped) when the window is small */
@@ -49,6 +61,10 @@
   #topBar{position:absolute;top:12px;left:50%;transform:translateX(-50%);text-align:center;text-shadow:var(--ui-shadow)}
   #waveInfo{font-size:22px;font-weight:700;letter-spacing:.18em}
   #waveInfo.final{color:var(--red)}
+  #waveInfo .diff{margin-left:.6em;font-size:12px;letter-spacing:.2em;opacity:.9;vertical-align:middle;color:#cfe3c4}
+  #waveInfo .diff.easy{color:#9fe0a0}
+  #waveInfo .diff.hard{color:#ff9a6a}
+  #muteHint{position:absolute;left:24px;top:14px;font-size:12px;font-weight:700;letter-spacing:.22em;color:#ffd24a;text-shadow:var(--ui-shadow)}
   #enemiesLeft{margin-top:2px;font-size:13px;letter-spacing:.14em;color:#d8e6d0;opacity:.9}
 
   /* top right: kills */
@@ -152,7 +168,18 @@
     <div><b>Mouse</b><span>Aim</span></div>
     <div><b>Left click</b><span>Fire</span></div>
     <div><b>R</b><span>Reload</span></div>
+    <div><b>M</b><span>Mute / unmute</span></div>
     <div><b>Esc</b><span>Release the mouse (pauses the game)</span></div>
+  </div>
+  <div class="opts">
+    <div class="row" role="group" aria-label="Difficulty"><span class="lbl">DIFFICULTY</span>
+      <button class="diffBtn" data-diff="easy" aria-pressed="false">Easy</button>
+      <button class="diffBtn on" data-diff="normal" aria-pressed="true">Normal</button>
+      <button class="diffBtn" data-diff="hard" aria-pressed="false">Hard</button>
+    </div>
+    <div class="row"><label class="lbl" for="volSlider">VOLUME</label>
+      <input id="volSlider" type="range" min="0" max="100" step="1" value="80"><span id="volVal">80%</span>
+    </div>
   </div>
   <button id="startBtn">START</button>
   <p class="hint">Click START to capture the mouse.</p>
@@ -168,6 +195,7 @@
     <div id="waveInfo">WAVE 1</div>
     <div id="enemiesLeft"></div>
   </div>
+  <div id="muteHint" class="hidden">MUTED &middot; M TO UNMUTE</div>
   <div id="killBox"><span class="lbl">KILLS</span><span id="killCount">0</span></div>
 
   <div id="bossBar" class="hidden">
