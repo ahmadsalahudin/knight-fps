@@ -101,6 +101,20 @@ a knight dies within about 2.5 m, the boss takes 35 %, knights are thrown back a
 multiplier, plus a shove) inside 4.5 m, so throw it at something that is not standing on you. Kills by grenade keep the streak going.
 Debug: `__dbg.grenade.give(n) / .throw() / .state() / .tick(sec)`.
 
+### Revolver hands and reload
+
+The first-person hands are rigged, skinned models (the MIT WebXR generic hands), re-skinned with a generated pale skin texture. Their 25 joints
+are a flat list, so `weapon.js` poses them with its own small forward-kinematics solver (`_poseHand`): the right hand is a firm grip, high on
+the grip with the web of the hand on the backstrap, the index finger through the guard onto the trigger, the other three wrapped round the
+grip and the thumb along the left of the frame. A wrist bend lets the forearm leave down and to the right, and a lofted forearm starts on the
+model's own wrist edge and runs into a leather band and the sleeve.
+
+The reload follows how it is done (and how shooters like Hunt: Showdown or Half-Life 2 show it): the gun rolls left and the left hand comes up
+under the frame, the cylinder swings out into the palm, the thumb strokes the ejector rod with the muzzle up and six empties drop, the hand
+dips out of view and comes back with a speedloader, lines it up behind the chambers, pushes it in and twists it to release the rounds, pulls
+the empty loader away, then the palm swings the cylinder shut and the hand leaves. If the hand models were missing, the old procedural hands
+and reload are used. Tuning: `__dbg.weapon.grip({ at, roll, wrist, scale, pose })` (with `?debug=1`) re-poses the right hand live.
+
 ### Sound
 
 All audio is synthesized with WebAudio at run time, with no audio files. One master gain (with a compressor and a soft clip, so many overlapping sounds never clip)
@@ -125,7 +139,7 @@ src/js/world.js           ground, trees, rocks, circular boulder wall, colliders
 src/js/sfx.js             WebAudio synthesized sounds: master chain, reverb, 3D positional audio, ambience, mute / volume
 src/js/hud.js             ammo, HP, wave and boss bars, banners, hitmarkers, damage arcs
 src/js/fx.js              pooled particles, tracers, decals, blood pools, camera shake
-src/js/weapon.js          revolver viewmodel and hand (separate scene and camera), recoil, flash, reload
+src/js/weapon.js          revolver viewmodel, rigged pale hands (grip pose + FK), recoil, flash, speedloader reload (separate scene and camera)
 src/js/combat.js          hit zones, damage, knockback, helmet pop, dropped gear physics
 src/js/enemies.js         animated Knight class (mixer, state machine, bone-attached gear, dagger throw, shield rush) + Enemies (incl. thrown daggers)
 src/js/boss.js            Boss extends Knight
@@ -169,3 +183,5 @@ the current game does not use them.
 ## Credits
 
 The 3D models (knight, gear, revolver, trees, rocks, grass) are from Quaternius CC0 asset packs.
+The first-person hands (`assets/hand_right.glb`, `assets/hand_left.glb`) are the WebXR "generic hand" models from
+[`@webxr-input-profiles/assets`](https://github.com/immersive-web/webxr-input-profiles), MIT licensed (Copyright (c) 2019 Amazon, see `assets/HANDS_LICENSE.md`).

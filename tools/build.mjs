@@ -30,7 +30,7 @@ const CDN_SCRIPTS = [
 // Only assets the game actually uses are embedded (Frog / pistol are not).
 const USED_ASSETS = [
   'knight', 'knight_helmet1', 'knight_shield', 'knight_boss_shield', 'knight_sword',
-  'revolver', 'birch_tree', 'grass', 'grass_2', 'rock',
+  'revolver', 'hand_right', 'hand_left', 'birch_tree', 'grass', 'grass_2', 'rock',
 ];
 
 // Script order matters (docs/FIX_PLAN.md section 2).
