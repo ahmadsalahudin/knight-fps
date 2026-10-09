@@ -17,6 +17,7 @@
      shoot, dryFire, reload, cock, swing(heavy?), clang, armorHit, headshot, fleshHit, hurt, kill (= death), bossRoar,
      footstep(kind?), waveStart, victory
      daggers: throwWhoosh(pos), whirr(pos, maxSeconds) -> {move(pos), stop()} | null, dagger('ground'|'clang'|'hit', pos)
+     kick: kickWhoosh() (the player's foot through empty air, not positional), kickThud(pos) (a boot into plate armour)
    Ambience: ambient(on) (meadow wind + occasional birds; main.js starts it on START), duck(on) (quieter during the boss fight), bird(pos?)
    Controls: init() (call from a gesture), volume(v 0..1, remembered in localStorage 'kf_volume'), mute(on?) (M key; shows #muteHint),
      isMuted(). The title screen slider #volSlider is wired here.
@@ -254,7 +255,7 @@
 
   // ---------------------------------------------------------------- master, ambience, controls
   const POSITIONAL = ['shoot', 'swing', 'clang', 'armorHit', 'headshot', 'fleshHit', 'kill', 'death', 'bossRoar', 'footstep',
-    'throwWhoosh', 'dagger', 'bird', 'rushCry', 'grenadeBounce', 'grenadeBeep', 'explosion'];
+    'throwWhoosh', 'dagger', 'bird', 'rushCry', 'grenadeBounce', 'grenadeBeep', 'explosion', 'kickThud'];
 
   function applyMaster() {
     if (!S.out) return;
@@ -706,6 +707,28 @@
         });
         N({ t: t + 0.3, dur: 0.12, gain: 0.08, type: 'highpass', f0: 5000, f1: 5000, attack: 0.002 });
       });
+    },
+
+    // the player's kick missing: a low, quick "fwoop" of a leg swung through the air with a little cloth snap (your own body: not positional)
+    kickWhoosh: function () {
+      play(1.3, function (t) {
+        if (!gate('kickWhoosh', 0.1)) return;
+        N({ t, dur: 0.26, gain: 0.5, type: 'bandpass', f0: 220, f1: 1300, q: 0.9, attack: 0.1 });
+        N({ t: t + 0.1, dur: 0.18, gain: 0.2, type: 'bandpass', f0: 1500, f1: 420, q: 1.4, attack: 0.02 });
+        T({ t, dur: 0.22, type: 'sine', f0: 135, f1: 70, gain: 0.18, attack: 0.08 });
+      });
+    },
+
+    // the kick landing: a heavy boot into plate armour. A deep thump, a short dull crack of leather on steel and the plate rattling
+    kickThud: function (pos) {
+      play(1.35, function (t) {
+        if (!gate('kickThud', 0.06)) return;
+        T({ t, dur: 0.36, type: 'sine', f0: 120, f1: 34, gain: 1.2, attack: 0.002 });
+        T({ t: t + 0.012, dur: 0.2, type: 'triangle', f0: 210, f1: 72, gain: 0.35, attack: 0.002 });
+        N({ t, dur: 0.15, gain: 0.8, type: 'lowpass', f0: 1500, f1: 160, attack: 0.002 });
+        N({ t, dur: 0.03, gain: 0.5, type: 'bandpass', f0: 2400, f1: 1200, q: 1, attack: 0.0005 });
+        metal(t + 0.015, rnd(280, 430), 0.2, 0.32, 0.25);
+      }, pos, 4);
     },
 
     // a knight about to charge: a short hoarse war cry (two detuned saws through a moving formant) with a rattle of plate

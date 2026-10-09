@@ -3,7 +3,7 @@
    Earning:  kills in a row (each within STREAK_WINDOW seconds of the last) fill the streak; at Difficulty.streak (Easy 4, Normal 5, Hard 6)
              you are given Difficulty.nades grenades (1 on every level; at most MAX_CARRY carried). A run starts with START_NADES = 1 and the streak starts again.
              Kills by grenade count too, so a good throw chains into the next reward.
-   Using:    G (desktop) or the GRENADE button (touch) lobs one in an arc from the camera. It bounces off the ground, trees and rocks,
+   Using:    G or the right mouse button (desktop; game.js turns the right button into throwIt) or the GRENADE button (touch) lobs one in an arc from the camera. It bounces off the ground, trees and rocks,
              detonates the moment it touches a knight, or when its 2 s fuse runs out (the LED on it blinks faster and faster).
    Blast:    RADIUS m, linear falloff from MAX_DAMAGE at the centre (a knight dies inside ~2.5 m, a boss takes 35 %), knights are thrown
              back, thrown daggers in the blast are destroyed. YOU are hurt too, up to SELF_DAMAGE x difficulty damage inside SELF_R m, and
@@ -84,7 +84,7 @@
         const n = diff().nades;
         const before = this.count;
         this.give(n);
-        if (window.HUD && HUD.banner) { try { HUD.banner('Bonus weapon', 'Grenades +' + (this.count - before) + ' - ' + (window.TouchInput && TouchInput.active ? 'tap GRENADE' : 'press G'), 2600, { kind: 'clear' }); } catch (e) { /* ignore */ } }
+        if (window.HUD && HUD.banner) { try { HUD.banner('Bonus weapon', 'Grenades +' + (this.count - before) + ' - ' + (window.TouchInput && TouchInput.active ? 'tap GRENADE' : 'press G or right-click'), 2600, { kind: 'clear' }); } catch (e) { /* ignore */ } }
         if (window.Sfx && Sfx.bonus) { try { Sfx.bonus(); } catch (e) { /* ignore */ } }
       }
       this._hud();

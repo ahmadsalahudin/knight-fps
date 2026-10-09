@@ -10,14 +10,25 @@
        always: FX.tracer(muzzle, point), FX.shake, Sfx.shoot, camera kick
    Every cross-module call is guarded, so any module can be missing.
    Kills: Waves owns the kill counter when Waves.onEnemyKilled exists; otherwise Game counts them itself.
-   Controls: WASD / arrow keys move, Shift sprints, mouse aims (pointer lock), left button fires, R reloads.
-   Touch (touch.js): window.TouchInput feeds an analog move vector (input.analog / ax / ay) and a sprint flag through getInput. */
+   Controls: WASD / arrow keys move, Shift sprints, mouse aims (pointer lock), left button fires, right button throws a grenade (like G,
+   grenade.js; the browser context menu is suppressed on the canvas), R reloads, F / V kick.
+   Touch (touch.js): window.TouchInput feeds an analog move vector (input.analog / ax / ay) and a sprint flag through getInput; the KICK button calls Game.tryKick.
+
+   Kick (melee): tryKick() starts it (0.9 s cooldown, not while reloading or dead), asks Weapon.kick() for the viewmodel animation
+   ({ impactAt, duration } in seconds, or null = the weapon declines; without Weapon.kick it uses KICK_IMPACT / KICK_DURATION) and, impactAt
+   later, _kickImpact() hits up to 3 living enemies, nearest first, that are within KICK_REACH m (horizontal) and +-38 degrees of the
+   camera's horizontal forward: knights take 30 damage (torso, chest height, dir = forward) through enemy.takeHit, then Combat.onHit /
+   onKill for sparks, sound and knockback, a further 7 m/s shove along forward and an interruption into 'stagger' (also mid windup / attack;
+   not a charging or stumbling rusher); the boss takes 15 and is neither shoved nor staggered (its reach adds KICK_BIG m per metre of extra
+   size, as it never stands closer than ~4 m). Kills go through _onKill like bullet kills (Waves dedupes, the grenade streak follows).
+   Sfx.kickWhoosh on a miss, Sfx.kickThud on a hit. Debug (?debug=1): __dbg.kick(instant?). */
 window.getInput = function () {
   const input = { forward: false, backward: false, left: false, right: false, sprint: false, analog: false, ax: 0, ay: 0 };
   const keys = {};
   document.addEventListener('keydown', function (e) {
     keys[e.code] = true;
     if (e.code === 'KeyR') { if (window.Game && Game.tryReload) Game.tryReload(); }
+    else if ((e.code === 'KeyF' || e.code === 'KeyV') && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) { if (window.Game && Game.tryKick) Game.tryKick(); }
   });
   document.addEventListener('keyup', function (e) { keys[e.code] = false; });
   // A key released while the window was in the background (alt-tab, Esc pause + alt-tab) never delivers its keyup: without
@@ -48,6 +59,12 @@ window.getInput = function () {
   const RELOAD_MS = 1600;
   const FIRE_GATE_MS = 350;
   const FALLBACK_DAMAGE = 34;     // used only when Combat.damageFor is absent
+  const KICK_COOLDOWN = 0.9;                       // s from one kick to the next
+  const KICK_IMPACT = 0.17, KICK_DURATION = 0.5;   // s: used when Weapon.kick does not exist (impact after the press, whole animation)
+  const KICK_REACH = 2.3, KICK_BIG = 0.9;          // m from the player (horizontal); + KICK_BIG per metre a body is bigger than a knight (the boss)
+  const KICK_COS = Math.cos(38 * Math.PI / 180);   // within +-38 degrees of the camera's horizontal forward
+  const KICK_MAX = 3;                              // targets per kick, nearest first
+  const KICK_DAMAGE = 30, KICK_DAMAGE_BOSS = 15, KICK_PUSH = 7;
   const X_AXIS = new THREE.Vector3(1, 0, 0);
   const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
@@ -55,6 +72,7 @@ window.getInput = function () {
   const _dir = new THREE.Vector3();
   const _tmp = new THREE.Vector3();
   const _q = new THREE.Quaternion();
+  const _kE = [null, null, null], _kD = [0, 0, 0];  // the kick's chosen targets and their distances (scratch, sorted by distance)
 
   function isDead(e) {
     return !!e && (e.dead === true || (typeof e.hp === 'number' && e.hp <= 0));
@@ -127,20 +145,30 @@ window.getInput = function () {
       this.ammo = MAX_AMMO;
       this.reloadTimer = 0;
       this._kills = 0;
-      this._kick = { p: 0, pv: 0, y: 0, yv: 0 };          // camera kick spring state
+      this._kick = { p: 0, pv: 0, y: 0, yv: 0 };          // camera recoil spring state
       this._kickApplied = { p: 0, y: 0 };                  // portion of the kick currently baked into the camera
       this._shakeApplied = new THREE.Vector3();            // shake offset currently added to the camera position
       this._stride = 0;
       this._raycaster = new THREE.Raycaster();
       document.addEventListener('mousedown', function (e) {
-        if (document.pointerLockElement && e.button === 0) self.tryFire();
+        if (!document.pointerLockElement) return;
+        if (e.button === 0) self.tryFire();
+        else if (e.button === 2 && window.Grenade && Grenade.throwIt) Grenade.throwIt();      // right button = G
       });
+      renderer.domElement.addEventListener('contextmenu', function (e) { e.preventDefault(); });   // the right button is a game control
+
+      // melee kick (see the header): cooldown, time left until the foot lands (-1 = no kick under way)
+      this.kicks = 0;
+      this._kickCool = 0;
+      this._kickWait = -1;
+      this._kickBtn = document.getElementById('tKick');   // touch button: dimmed during the cooldown
 
       this.getInput = window.getInput();
 
       // HUD init
       if (window.HUD && HUD.updateAmmo) HUD.updateAmmo(this.ammo, MAX_AMMO, false);
       if (window.HUD && HUD.updateHP) HUD.updateHP(this.playerHP);
+      this._installDebug();
     },
 
     // an outside push on the player (m/s, decays in a fraction of a second): the shield rush shoves you back with it
@@ -158,6 +186,128 @@ window.getInput = function () {
       if (window.Sfx && Sfx.reload) Sfx.reload();
       if (window.Weapon && Weapon.reload) Weapon.reload(RELOAD_MS);
       if (window.HUD && HUD.updateAmmo) HUD.updateAmmo(this.ammo, MAX_AMMO, true);
+    },
+
+    // ---- melee kick -----------------------------------------------------------------------------------------------------
+    // F / V / the KICK button. Starts the kick; _kickImpact() lands it Weapon.kick()'s impactAt seconds later. force (debug) skips the
+    // cooldown / reload / not-started checks.
+    tryKick: function (force) {
+      if (this.dead || this._kickWait >= 0) return false;
+      if (!force) {
+        if (this._kickCool > 0 || this.reloadTimer > 0) return false;
+        const M = window.Main;
+        if (M && ((M.isStarted && !M.isStarted()) || (M.isPaused && M.isPaused()))) return false;
+      }
+      let impactAt = KICK_IMPACT, duration = KICK_DURATION;
+      if (window.Weapon && typeof Weapon.kick === 'function') {
+        let r;
+        try { r = Weapon.kick(); } catch (e) { console.error('[Game] Weapon.kick', e); r = undefined; }     // a throwing viewmodel must not cancel the kick
+        if (r === null) return false;                                                                    // the weapon declines (busy)
+        if (r && isFinite(r.impactAt) && r.impactAt >= 0) impactAt = r.impactAt;
+        if (r && isFinite(r.duration) && r.duration > 0) duration = r.duration;
+      }
+      this._kickWait = impactAt;
+      this._kickCool = KICK_COOLDOWN;
+      this._kickInfo = { impactAt: impactAt, duration: duration };
+      this.kicks++;
+      if (this._kickBtn) this._kickBtn.classList.add('cool');
+      return true;
+    },
+
+    // The foot lands: the camera's horizontal forward (fx, fz) decides who is in front. Returns a plain summary under ?debug=1, else null.
+    _kickImpact: function () {
+      const list = window.Enemies && Enemies.list, pp = this.playerObj.position;
+      this.camera.updateMatrixWorld(true);
+      this.camera.getWorldDirection(_dir);
+      let fx = _dir.x, fz = _dir.z, fl = Math.hypot(fx, fz);
+      if (fl < 0.05) {                    // looking (almost) straight up or down: the camera's up vector points the way the body faces
+        _tmp.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
+        const s = _dir.y < 0 ? 1 : -1;
+        fx = _tmp.x * s; fz = _tmp.z * s; fl = Math.hypot(fx, fz);
+      }
+      if (fl < 1e-4) { fx = 0; fz = -1; fl = 1; }
+      fx /= fl; fz /= fl;
+
+      // the (at most KICK_MAX) nearest living enemies in reach and inside the cone
+      let n = 0;
+      for (let i = 0; list && i < list.length; i++) {
+        const e = list[i];
+        if (!e || !e.mesh || e._removed || isDead(e)) continue;
+        const p = e.mesh.position, S = e.sizeScale || 1;
+        const dx = p.x - pp.x, dz = p.z - pp.z, d = Math.hypot(dx, dz);
+        if (d > KICK_REACH + KICK_BIG * (S - 1)) continue;
+        if (d > 0.4 && (dx * fx + dz * fz) / d < KICK_COS) continue;           // (right on top of you counts as in front)
+        let j = n < KICK_MAX ? n : KICK_MAX - 1;
+        if (n >= KICK_MAX && d >= _kD[j]) continue;
+        while (j > 0 && _kD[j - 1] > d) { _kE[j] = _kE[j - 1]; _kD[j] = _kD[j - 1]; j--; }
+        _kE[j] = e; _kD[j] = d;
+        if (n < KICK_MAX) n++;
+      }
+
+      const dir = new THREE.Vector3(fx, 0, fz);
+      let killed = 0, firstPoint = null;
+      const info = window.__dbg ? { hits: [], kills: 0, forward: [fx, fz] } : null;
+      for (let i = 0; i < n; i++) {
+        const e = _kE[i]; _kE[i] = null;
+        const point = this._kickEnemy(e, fx, fz, dir, info);
+        if (!firstPoint) firstPoint = point;
+        if (isDead(e)) killed++;
+      }
+
+      if (n) {
+        if (window.HUD && HUD.hitmark) HUD.hitmark(killed ? 'kill' : 'hit');
+        if (window.Sfx && Sfx.kickThud) { try { Sfx.kickThud(firstPoint); } catch (e) { /* ignore */ } }
+        if (window.FX && FX.shake) FX.shake(0.2);
+        this._kick.pv -= 0.8;                                                  // the view dips into the blow
+      } else {
+        if (window.Sfx && Sfx.kickWhoosh) { try { Sfx.kickWhoosh(); } catch (e) { /* ignore */ } }
+        this._kick.pv -= 0.3;
+      }
+      if (info) { info.hit = n; info.kills = killed; this.lastKick = info; }
+      return info;
+    },
+
+    // One enemy takes the kick; returns the point it was hit at.
+    _kickEnemy: function (e, fx, fz, dir, info) {
+      const p = e.mesh.position, S = e.sizeScale || 1, boss = e.type === 'boss';
+      // chest height (the boss: its leg), on the side facing the player
+      const point = new THREE.Vector3(p.x - fx * 0.3 * S, boss ? 1.2 : 1.1 * S, p.z - fz * 0.3 * S);
+      const hitData = { damage: boss ? KICK_DAMAGE_BOSS : KICK_DAMAGE, zone: 'torso', point: point, dir: dir.clone(), kick: true };
+      const hp0 = e.hp, wasDead = isDead(e);
+      try {
+        if (typeof e.takeHit === 'function') e.takeHit(hitData);
+      } catch (err) { console.error('[Game] kick hit failed', err); }
+      const killed = !wasDead && isDead(e);
+
+      if (window.Combat) {                                     // sparks, armour sound, knockback / the death reaction
+        try {
+          if (killed) { if (!e._killFx && Combat.onKill) Combat.onKill(e, hitData, dir); }
+          else if (Combat.onHit) Combat.onHit(e, hitData, dir);
+        } catch (err) { console.error('[Game] Combat reaction (kick)', err); }
+      }
+      if (!boss) {
+        if (typeof e.applyImpulse === 'function') { try { e.applyImpulse(new THREE.Vector3(fx * KICK_PUSH, 0, fz * KICK_PUSH)); } catch (err) { /* ignore */ } }
+        const st = e.state;      // knocked off balance, whatever it was doing, except a charge in full flight (and its stumble, which is its own opening)
+        if (!killed && typeof e.setState === 'function' && st !== 'rush' && st !== 'stumble') {
+          if (st !== 'stagger') e.setState('stagger'); else e.stateT = 0;
+        }
+      }
+      if (killed) this._onKill(e);
+      if (info) info.hits.push({ type: e.type || null, dmg: hitData.damage, hp0: hp0, hp: e.hp, killed: killed, state: e.state, dist: Math.round(Math.hypot(p.x - this.playerObj.position.x, p.z - this.playerObj.position.z) * 100) / 100 });
+      return point;
+    },
+
+    _installDebug: function () {
+      if (!window.__dbg) return;
+      const G = this;
+      // __dbg.kick(): press the kick (forced: no cooldown / reload / title screen checks); the foot lands impactAt seconds of game time later.
+      // __dbg.kick(true): land it at once and return { hit, kills, hits: [{ type, dmg, hp0, hp, killed, state, dist }] } (also Game.lastKick).
+      window.__dbg.kick = function (instant) {
+        if (!G.tryKick(true)) return { ok: false };
+        if (!instant) return { ok: true, impactAt: G._kickInfo.impactAt, duration: G._kickInfo.duration };
+        G._kickWait = -1;
+        return Object.assign({ ok: true }, G._kickImpact());
+      };
     },
 
     // Resolve the enemy object (Knight / Boss) from a mesh that was hit.
@@ -316,6 +466,7 @@ window.getInput = function () {
       if (this.playerHP <= 0) {
         this.dead = true;
         this.reloadTimer = 0; this.reloading = false;
+        this._kickWait = -1;                                   // a kick under way never lands
         this._removeShake();
         try { document.exitPointerLock(); } catch (e) { /* ignore */ }
         let best = 0;
@@ -422,6 +573,14 @@ window.getInput = function () {
         }
       }
       this.reloading = this.reloadTimer > 0;
+      if (this._kickCool > 0) {
+        this._kickCool -= dt;
+        if (this._kickCool <= 0 && this._kickBtn) this._kickBtn.classList.remove('cool');
+      }
+      if (this._kickWait >= 0) {
+        this._kickWait -= dt;
+        if (this._kickWait < 0) { this._kickWait = -1; if (!this.dead) this._kickImpact(); }
+      }
       this._applyKick(dt);
       this._leashEnemies();                                    // keeps strays inside the wall (see above); runs even without focus
 
