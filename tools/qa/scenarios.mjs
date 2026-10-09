@@ -3221,3 +3221,58 @@ Object.assign(scenarios, {
     },
   },
 });
+
+// ---- wave G, worker "player": the melee kick (F / V / KICK) and the right-click grenade. Appended with its own Object.assign.
+Object.assign(scenarios, {
+  'kick-knight': {
+    desc: 'Player: a knight 1.8 m ahead raises its sword (windup) and the player kicks (game clock paused, 20 ms frames): sword raised, the foot in flight, 60 ms after the landing (hit marker, sparks), and 450 ms after (knocked back ~1 m, staggered). Result: hp 100 -> 70, state stagger, the swing never lands.',
+    god: false,
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.freezeAI(false);
+      await h.pause();
+      const k = await h.spawn('knight', 1.8, 0);
+      await h.aimAt(k, 1.2);
+      await page.evaluate((i) => Enemies.list[i].startWindup(), k.i);
+      await h.advance(280, 20);
+      const snap = () => page.evaluate((i) => { const e = Enemies.list[i], p = Game.playerObj.position; return { state: e.state, hp: e.hp, dist: +Math.hypot(e.mesh.position.x - p.x, e.mesh.position.z - p.z).toFixed(2), playerHP: Game.playerHP }; }, k.i);
+      const before = await snap();
+      await h.shot('windup');
+      const kick = await page.evaluate(() => __dbg.kick());
+      await h.advance(Math.max(0, Math.round(kick.impactAt * 1000) - 40), 20);
+      await h.shot('foot');
+      await h.advance(100, 20);
+      const hit = await snap();
+      await h.shot('hit');
+      await h.advance(400, 20);
+      await h.shot('knocked-back');
+      const after = await snap();
+      await h.advance(700, 20);
+      return { kick, before, hit, after, later: await snap(), kicks: await page.evaluate(() => Game.kicks) };
+    },
+  },
+
+  'kick-touch': {
+    desc: 'Player: touch mode (?touch=1, 844x390): the KICK button sits above SPRINT beside RELOAD / FIRE without touching the HUD; a knight 1.8 m ahead is kicked with a tap on it and the button dims during the 0.9 s cooldown.',
+    viewport: { width: 844, height: 390 },
+    query: 'debug=1&touch=1',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.freezeAI(false);
+      await h.pause();
+      const k = await h.spawn('knight', 1.8, 0);
+      await h.aimAt(k, 1.2);
+      await h.advance(200, 20);
+      await h.shot('idle');
+      await page.evaluate(() => { const b = document.getElementById('tKick'); b.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 7, bubbles: true, cancelable: true, pointerType: 'touch' })); });
+      await h.advance(240, 20);
+      await page.evaluate(() => document.getElementById('tKick').dispatchEvent(new PointerEvent('pointerup', { pointerId: 7, bubbles: true, cancelable: true, pointerType: 'touch' })));
+      await h.shot('pressed');
+      return page.evaluate((i) => ({ kicks: Game.kicks, hp: Enemies.list[i].hp, state: Enemies.list[i].state, cool: Game._kickCool, dimmed: document.getElementById('tKick').classList.contains('cool'),
+        rect: JSON.stringify(document.getElementById('tKick').getBoundingClientRect()) }), k.i);
+    },
+  },
+});

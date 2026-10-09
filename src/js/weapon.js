@@ -158,6 +158,155 @@
   }
 
   // ---------------------------------------------------------------------------------------------------------
+  // the kick (Weapon.kick): the player's right leg. Generated leather and wool, lofted / revolved surfaces.
+  // ---------------------------------------------------------------------------------------------------------
+  const KICK_IMPACT = 0.16, KICK_DUR = 0.6;    // seconds: the sole lands at KICK_IMPACT, the leg is gone again at KICK_DUR
+  const UPV = new V3(0, 1, 0);
+
+  function seededRnd(seed) { let s = (seed | 0) || 1; return () => (s = (s * 16807) % 2147483647) / 2147483647; }
+
+  // tileable value noise (0..1) on a w x h grid with `cells` lattice cells across
+  function tileNoise(w, h, cells, rnd) {
+    const n = cells, lat = new Float32Array(n * n), out = new Float32Array(w * h);
+    for (let i = 0; i < lat.length; i++) lat[i] = rnd();
+    for (let y = 0; y < h; y++) {
+      const fy = y / h * n, y0 = Math.floor(fy), ty = smooth(fy - y0), ya = (y0 % n) * n, yb = ((y0 + 1) % n) * n;
+      for (let x = 0; x < w; x++) {
+        const fx = x / w * n, x0 = Math.floor(fx), tx = smooth(fx - x0), xa = x0 % n, xb = (x0 + 1) % n;
+        out[y * w + x] = lerp(lerp(lat[ya + xa], lat[ya + xb], tx), lerp(lat[yb + xa], lat[yb + xb], tx), ty);
+      }
+    }
+    return out;
+  }
+
+  // cubic Hermite through [[x, y], ...] (x ascending), finite-difference tangents: smooth with no flat spots at the keys
+  function spline(x, k) {
+    const n = k.length;
+    if (x <= k[0][0]) return k[0][1];
+    if (x >= k[n - 1][0]) return k[n - 1][1];
+    let i = 1;
+    while (x > k[i][0]) i++;
+    const x0 = k[i - 1][0], h = k[i][0] - x0, t = (x - x0) / h, t2 = t * t, t3 = t2 * t;
+    const m0 = i > 1 ? (k[i][1] - k[i - 2][1]) / (k[i][0] - k[i - 2][0]) : (k[1][1] - k[0][1]) / h;
+    const m1 = i < n - 1 ? (k[i + 1][1] - k[i - 1][1]) / (k[i + 1][0] - k[i - 1][0]) : (k[n - 1][1] - k[n - 2][1]) / h;
+    return (2 * t3 - 3 * t2 + 1) * k[i - 1][1] + (t3 - 2 * t2 + t) * h * m0 + (-2 * t3 + 3 * t2) * k[i][1] + (t3 - t2) * h * m1;
+  }
+
+  // Leather: a height field (soft hide undulation, pores, short wandering creases) turned into a colour canvas and a bump canvas.
+  // o: { size, seed, dark, mid, light ([r, g, b] 0..255), pores, creases, pr (pore radius px) }
+  function makeLeatherCanvases(o) {
+    const S = o.size, N = S * S, rnd = seededRnd(o.seed), pr = o.pr || 3;
+    const n1 = tileNoise(S, S, 3, rnd), n2 = tileNoise(S, S, 9, rnd), n3 = tileNoise(S, S, 30, rnd), hg = new Float32Array(N);
+    for (let i = 0; i < N; i++) hg[i] = 0.6 + (n3[i] - 0.5) * 0.2 + (n2[i] - 0.5) * 0.1;
+    const dip = (cx, cy, r, d) => {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const q = Math.sqrt(dx * dx + dy * dy) / r;
+          if (q < 1) hg[((cy + dy + S) % S) * S + ((cx + dx + S) % S)] -= d * (1 - q) * (1 - q);
+        }
+      }
+    };
+    for (let i = 0; i < o.pores; i++) dip((rnd() * S) | 0, (rnd() * S) | 0, pr - 1 + ((rnd() * 3) | 0), 0.06 + rnd() * 0.08);
+    for (let i = 0; i < o.creases; i++) {
+      let x = rnd() * S, y = rnd() * S, a = rnd() * 6.283;
+      const len = 25 + rnd() * 70;
+      for (let k = 0; k < len; k++) { dip(Math.round(x), Math.round(y), 1, 0.07); a += (rnd() - 0.5) * 0.3; x += Math.cos(a); y += Math.sin(a); }
+    }
+    const col = document.createElement('canvas'), bmp = document.createElement('canvas');
+    col.width = col.height = bmp.width = bmp.height = S;
+    const gc = col.getContext('2d'), gb = bmp.getContext('2d'), ic = gc.createImageData(S, S), ib = gb.createImageData(S, S), dc = ic.data, db = ib.data;
+    const D = o.dark, M = o.mid, L = o.light;
+    for (let i = 0; i < N; i++) {
+      const h = clamp(hg[i], 0, 1), t = clamp(0.5 + (h - 0.58) * 0.7 + (n1[i] - 0.5) * 0.55, 0, 1), tint = 0.96 + n2[i] * 0.08;
+      let r, g, b;
+      if (t < 0.5) { const k = t * 2; r = D[0] + (M[0] - D[0]) * k; g = D[1] + (M[1] - D[1]) * k; b = D[2] + (M[2] - D[2]) * k; }
+      else { const k = (t - 0.5) * 2; r = M[0] + (L[0] - M[0]) * k; g = M[1] + (L[1] - M[1]) * k; b = M[2] + (L[2] - M[2]) * k; }
+      dc[i * 4] = r * tint; dc[i * 4 + 1] = g * tint; dc[i * 4 + 2] = b * tint; dc[i * 4 + 3] = 255;
+      db[i * 4] = db[i * 4 + 1] = db[i * 4 + 2] = h * 255; db[i * 4 + 3] = 255;
+    }
+    gc.putImageData(ic, 0, 0); gb.putImageData(ib, 0, 0);
+    return { color: col, bump: bmp };
+  }
+
+  // Wool: a twill (diagonal ridges 16 px apart, so it tiles), fibre noise, heathered mottling, light and dark flecks.
+  function makeWoolCanvases(o) {
+    const S = 256, N = S * S, rnd = seededRnd(o.seed), n1 = tileNoise(S, S, 4, rnd), n2 = tileNoise(S, S, 16, rnd);
+    const col = document.createElement('canvas'), bmp = document.createElement('canvas');
+    col.width = col.height = bmp.width = bmp.height = S;
+    const gc = col.getContext('2d'), gb = bmp.getContext('2d'), ic = gc.createImageData(S, S), ib = gb.createImageData(S, S), dc = ic.data, db = ib.data;
+    const D = o.dark, M = o.mid, L = o.light;
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const i = y * S + x, ridge = 0.5 + 0.5 * Math.cos(((x + y) % 16) / 16 * 6.2832), fib = rnd();
+        const t = clamp(0.42 + ridge * 0.05 + (fib - 0.5) * 0.18 + (n1[i] - 0.5) * 0.42 + (n2[i] - 0.5) * 0.16, 0, 1);
+        let r, g, b;
+        if (t < 0.5) { const k = t * 2; r = D[0] + (M[0] - D[0]) * k; g = D[1] + (M[1] - D[1]) * k; b = D[2] + (M[2] - D[2]) * k; }
+        else { const k = (t - 0.5) * 2; r = M[0] + (L[0] - M[0]) * k; g = M[1] + (L[1] - M[1]) * k; b = M[2] + (L[2] - M[2]) * k; }
+        dc[i * 4] = r; dc[i * 4 + 1] = g; dc[i * 4 + 2] = b; dc[i * 4 + 3] = 255;
+        db[i * 4] = db[i * 4 + 1] = db[i * 4 + 2] = (ridge * 0.7 + fib * 0.3) * 255; db[i * 4 + 3] = 255;
+      }
+    }
+    for (let i = 0; i < 300; i++) {            // flecks: pale undyed fibres and dark burrs
+      const p = (((rnd() * S) | 0) * S + ((rnd() * S) | 0)) * 4, pale = rnd() < 0.6, k = pale ? 1.45 : 0.62;
+      for (let c = 0; c < 3; c++) { dc[p + c] *= k; dc[p + 4 + c] *= k; }
+    }
+    gc.putImageData(ic, 0, 0); gb.putImageData(ib, 0, 0);
+    return { color: col, bump: bmp };
+  }
+
+  // Parametric grid mesh. fn(u, v, out) writes out[0..2] (position) and optionally out[3] (the v texture coordinate); u is the column
+  // direction (wraps round a tube when `wrap`: the seam normals are welded). Triangles are wound to face away from `ref` ([x, y, z], a point
+  // inside the solid), so the callers never have to think about handedness.
+  function gridSurface(nu, nv, fn, wrap, ref) {
+    const cols = nu + 1, count = cols * (nv + 1), P = new Float32Array(count * 3), UV = new Float32Array(count * 2), o = [0, 0, 0, -1];
+    for (let j = 0; j <= nv; j++) {
+      for (let i = 0; i <= nu; i++) {
+        o[3] = -1; fn(i / nu, j / nv, o);
+        const k = j * cols + i;
+        P[k * 3] = o[0]; P[k * 3 + 1] = o[1]; P[k * 3 + 2] = o[2];
+        UV[k * 2] = i / nu; UV[k * 2 + 1] = o[3] >= 0 ? o[3] : j / nv;
+      }
+    }
+    const m = (nv >> 1) * cols + (nu >> 2), a = m * 3, b = (m + cols) * 3, c = (m + 1) * 3;
+    const e1x = P[b] - P[a], e1y = P[b + 1] - P[a + 1], e1z = P[b + 2] - P[a + 2], e2x = P[c] - P[a], e2y = P[c + 1] - P[a + 1], e2z = P[c + 2] - P[a + 2];
+    const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+    const flip = nx * (P[a] - ref[0]) + ny * (P[a + 1] - ref[1]) + nz * (P[a + 2] - ref[2]) < 0;
+    const I = [];
+    for (let j = 0; j < nv; j++) {
+      for (let i = 0; i < nu; i++) {
+        const p = j * cols + i, q = p + cols;
+        if (flip) I.push(p, p + 1, q, q, p + 1, q + 1); else I.push(p, q, p + 1, q, q + 1, p + 1);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(P, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(UV, 2));
+    g.setIndex(I);
+    g.computeVertexNormals();
+    if (wrap) {
+      const N = g.attributes.normal;
+      for (let j = 0; j <= nv; j++) {
+        const k0 = j * cols, k1 = k0 + nu;
+        const x = N.getX(k0) + N.getX(k1), y = N.getY(k0) + N.getY(k1), z = N.getZ(k0) + N.getZ(k1), l = Math.hypot(x, y, z) || 1;
+        N.setXYZ(k0, x / l, y / l, z / l); N.setXYZ(k1, x / l, y / l, z / l);
+      }
+    }
+    return g;
+  }
+
+  // Surface of revolution about the y axis through (0, *, cz): prof = [[y, r], ...] bottom to top, elliptical sections (ex, ez), u = 0 faces +z,
+  // v follows the arc length of the profile. wob(theta, y) -> radius factor (cloth folds).
+  function revolve(prof, nu, ex, ez, cz, wob) {
+    const n = prof.length, arc = [0];
+    for (let i = 1; i < n; i++) arc.push(arc[i - 1] + Math.hypot(prof[i][0] - prof[i - 1][0], prof[i][1] - prof[i - 1][1]));
+    const total = arc[n - 1] || 1;
+    return gridSurface(nu, n - 1, (u, v, o) => {
+      const j = Math.round(v * (n - 1)), y = prof[j][0], r = prof[j][1], th = u * 6.283185307, w = wob ? wob(th, y) : 1;
+      o[0] = Math.sin(th) * r * ex * w; o[1] = y; o[2] = cz + Math.cos(th) * r * ez * w; o[3] = arc[j] / total;
+    }, true, [0, (prof[0][0] + prof[n - 1][0]) / 2, cz]);
+  }
+
+  // ---------------------------------------------------------------------------------------------------------
   // revolver geometry processing
   // ---------------------------------------------------------------------------------------------------------
   function classify(mat) {
@@ -271,6 +420,10 @@
     sway: { x: 0, y: 0, vx: 0, vy: 0 },
     lastYaw: null, lastPitch: null,
     _dbgView: null,
+    kleg: null,         // the kick leg rig (see _buildKickLeg)
+    kickT: -1,          // seconds into the kick, -1 = not kicking
+    _kickW: 0,          // 0..1 how far the gun and hands have shifted for the kick
+    _kickFreeze: -1,    // debug: hold the kick at this instant
 
     // -----------------------------------------------------------------------------------------------------
     init: function (camera, renderer) {
@@ -308,6 +461,8 @@
       if (!ok) this._buildFallbackGun();
       try { this._buildHands(); } catch (e) { console.error('[Weapon] hands build failed', e); }
       this._buildFlash();
+      const kt0 = performance.now();
+      try { this._buildKickLeg(); this._kickBuildMs = performance.now() - kt0; } catch (e) { console.error('[Weapon] kick leg build failed, Weapon.kick() is off', e); this.kleg = null; }
 
       this._applyPose(0);
       this.scene.updateMatrixWorld(true);
@@ -1427,6 +1582,262 @@
       this.flashT = 1; this.flashOn = false;
     },
 
+    // -----------------------------------------------------------------------------------------------------
+    // the kick: the player's right leg (charcoal-brown wool trouser, knee-high brown riding boot with a buckled instep strap, welted dark sole,
+    // stacked heel, small iron spur) swings up from below the screen, thrusts the sole forward and snaps at KICK_IMPACT, holds a beat and drops
+    // away by KICK_DUR. The revolver and hands dip down-right and tilt while it is out (the weight shift, see _applyPose). The leg is a 2-bone
+    // IK chain (thigh + shin) from a virtual hip below and behind the camera; the boot rides the shin. All in viewmodel space; no allocations
+    // per frame. Not offered during a reload (the open cylinder and the loading hand are where the leg goes).
+    // -----------------------------------------------------------------------------------------------------
+    // starts the kick if the viewmodel is ready, not already kicking and not reloading; { impactAt, duration } in seconds, else null
+    kick: function () {
+      if (!this.ready || !this.kleg || this.kickT >= 0 || this.rel) return null;
+      this.kickT = 0; this._kickW = 0;
+      this.kleg.root.visible = true;
+      this._poseKickLeg(0);
+      return { impactAt: KICK_IMPACT, duration: KICK_DUR };
+    },
+    isKicking: function () { return this.kickT >= 0; },
+    kickPhase: function () { return this.kickT >= 0 ? clamp(this.kickT / KICK_DUR, 0, 1) : -1; },
+
+    _updateKick: function (dt) {
+      if (this._kickFreeze >= 0) this.kickT = this._kickFreeze;     // debug: hold the leg at one instant
+      else if (this.kickT >= 0) {
+        const prev = this.kickT;
+        this.kickT += dt;
+        if (prev < KICK_IMPACT && this.kickT >= KICK_IMPACT) this.S.kh.kick(0.012);     // the hit goes through the gun as a short jolt
+      } else return;
+      const t = this.kickT;
+      if (t >= KICK_DUR) {
+        this.kickT = -1; this._kickW = 0;
+        this.kleg.root.visible = false;
+        return;
+      }
+      this._kickW = kf(t, [[0, 0], [0.12, 1], [0.34, 1], [0.58, 0]]);
+      this._poseKickLeg(t);
+    },
+
+    // leg pose at time t: sample the keys (ankle, toe hint, knee pole), solve the 2-bone chain, orient the boot
+    _poseKickLeg: function (t) {
+      const C = this.KICK, V = this._kv, B = V.b, L = this.kleg, keys = C.keys, n = keys.length;
+      let i = 1;
+      while (i < n - 1 && t > keys[i][0]) i++;
+      const ka = keys[i - 1], kb = keys[i], f0 = clamp((t - ka[0]) / (kb[0] - ka[0]), 0, 1);
+      const f = kb[13] === 1 ? f0 * f0 : kb[13] === 2 ? 1 - (1 - f0) * (1 - f0) * (1 - f0) : smooth(f0);
+      for (let c = 0; c < 12; c++) B[c] = ka[c + 1] + (kb[c + 1] - ka[c + 1]) * f;
+      const H = V.H.set(B[0], B[1], B[2]), A = V.A.set(B[3], B[4], B[5]), T = V.T.set(B[6], B[7], B[8]), P = V.P.set(B[9], B[10], B[11]);
+      const L1 = C.thigh, L2 = C.shin, d = V.d.subVectors(A, H);
+      let D = d.length();
+      const reach = L1 + L2 - 0.004;
+      if (D > reach) { d.multiplyScalar(reach / D); A.copy(H).add(d); D = reach; }
+      d.multiplyScalar(1 / D);
+      const a = (L1 * L1 - L2 * L2 + D * D) / (2 * D), h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+      const pe = V.pe.copy(P).addScaledVector(d, -P.dot(d));
+      if (pe.lengthSq() < 1e-8) pe.set(0, 1, 0);
+      const K = V.K.copy(H).addScaledVector(d, a).addScaledVector(pe.normalize(), h);
+      const s = V.s.subVectors(K, A).normalize();                      // up the shin, ankle -> knee
+      T.addScaledVector(s, -T.dot(s));                                 // the foot is square to the shin
+      if (T.lengthSq() < 1e-8) T.set(0, 0, -1).addScaledVector(s, s.z);
+      T.normalize();
+      L.boot.position.copy(A);
+      L.boot.quaternion.setFromRotationMatrix(V.m.makeBasis(V.X.crossVectors(s, T), s, T));     // boot space: y up the shaft, z toes
+      L.thigh.position.copy(K);
+      L.thigh.quaternion.setFromUnitVectors(UPV, V.d2.subVectors(H, K).normalize());
+    },
+
+    _buildKickLeg: function () {
+      const srgb = this.srgb, col = (h) => this._col(h);
+      const aniso = this.renderer && this.renderer.capabilities ? Math.min(8, this.renderer.capabilities.getMaxAnisotropy()) : 4;
+      const tex = (cv, rx, ry, color) => {
+        const t = new THREE.CanvasTexture(cv);
+        t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); t.anisotropy = aniso;
+        if (color && srgb) t.encoding = THREE.sRGBEncoding;
+        return t;
+      };
+      const clone = (cv) => { const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height; c.getContext('2d').drawImage(cv, 0, 0); return c; };
+      const phong = (o) => new THREE.MeshPhongMaterial(o);
+
+      const tm0 = performance.now();
+      // ---- textures and materials (r147 bumpScale is in world units: white = that many metres, so it is a millimetre or two here)
+      const lea = makeLeatherCanvases({ size: 512, seed: 11, dark: [56, 34, 20], mid: [94, 60, 36], light: [126, 86, 54], pores: 2300, creases: 60, pr: 3 });
+      const sol = makeLeatherCanvases({ size: 256, seed: 5, dark: [26, 18, 13], mid: [42, 30, 21], light: [60, 44, 31], pores: 300, creases: 10, pr: 2 });
+      const wool = makeWoolCanvases({ seed: 3, dark: [46, 40, 36], mid: [70, 62, 55], light: [104, 93, 82] });
+      // the shaft gets its own copy of the hide: a stitched back seam, a stitched top edge and ankle creases painted on
+      const shaftC = clone(lea.color), shaftB = clone(lea.bump), SC = shaftC.width;
+      const km = this.kmats = {
+        wool: phong({ color: 0xffffff, map: tex(wool.color, 3.5, 3.5, true), bumpMap: tex(wool.bump, 3.5, 3.5), bumpScale: 0.0012, specular: col(0x060606), shininess: 3 }),
+        leather: phong({ color: 0xffffff, map: tex(lea.color, 1.3, 1.7, true), bumpMap: tex(lea.bump, 1.3, 1.7), bumpScale: 0.0016, specular: col(0x5a3f2a), shininess: 42 }),
+        
+        sole: phong({ color: 0xffffff, map: tex(sol.color, 6, 6, true), bumpMap: tex(sol.bump, 6, 6), bumpScale: 0.0012, specular: col(0x2a2018), shininess: 14 }),
+        iron: phong({ color: col(0x5b6068), specular: col(0xa8aeb8), shininess: 60 }),
+      };
+      // the strap: darker, smooth leather with a row of cream stitches along each edge (v runs across its width)
+      const sc = document.createElement('canvas'); sc.width = 128; sc.height = 32;
+      { const g = sc.getContext('2d'); g.fillStyle = '#3e2412'; g.fillRect(0, 0, 128, 32); g.fillStyle = 'rgba(255,220,170,0.06)'; g.fillRect(0, 10, 128, 12);
+        g.fillStyle = '#d9c391'; for (let x = 0; x < 128; x += 16) { g.fillRect(x + 2, 8, 9, 2.4); g.fillRect(x + 2, 22, 9, 2.4); } }
+      km.strap = phong({ color: 0xffffff, map: tex(sc, 3, 1, true), specular: col(0x5a3f2a), shininess: 40 });
+      const stitch = (g, x, y, w, h) => { g.fillRect(x, y, w, h); };
+      const gC = shaftC.getContext('2d'), gB = shaftB.getContext('2d');
+      const YB0 = -0.05, YT = 0.322;                                    // shaft bottom (inside the foot) and top edge, boot space
+      // shaft profile: calf-hugging taper, a rolled top edge, a short inner wall
+      const SHR = [[-0.05, 0.0500], [0.0, 0.0498], [0.05, 0.0505], [0.12, 0.0540], [0.20, 0.0590], [0.27, 0.0618], [YT, 0.0628]];
+      const prof = [];
+      for (let i = 0; i <= 30; i++) { const y = YB0 + (YT - YB0) * i / 30; prof.push([y, spline(y, SHR)]); }
+      const rt = spline(YT, SHR);
+      for (let k = 1; k <= 6; k++) { const a = k / 6 * Math.PI; prof.push([YT + Math.sin(a) * 0.0045, rt - 0.0045 + Math.cos(a) * 0.0045]); }
+      prof.push([YT - 0.016, rt - 0.0095]);
+      let tot = 0; const arc = [0];
+      for (let i = 1; i < prof.length; i++) { tot += Math.hypot(prof[i][0] - prof[i - 1][0], prof[i][1] - prof[i - 1][1]); arc.push(tot); }
+      const vOf = (y) => { let i = 1; while (i < prof.length - 1 && prof[i][0] < y) i++; return arc[i] / tot; };       // canvas row of a height on the shaft
+      const rowOf = (y) => (1 - vOf(y)) * SC;
+      {
+        const thread = 'rgba(224,198,150,0.9)', dent = 'rgba(0,0,0,0.55)', sx = SC * 0.5, y0 = rowOf(0.31), y1 = rowOf(0.02);
+        gC.fillStyle = 'rgba(40,22,10,0.35)'; gC.fillRect(sx - 3, y0, 6, y1 - y0);                        // back seam: a darker welt strip
+        gB.fillStyle = 'rgba(255,255,255,0.45)'; gB.fillRect(sx - 3, y0, 6, y1 - y0);
+        for (let y = y0; y < y1; y += 11) {
+          for (const dx of [-8, 8]) { gC.fillStyle = thread; stitch(gC, sx + dx - 1, y, 2.4, 6); gB.fillStyle = dent; stitch(gB, sx + dx - 1, y, 2.4, 6); }
+        }
+        const ty = rowOf(0.300);                                                                          // top edge stitching
+        for (let x = 0; x < SC; x += 11) { gC.fillStyle = thread; stitch(gC, x, ty, 6, 2.4); gB.fillStyle = dent; stitch(gB, x, ty, 6, 2.4); }
+        for (let k = 0; k < 3; k++) {                                                                      // ankle creases across the front
+          const y = rowOf(0.085 + k * 0.030), w = 110 - k * 16;
+          for (const ox of [0, SC]) {
+            gC.strokeStyle = 'rgba(28,14,6,0.40)'; gC.lineWidth = 3; gC.beginPath(); gC.moveTo(ox - w, y - 4); gC.quadraticCurveTo(ox, y + 12, ox + w, y - 4); gC.stroke();
+            gB.strokeStyle = 'rgba(0,0,0,0.45)'; gB.lineWidth = 4; gB.beginPath(); gB.moveTo(ox - w, y - 4); gB.quadraticCurveTo(ox, y + 12, ox + w, y - 4); gB.stroke();
+            gB.strokeStyle = 'rgba(255,255,255,0.35)'; gB.lineWidth = 3; gB.beginPath(); gB.moveTo(ox - w, y - 9); gB.quadraticCurveTo(ox, y + 7, ox + w, y - 9); gB.stroke();
+          }
+        }
+      }
+      km.shaft = phong({ color: 0xffffff, map: tex(shaftC, 1, 1, true), bumpMap: tex(shaftB, 1, 1), bumpScale: 0.0022, specular: col(0x5a3f2a), shininess: 42 });
+
+      // the welt: tan leather with a dashed cream thread
+      const wc = document.createElement('canvas'); wc.width = 32; wc.height = 16;
+      { const g = wc.getContext('2d'); g.fillStyle = '#8c6038'; g.fillRect(0, 0, 32, 16); g.fillStyle = '#e2cfa0'; g.fillRect(2, 5, 18, 6); }
+      km.welt = phong({ color: 0xffffff, map: tex(wc, 120, 1, true), specular: col(0x3a2a1c), shininess: 20 });
+      // the stacked heel: leather lifts, a thin dark line between each
+      const hc = document.createElement('canvas'); hc.width = 8; hc.height = 16;
+      { const g = hc.getContext('2d'); g.fillStyle = '#3a2412'; g.fillRect(0, 0, 8, 16); g.fillStyle = '#150d07'; g.fillRect(0, 13, 8, 3); }
+      km.heel = phong({ color: 0xffffff, map: tex(hc, 1, 118, true), specular: col(0x1e150c), shininess: 10 });
+
+      const tm1 = performance.now();
+      // ---- rig
+      const root = new THREE.Group(), boot = new THREE.Group(), thigh = new THREE.Group();
+      root.name = 'kickLeg'; root.visible = false;
+      root.add(boot, thigh);
+      this.scene.add(root);
+      const add = (parent, geo, mat) => { const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; parent.add(m); return m; };
+
+      // ---- trouser: thigh tube (from the knee towards the hip, along +y), knee, and the shin cloth bloused over the boot top
+      const fold = (th, y) => 1 + 0.04 * Math.sin(th * 3 + y * 52) * Math.sin(th * 2 - y * 29 + 1.3);
+      const TH = [[0, 0.0668], [0.06, 0.0676], [0.14, 0.0728], [0.24, 0.0800], [0.35, 0.0870], [0.46, 0.0930]], tp = [];
+      for (let i = 0; i <= 14; i++) { const y = 0.46 * i / 14; tp.push([y, spline(y, TH)]); }
+      add(thigh, revolve(tp, 36, 1, 1, 0, fold), km.wool);
+      add(boot, new THREE.SphereGeometry(0.0668, 30, 20), km.wool).position.set(0, 0.40, 0);
+      const TR = [[YT - 0.04, 0.0500], [YT - 0.012, 0.0535], [YT + 0.002, 0.0585], [YT + 0.008, 0.0640], [YT + 0.022, 0.0705], [0.36, 0.0700], [0.40, 0.0668]], trp = [];
+      for (let i = 0; i <= 16; i++) { const y = TR[0][0] + (0.40 - TR[0][0]) * i / 16; trp.push([y, spline(y, TR)]); }
+      add(boot, revolve(trp, 40, 1, 1.03, 0, fold), km.wool);
+
+      // ---- boot shaft
+      add(boot, revolve(prof, 48, 1, 1.07, 0), km.shaft);
+
+      // ---- the foot: lofted superellipse sections from the heel to the toe (boot space, ankle centre at the origin, +z toes, sole top at YB)
+      const YB = -0.062;
+      const FA = [[-0.090, 0.040], [-0.070, 0.043], [-0.045, 0.0455], [-0.010, 0.049], [0.030, 0.0505], [0.075, 0.0525], [0.120, 0.0545], [0.160, 0.052], [0.200, 0.046], [0.236, 0.038]];
+      const FT = [[-0.090, -0.005], [-0.075, 0.010], [-0.050, 0.035], [-0.020, 0.050], [0.020, 0.052], [0.060, 0.040], [0.100, 0.018], [0.140, 0.000], [0.180, -0.012], [0.236, -0.022]];
+      const ZH = -0.090, ZT = 0.236, RH = 0.040, RT = 0.075;
+      const cap = (z) => (z > ZT - RT ? Math.sqrt(Math.max(0, 1 - Math.pow((z - (ZT - RT)) / RT, 2))) : z < ZH + RH ? Math.sqrt(Math.max(0, 1 - Math.pow((ZH + RH - z) / RH, 2))) : 1);
+      const footA = (z) => spline(z, FA) * cap(z);
+      const ring = (z, u, out) => {                                     // u: 0 = top of the foot, 0.25 = +x side, 0.5 = underneath
+        const c = cap(z), a = spline(z, FA) * c, yt = spline(z, FT), b = (yt - YB) / 2 * c, th = u * 6.283185307, cs = Math.cos(th), sn = Math.sin(th);
+        const p = cs > 0 ? 2.4 : 4.0;
+        out[0] = a * Math.sign(sn) * Math.pow(Math.abs(sn), 2 / p);
+        out[1] = (yt + YB) / 2 + b * Math.sign(cs) * Math.pow(Math.abs(cs), 2 / p);
+      };
+      const zAt = (v) => ZH + (ZT - ZH) * (0.5 - 0.5 * Math.cos(Math.PI * v));
+      const rr = [0, 0];
+      add(boot, gridSurface(40, 44, (u, v, o) => { const z = zAt(v); ring(z, u, rr); o[0] = rr[0]; o[1] = rr[1]; o[2] = z; }, true, [0, 0, 0.07]), km.leather);
+
+      // sole: the foot's plan outline, extruded and bevelled; welt thread round its top edge; the heel stack under the back
+      const zs = [], pts = [];
+      for (let i = 0; i <= 40; i++) zs.push(zAt(i / 40));
+      for (let i = 0; i < zs.length; i++) pts.push(new THREE.Vector2(footA(zs[i]) + 0.003, zs[i]));
+      for (let i = zs.length - 2; i > 0; i--) pts.push(new THREE.Vector2(-(footA(zs[i]) + 0.003), zs[i]));
+      const BT = 0.0015, SOLE_D = 0.009;
+      const soleGeo = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: SOLE_D, bevelEnabled: true, bevelThickness: BT, bevelSize: 0.0015, bevelSegments: 2, curveSegments: 8 });
+      soleGeo.rotateX(Math.PI / 2); soleGeo.translate(0, YB - BT, 0);
+      add(boot, soleGeo, km.sole);
+      const wp = [];
+      for (let i = 0; i < pts.length; i++) { const p = pts[i]; wp.push(new V3(p.x * 1.0 + Math.sign(p.x) * 0.0012, YB - 0.0005, p.y)); }
+      add(boot, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(wp, true, 'centripetal'), 140, 0.0030, 6, true), km.welt);
+      const hs = new THREE.Shape(), hz = -0.058;
+      for (let i = 0; i <= 16; i++) { const t = i / 16 * Math.PI; if (i === 0) hs.moveTo(0.0365 * Math.cos(t), hz - 0.030 * Math.sin(t)); else hs.lineTo(0.0365 * Math.cos(t), hz - 0.030 * Math.sin(t)); }
+      hs.lineTo(-0.02, hz + 0.003); hs.lineTo(0, hz - 0.001); hs.lineTo(0.02, hz + 0.003); hs.lineTo(0.0365, hz);
+      const heelGeo = new THREE.ExtrudeGeometry(hs, { depth: 0.024, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 2, curveSegments: 6 });
+      heelGeo.rotateX(Math.PI / 2); heelGeo.translate(0, YB - 0.0125 - 0.002 + 0.0, 0);
+      add(boot, heelGeo, km.heel);
+
+      // ---- instep strap (a ribbon following the foot's section) with an iron buckle on the inner side of the top
+      const rA = [0, 0], rB = [0, 0];
+      const strap = (zc, w, s0, s1, nu, lift) => {
+        const rows = [[-0.5, 0.0010], [-0.5, 0.0036], [-0.38, 0.0046], [0.38, 0.0046], [0.5, 0.0036], [0.5, 0.0010]];
+        return gridSurface(nu, rows.length - 1, (u, v, o) => {
+          const s = lerp(s0, s1, u), row = rows[Math.round(v * (rows.length - 1))], z = zc + row[0] * w;
+          ring(z, (s + 1) % 1, rA); ring(z, (s + 1.002) % 1, rB);
+          let tx = rB[0] - rA[0], ty = rB[1] - rA[1]; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+          o[0] = rA[0] - ty * (row[1] + lift); o[1] = rA[1] + tx * (row[1] + lift); o[2] = z;
+        }, false, [0, 0.0, zc]);
+      };
+      const ZS = 0.060, SB = 0.115;
+      add(boot, strap(ZS, 0.026, -0.30, 0.30, 60, 0), km.strap);
+      add(boot, strap(ZS, 0.020, SB - 0.05, SB + 0.055, 12, 0.0016), km.strap);               // the tail laid back over the strap
+      const roundRect = (p, x, y, w, h, r) => {
+        p.moveTo(x + r, y); p.lineTo(x + w - r, y); p.quadraticCurveTo(x + w, y, x + w, y + r); p.lineTo(x + w, y + h - r); p.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        p.lineTo(x + r, y + h); p.quadraticCurveTo(x, y + h, x, y + h - r); p.lineTo(x, y + r); p.quadraticCurveTo(x, y, x + r, y);
+        return p;
+      };
+      const frame = roundRect(new THREE.Shape(), -0.0200, -0.0160, 0.0400, 0.0320, 0.007);
+      frame.holes.push(roundRect(new THREE.Path(), -0.0150, -0.0115, 0.0300, 0.0230, 0.005));
+      const buckle = new THREE.Group();
+      add(buckle, new THREE.ExtrudeGeometry(frame, { depth: 0.0030, bevelEnabled: true, bevelThickness: 0.0008, bevelSize: 0.0008, bevelSegments: 1, curveSegments: 6 }), km.iron);
+      const prong = add(buckle, new THREE.BoxGeometry(0.0270, 0.0030, 0.0028), km.iron);
+      prong.position.set(0.0015, 0, 0.0034);
+      ring(ZS, (SB - 0.07 + 1) % 1, rA); ring(ZS, (SB - 0.07 + 1.002) % 1, rB);
+      {
+        let tx = rB[0] - rA[0], ty = rB[1] - rA[1]; const l = Math.hypot(tx, ty); tx /= l; ty /= l;
+        const nx = -ty, ny = tx, off = 0.0068;
+        buckle.position.set(rA[0] + nx * off, rA[1] + ny * off, ZS);
+        const X = new V3(tx, ty, 0), Z = new V3(nx, ny, 0);
+        buckle.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, new V3().crossVectors(Z, X), Z));
+        boot.add(buckle);
+      }
+
+      // ---- small iron spur: a yoke round the back of the heel counter, a neck and a toothed rowel
+      {
+        const yp = [];
+        for (let i = 0; i <= 18; i++) { const a = (-100 + 200 * i / 18) * DEG; yp.push(new V3(Math.sin(a) * 0.0455, YB + 0.020, -0.058 - Math.cos(a) * 0.0335)); }
+        add(boot, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(yp, false), 24, 0.0022, 6, false), km.iron);
+        const neck = add(boot, new THREE.CylinderGeometry(0.0020, 0.0032, 0.026, 8), km.iron);
+        neck.rotation.x = Math.PI / 2; neck.position.set(0, YB + 0.020, -0.100);
+        const star = new THREE.Shape();
+        for (let i = 0; i < 16; i++) { const a = i / 16 * Math.PI * 2, r = i % 2 ? 0.0070 : 0.0125; if (i === 0) star.moveTo(Math.cos(a) * r, Math.sin(a) * r); else star.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+        const rg = new THREE.ExtrudeGeometry(star, { depth: 0.0022, bevelEnabled: false });
+        rg.translate(0, 0, -0.0011); rg.rotateY(Math.PI / 2);
+        add(boot, rg, km.iron).position.set(0, YB + 0.020, -0.115);
+      }
+
+      this.kleg = { root: root, boot: boot, thigh: thigh };
+      this._kv = { b: new Array(12).fill(0), H: new V3(), A: new V3(), T: new V3(), P: new V3(), d: new V3(), d2: new V3(), pe: new V3(), K: new V3(), s: new V3(), X: new V3(), m: new THREE.Matrix4() };
+      const tm2 = performance.now();
+      // the first kick must not stall on a shader compile or a texture upload
+      try {
+        if (this.renderer) {
+          Object.keys(km).forEach((k) => { ['map', 'bumpMap'].forEach((n) => { if (km[k][n] && this.renderer.initTexture) this.renderer.initTexture(km[k][n]); }); });
+          this.renderer.compile(this.scene, this.camera);
+        }
+      } catch (e) { /* the first kick compiles instead */ }
+      this._kickBuildParts = { texturesMs: Math.round(tm1 - tm0), geometryMs: Math.round(tm2 - tm1), uploadCompileMs: Math.round(performance.now() - tm2) };
+    },
+
     // state: { moving, sprinting, aimDelta:{x,y}? }  (reloading is ignored: Weapon.reload(ms) owns that animation)
     update: function (dt, state) {
       if (!this.ready) return;
@@ -1456,6 +1867,7 @@
         this.rel.t += dt * 1000;
         if (this.rel.t >= this.rel.dur) { this.rel = null; this.S.kh.kick(0.01); }
       }
+      if (this.kleg) this._updateKick(dt);
       this._applyPose(dt);
     },
 
@@ -1492,6 +1904,26 @@
     // base pose of the hold point in viewmodel camera space
     BASE: { x: 0.145, y: -0.112, z: -0.285, rx: 0.03, ry: 0.12, rz: 0 },   // hold point in viewmodel camera space + resting angles
 
+    // the kick leg: thigh and shin lengths and the pose keys (viewmodel space, x right, y up, -z forward). The hip is virtual, below and behind
+    // the camera, and moves with the kick (the body lunges). Each key: [t seconds, hip x y z, ankle x y z, toe hint x y z (the foot points along
+    // it, made square to the shin), knee pole x y z (the knee bends towards it), ease into this key: 0 smooth, 1 accelerating (the snap),
+    // 2 decelerating]. The knee comes up into view first (chamber), the boot rises from the bottom edge, then snaps out and the sole lands at
+    // KICK_IMPACT; it holds a beat, drops back and is gone by KICK_DUR.
+    KICK: {
+      thigh: 0.44, shin: 0.44,
+      keys: [
+        [0.000, 0.16, -0.62, 0.10, 0.10, -1.00, 0.00, 0.00, -0.6, -1.0, 0.00, 0.0, -1.00, 0],
+        [0.050, 0.16, -0.38, -0.02, 0.04, -0.64, -0.52, 0.00, -0.5, -1.0, -0.35, 0.8, -0.50, 2],
+        [0.075, 0.20, -0.38, 0.02, 0.045, -0.42, -0.50, -0.05, -0.2, -1.0, 0.00, -0.8, -0.30, 0],
+        [0.105, 0.22, -0.32, 0.05, 0.05, -0.20, -0.48, -0.10, 0.1, -1.0, 0.30, -0.8, -0.20, 0],
+        [0.160, 0.30, -0.38, 0.15, 0.03, -0.17, -0.57, -0.60, 0.8, 0.0, 0.50, -0.8, 0.00, 1],
+        [0.260, 0.30, -0.38, 0.15, 0.025, -0.17, -0.60, -0.60, 0.8, 0.0, 0.50, -0.8, 0.00, 2],
+        [0.380, 0.26, -0.34, 0.08, 0.07, -0.25, -0.48, -0.30, 0.6, -0.6, -0.50, -0.6, -0.30, 0],
+        [0.520, 0.20, -0.46, 0.08, 0.12, -0.62, -0.40, 0.00, -0.5, -1.0, -0.60, -0.6, -0.20, 0],
+        [0.600, 0.16, -0.62, 0.10, 0.10, -1.00, 0.00, 0.00, -0.6, -1.0, -0.60, -0.4, -0.20, 0],
+      ],
+    },
+
     _applyPose: function (dt) {
       const S = this.S, B = this.BASE, t = this.time;
       const sb = this.sprintBlend, ba = this.bobAmp * (1 - 0.35 * sb);
@@ -1525,6 +1957,10 @@
       rz += S.kr.x;
       ry += S.ky.x;
       y += S.kh.x; rx += S.kh.x * 3;
+
+      // kick: the weight shifts, the gun and hands dip down-right and tilt while the leg is out
+      const kw = this._kickW;
+      if (kw > 0) { x += 0.052 * kw; y += -0.074 * kw; z += 0.020 * kw; rx += -0.22 * kw; rz += 0.26 * kw; ry += 0.06 * kw; }
 
       // reload
       let swingOut = 0, spinAngle = 0, hand = 0;
@@ -1615,6 +2051,59 @@
       }
     },
 
+    // debug (kickClip): sweeps the kick (gun shift included) and reports the closest the leg's vertices come to the gun / hand / forearm
+    // surfaces, in metres (0 = touching or inside). Only meshes whose boxes overlap are compared, vertex against triangle.
+    _kickClip: function (step) {
+      if (!this.kleg) return null;
+      const leg = [], oth = [];
+      this.kleg.root.traverse((o) => { if (o.isMesh) leg.push(o); });
+      this.viewRoot.traverse((o) => { if (o.isMesh && o.geometry && o.geometry.attributes.position) oth.push(o); });
+      const world = (m, i, out) => { out.fromBufferAttribute(m.geometry.attributes.position, i); if (m.isSkinnedMesh) m.boneTransform(i, out); return out.applyMatrix4(m.matrixWorld); };
+      const tri = new THREE.Triangle(), cp = new V3(), pt = new V3(), bo = new THREE.Box3(), bl = new THREE.Box3(), reg = new THREE.Box3(), tb = new THREE.Box3();
+      const res = { minDist: Infinity, t: -1, leg: null, other: null, samples: 0, worst: [] };
+      const keep = this._kickFreeze;
+      for (let t = 0; t < KICK_DUR - 1e-6; t += step) {
+        this._kickFreeze = t; this.kickT = t; this.kleg.root.visible = true;
+        this._updateKick(0); this._applyPose(0); this.scene.updateMatrixWorld(true);
+        res.samples++;
+        let tmin = Infinity, lname = null, oname = null;
+        for (const L of leg) {
+          bl.setFromObject(L).expandByScalar(0.03);
+          for (const O of oth) {
+            let vis = true; for (let q = O; q; q = q.parent) if (!q.visible) { vis = false; break; }
+            if (!vis) continue;
+            bo.setFromObject(O);
+            if (!bo.intersectsBox(bl)) continue;
+            reg.copy(bl).intersect(bo);
+            const lp = [], P = L.geometry.attributes.position;
+            for (let i = 0; i < P.count; i++) { world(L, i, pt); if (reg.containsPoint(pt)) lp.push(pt.x, pt.y, pt.z); }
+            if (!lp.length) continue;
+            const OP = O.geometry.attributes.position, idx = O.geometry.index, wp = new Float32Array(OP.count * 3), v = new V3();
+            for (let i = 0; i < OP.count; i++) { world(O, i, v); wp[i * 3] = v.x; wp[i * 3 + 1] = v.y; wp[i * 3 + 2] = v.z; }
+            const n = idx ? idx.count / 3 : OP.count / 3;
+            for (let k = 0; k < n; k++) {
+              const ia = idx ? idx.getX(k * 3) : k * 3, ib = idx ? idx.getX(k * 3 + 1) : k * 3 + 1, ic = idx ? idx.getX(k * 3 + 2) : k * 3 + 2;
+              tri.a.fromArray(wp, ia * 3); tri.b.fromArray(wp, ib * 3); tri.c.fromArray(wp, ic * 3);
+              tb.setFromPoints([tri.a, tri.b, tri.c]);
+              if (!tb.intersectsBox(reg)) continue;
+              for (let i = 0; i < lp.length; i += 3) {
+                pt.set(lp[i], lp[i + 1], lp[i + 2]);
+                tri.closestPointToPoint(pt, cp);
+                const d = cp.distanceTo(pt);
+                if (d < tmin) { tmin = d; lname = L.parent === this.kleg.thigh ? 'thigh' : (L.material === this.kmats.shaft ? 'shaft' : L.material === this.kmats.wool ? 'wool' : L.material === this.kmats.leather ? 'foot' : L.material === this.kmats.strap ? 'strap' : L.material === this.kmats.iron ? 'iron' : 'sole'); oname = O.name || (O.material && O.material.name) || (O.isSkinnedMesh ? 'hand' : 'gun'); }
+              }
+            }
+          }
+        }
+        if (tmin < res.minDist) { res.minDist = tmin; res.t = +t.toFixed(3); res.leg = lname; res.other = oname; }
+        if (tmin < 0.02) res.worst.push([+t.toFixed(3), +tmin.toFixed(4), lname, oname]);
+      }
+      this._kickFreeze = keep; this.kickT = keep >= 0 ? keep : -1;
+      if (keep < 0) { this._kickW = 0; this.kleg.root.visible = false; }
+      res.minDist = +res.minDist.toFixed(4);
+      return res;
+    },
+
     _muzzleVm: function () {
       const p = this._tmpC || (this._tmpC = new V3());
       this.viewRoot.updateMatrixWorld(true);
@@ -1654,6 +2143,7 @@
         cylinderStepDeg: Math.round(this.cylStep / DEG), hasCylinder: !!P.cyl, hasHammer: !!P.hammer, hammerFall: +(this._hamFall || 0).toFixed(3),
         recoil: { z: +this.S.kz.x.toFixed(4), pitch: +this.S.kp.x.toFixed(4), climb: +this.S.kc.x.toFixed(4), roll: +this.S.kr.x.toFixed(4) },
         sprintBlend: +this.sprintBlend.toFixed(3), bobAmp: +this.bobAmp.toFixed(3),
+        kick: { built: !!this.kleg, buildMs: Math.round(this._kickBuildMs || 0), buildParts: this._kickBuildParts || null, active: this.kickT >= 0, t: +Math.max(0, this.kickT).toFixed(3), phase: +this.kickPhase().toFixed(3), weight: +this._kickW.toFixed(3) },
         worldLightIntensity: this.worldLight ? +this.worldLight.intensity.toFixed(3) : null,
         worldLightAdded: this._worldLightAdded,
         gunLength: this.lm ? +this.lm.length.toFixed(4) : null,
@@ -1670,6 +2160,17 @@
         state: function () { return self.state(); },
         fire: function () { return self.fire().toArray(); },
         reload: function (ms) { self.reload(ms); return true; },
+        // kick() starts the kick (returns { impactAt, duration } or null); kickAt(sec) freezes the leg at that instant of it (kickAt() or
+        // kickAt(-1) lets it go); kickKeys(keys) / kickRig({ thigh, shin }) retune the pose live
+        kick: function () { return self.kick(); },
+        kickAt: function (sec) {
+          if (!self.kleg) return false;
+          if (sec === undefined || sec < 0) { self._kickFreeze = -1; self.kickT = -1; self._kickW = 0; self.kleg.root.visible = false; return true; }
+          self._kickFreeze = sec; self.kickT = sec; self.kleg.root.visible = true; self._updateKick(0); return true;
+        },
+        kickClip: function (step) { return self._kickClip(step || 0.04); },
+        kickKeys: function (k) { if (k) self.KICK.keys = k; return self.KICK.keys; },
+        kickRig: function (o) { if (o) Object.assign(self.KICK, o); return { thigh: self.KICK.thigh, shin: self.KICK.shin }; },
         // view(px,py,pz, tx,ty,tz) renders the viewmodel from an arbitrary camera (viewmodel space); view() resets
         view: function (px, py, pz, tx, ty, tz) { self._dbgView = (px === undefined) ? null : [px, py, pz, tx, ty, tz]; return true; },
         pose: function (o) { if (o) Object.assign(self.BASE, o); return Object.assign({}, self.BASE); },
