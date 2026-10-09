@@ -168,6 +168,40 @@ export const scenarios = {
     },
   },
 
+  'knight-shield': {
+    desc: 'A knight 4.5 m ahead, mid shield rush: the shield arm is raised in front of the chest while it charges (3/4 view and head-on).',
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.freezeAI(false);
+      await h.resetView();
+      await h.pause();
+      const k = await h.spawn('knight', 3.6, 0);
+      await page.evaluate(() => { const k = Enemies.list[0]; k.thrower = false; k.rusher = true; k.hold = false; __dbg.knightRush(0); });
+      await h.aimAt(k, 1.1);
+      await h.advance(900, 33);
+      await h.shot('wind');
+      await h.advance(300, 33);
+      await h.shot('charge');
+      return page.evaluate(() => ({ state: Enemies.list[0].state, shieldW: +Enemies.list[0]._shieldW.toFixed(2) }));
+    },
+  },
+  'knight-swing': {
+    desc: 'A knight 3.5 m ahead swings its sword: raised (wind-up), mid-swing and follow-through, with the torso twist.',
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.pause();
+      const k = await h.spawn('knight', 3.5, 0);
+      await h.aimAt(k, 1.2);
+      for (const [label, state, t] of [['raise', 'windup', 0.99], ['mid', 'attack', 0.55], ['through', 'attack', 0.99], ['recover', 'recover', 0.4]]) {
+        await page.evaluate(([s, u]) => __dbg.knight.pose(0, s, u), [state, t]);
+        await h.advance(60, 33);
+        await h.shot(label);
+      }
+    },
+  },
   'knight-close': {
     desc: 'One knight spawned 4 m ahead, AI frozen, camera aimed at its torso.',
     run: async (page, h) => {

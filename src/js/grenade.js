@@ -1,7 +1,7 @@
 /* grenade.js - window.Grenade: the bonus weapon. A run of kills earns hand grenades.
 
-   Earning:  kills in a row (each within STREAK_WINDOW seconds of the last) fill the streak; at Difficulty.streak (Easy 3, Normal 4, Hard 5)
-             you are given Difficulty.nades grenades (Easy 3, Normal 2, Hard 2; at most MAX_CARRY carried) and the streak starts again.
+   Earning:  kills in a row (each within STREAK_WINDOW seconds of the last) fill the streak; at Difficulty.streak (Easy 4, Normal 5, Hard 6)
+             you are given Difficulty.nades grenades (1 on every level; at most MAX_CARRY carried). A run starts with START_NADES = 1 and the streak starts again.
              Kills by grenade count too, so a good throw chains into the next reward.
    Using:    G (desktop) or the GRENADE button (touch) lobs one in an arc from the camera. It bounces off the ground, trees and rocks,
              detonates the moment it touches a knight, or when its 2 s fuse runs out (the LED on it blinks faster and faster).
@@ -21,11 +21,11 @@
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
   const GRAVITY = 16, THROW_SPEED = 17, THROW_LIFT = 3.6;      // m/s^2, m/s along the view, m/s added upward
-  const FUSE = 2.0, COOLDOWN = 0.7, MAX_CARRY = 6, STREAK_WINDOW = 8;
+  const FUSE = 2.0, COOLDOWN = 0.7, MAX_CARRY = 6, STREAK_WINDOW = 8, START_NADES = 1;
   const R_BALL = 0.09;
   const RADIUS = 6.5, MAX_DAMAGE = 150, BOSS_FACTOR = 0.35;
   const SELF_R = 4.5, SELF_DAMAGE = 30;
-  const NEUTRAL = { streak: 4, nades: 2, dmg: 1 };
+  const NEUTRAL = { streak: 5, nades: 1, dmg: 1 };
   const diff = () => (window.Difficulty && Difficulty.get()) || NEUTRAL;
   const el = (id) => document.getElementById(id);
 
@@ -54,7 +54,7 @@
 
     reset: function () {
       this.clear();
-      this.count = 0; this.streak = 0; this._streakT = 0; this._cool = 0;
+      this.count = START_NADES; this.streak = 0; this._streakT = 0; this._cool = 0;
       this._hud();
     },
 
