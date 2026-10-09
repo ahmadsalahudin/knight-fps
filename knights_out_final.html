@@ -2757,10 +2757,13 @@ window.World = (function () {
 
    Design "faithful": the ornate antique hero pistol of the reference, as a six-shot swing-out revolver. A long octagonal barrel
    in dark browned steel with silver inlay lines and a gold muzzle ring, an engraved silver breech band and a pierced scroll
-   plate under it; a bright nickel frame, cylinder (oval cartouches) and swan-neck hammer, all deeply engraved; a thin
-   scroll-curled trigger guard; a rosewood bird's-head grip with an engraved backstrap, a silver cross inlay, and a big
-   engraved butt cap with a lanyard ring. Five canvas textures: engraving, cylinder cartouches, barrel inlay, wood grain and a
-   small equirectangular environment that gives the metal its reflections. */
+   plate under it; a bright nickel frame, cylinder (oval cartouches) and swan-neck hammer, all finely engraved; a thin
+   scroll-curled trigger guard; a walnut bird's-head grip with an engraved backstrap, a silver cross inlay, and a big
+   engraved butt cap (double border) with a lanyard ring. Five canvas textures: the all-over engraving, the cylinder drum
+   (oval cartouches), barrel inlay, walnut grain and a small equirectangular environment that gives the metal its reflections.
+   Engraving = fine dense arabesque: S- and C-scrolls (swell cuts) sprouting from one another with small lobed acanthus leaves,
+   dark cuts on bright silver, grown on an occupancy grid with a seeded PRNG (deterministic); the same canvas is the bump map,
+   so the cuts sit recessed. */
 (function () {
   'use strict';
   const V3 = THREE.Vector3;
@@ -2780,6 +2783,48 @@ window.World = (function () {
   function mkCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
   const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   const spow = (v, e) => Math.sign(v) * Math.pow(Math.abs(v), e);
+  const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  const mix = (a, b, t) => a + (b - a) * t;
+  // periodic value-noise fbm on [0,1)^2 (tiles seamlessly); cx / cy lattice cells of the first octave
+  function makeFbm(seed, cx, cy, oct, gain) {
+    const r = prng(seed), layers = [];
+    let amp = 1, norm = 0;
+    for (let o = 0; o < oct; o++) {
+      const nx = cx << o, ny = cy << o, g = new Float32Array(nx * ny);
+      for (let i = 0; i < g.length; i++) g[i] = r();
+      layers.push({ nx: nx, ny: ny, g: g, amp: amp });
+      norm += amp; amp *= gain;
+    }
+    return function (u, v) {
+      let s = 0;
+      for (let k = 0; k < layers.length; k++) {
+        const L = layers[k], x = u * L.nx, y = v * L.ny;
+        let xi = Math.floor(x), yi = Math.floor(y);
+        const fx = x - xi, fy = y - yi;
+        xi = ((xi % L.nx) + L.nx) % L.nx; yi = ((yi % L.ny) + L.ny) % L.ny;
+        const x1 = (xi + 1) % L.nx, y1 = (yi + 1) % L.ny;
+        const a = L.g[yi * L.nx + xi], b = L.g[yi * L.nx + x1], c = L.g[y1 * L.nx + xi], d = L.g[y1 * L.nx + x1];
+        const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+        s += L.amp * (a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy);
+      }
+      return s / norm;
+    };
+  }
+  // sample a periodic function on a coarse gw x gh grid once, return a bilinear (periodic) lookup: smooth noise at a fraction
+  // of the cost of evaluating every octave per pixel
+  function coarse(fn, gw, gh) {
+    const a = new Float32Array(gw * gh);
+    for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) a[y * gw + x] = fn(x / gw, y / gh);
+    return function (u, v) {
+      const x = u * gw, y = v * gh;
+      let xi = Math.floor(x), yi = Math.floor(y);
+      const fx = x - xi, fy = y - yi;
+      xi = ((xi % gw) + gw) % gw; yi = ((yi % gh) + gh) % gh;
+      const x1 = (xi + 1) % gw, y1 = (yi + 1) % gh;
+      const p = a[yi * gw + xi], q = a[yi * gw + x1], r = a[y1 * gw + xi], s = a[y1 * gw + x1];
+      return p + (q - p) * fx + (r - p) * fy + (p - q - r + s) * fx * fy;
+    };
+  }
 
   // smooth normals across edges flatter than `deg`, keep the sharper ones (extrusions come out with flat, faceted normals)
   function creaseNormals(geo, deg) {
@@ -2871,22 +2916,7 @@ window.World = (function () {
   }
 
   // ------------------------------------------------------------------------------------------------ canvas engraving kit
-  function stipple(g, w, h, r, count, dark, light) {
-    for (let i = 0; i < count; i++) {
-      const x = r() * w, y = r() * h, v = r();
-      g.fillStyle = v < 0.62 ? dark : light;
-      const s = 1 + r() * 1.4;
-      g.fillRect(x, y, s, s);
-    }
-  }
-  function spiralPts(cx, cy, R, a0, dir, turns, n) {
-    const pts = [];
-    for (let i = 0; i <= n; i++) {
-      const t = i / n, r = R * Math.pow(1 - 0.86 * t, 0.9), a = a0 + dir * t * turns * TAU;
-      pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
-    }
-    return pts;
-  }
+  // (normalsOf / polyPath / leafPath / engrave: the raised-band engraver, now only used for the barrel's inlaid vine)
   function normalsOf(pts) {
     return pts.map((p, i) => {
       const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
@@ -2963,127 +2993,330 @@ window.World = (function () {
       }
     });
   }
-  function wrapOffs(w, h) { const o = []; for (const dx of [-w, 0, w]) for (const dy of (h ? [-h, 0, h] : [0])) o.push([dx, dy]); return o; }
-  function tarnish(g, w, h, r, n) {
-    for (let i = 0; i < n; i++) {
-      const x = r() * w, y = r() * h, rad = 40 + r() * 160, dark = r() < 0.7;
-      for (const o of wrapOffs(w, h)) {
-        const gr = g.createRadialGradient(x + o[0], y + o[1], 0, x + o[0], y + o[1], rad);
-        gr.addColorStop(0, dark ? 'rgba(40,36,30,0.10)' : 'rgba(255,255,255,0.08)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
-        g.fillStyle = gr; g.fillRect(x + o[0] - rad, y + o[1] - rad, rad * 2, rad * 2);
-      }
-    }
-  }
-  // occupancy grid so small curls can fill the gaps the main scrolls leave (dense arabesque)
-  function occGrid(w, h, wrapY) {
-    const cell = 6, nx = Math.ceil(w / cell), ny = Math.ceil(h / cell), a = new Uint8Array(nx * ny);
+
+  // ------------------------------------------------------------------------------------------------ dense arabesque
+  // Fine scrollwork grown on a grid in a texture's own pixel space (K scales every size: lines, curls, gaps). Stems are
+  // S-scrolls / C-scrolls (an S bulge, then a clothoid curl) that sprout from one another and carry small lobed acanthus
+  // leaves; an occupancy grid keeps every cut clear of its neighbours, so the gaps fill with ever smaller curls.
+  function occGrid(w, h, wrapX, wrapY, cell) {
+    const nx = Math.ceil(w / cell), ny = Math.ceil(h / cell), a = new Int32Array(nx * ny);
     const at = (x, y) => {
-      let i = Math.floor(x / cell) % nx; if (i < 0) i += nx;
-      let j = Math.floor(y / cell);
+      let i = Math.floor(x / cell), j = Math.floor(y / cell);
+      if (wrapX) { i %= nx; if (i < 0) i += nx; } else if (i < 0 || i >= nx) return -1;
       if (wrapY) { j %= ny; if (j < 0) j += ny; } else if (j < 0 || j >= ny) return -1;
       return j * nx + i;
     };
-    const disk = (x, y, r, fn) => { for (let yy = -r; yy <= r; yy += cell * 0.7) for (let xx = -r; xx <= r; xx += cell * 0.7) if (xx * xx + yy * yy <= r * r) { if (fn(at(x + xx, y + yy))) return true; } return false; };
+    const disc = (x, y, r, fn) => {
+      const n = Math.ceil(r / cell), rr = r * r + cell * cell * 0.5;
+      for (let dj = -n; dj <= n; dj++) for (let di = -n; di <= n; di++) {
+        if ((di * di + dj * dj) * cell * cell > rr) continue;
+        if (fn(at(x + di * cell, y + dj * cell))) return true;
+      }
+      return false;
+    };
     return {
-      mark(x, y, r) { disk(x, y, r, (k) => { if (k >= 0) a[k] = 1; return false; }); },
-      free(x, y, r) { return !disk(x, y, r, (k) => k < 0 || a[k] === 1); },
-      band(b) { const n = b.pts.length - 1; b.pts.forEach((p, i) => this.mark(p[0], p[1], (b.w0 + (b.w1 - b.w0) * i / n) / 2 + 5)); },
-      leaf(L) { const ca = Math.cos(L[2]), sa = Math.sin(L[2]); for (let u = 0; u <= L[3]; u += 5) this.mark(L[0] + ca * u, L[1] + sa * u, L[4] * 0.75 + 3); },
+      mask(inside) { for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (!inside((i + 0.5) * cell, (j + 0.5) * cell)) a[j * nx + i] = -1; },
+      mark(x, y, r, id) { disc(x, y, r, (k) => { if (k >= 0 && a[k] === 0) a[k] = id; return false; }); },
+      blocked(x, y, r, ign) { return disc(x, y, r, (k) => k < 0 || (a[k] !== 0 && a[k] !== ign)); },
     };
   }
-  // fill free space with small curls (each with a leaf or two)
-  function fillCurls(occ, w, h, r, bands, leaves, tries, rMax, rMin, wid) {
-    for (let t = 0; t < tries; t++) {
-      const R = rMax - (rMax - rMin) * (t / tries), x = r() * w, y = r() * h;
-      if (!occ.free(x, y, R + 7)) continue;
-      const dir = r() < 0.5 ? 1 : -1, a0 = r() * TAU, sp = spiralPts(x, y, R, a0, dir, 1.25 + r() * 0.35, Math.max(24, Math.round(R * 1.2)));
-      const b = { pts: sp, w0: wid * (R / rMax) + 3, w1: 2.5 };
-      bands.push(b); occ.mark(x, y, R + 4);
-      const p = sp[0], tang = Math.atan2(sp[2][1] - p[1], sp[2][0] - p[0]);
-      const L1 = [p[0], p[1], tang + Math.PI + dir * 0.5, R * 0.95, R * 0.3];
-      if (occ.free(p[0] - Math.cos(tang) * R * 0.5, p[1] - Math.sin(tang) * R * 0.5, R * 0.35)) { leaves.push(L1); occ.leaf(L1); }
+  // an acanthus leaf along a bent rib: scalloped outline, midrib, hatching on the shaded half. rib: [[x, y]...]; returns the cut geometry
+  function leafGeom(rib, wf, K, r) {
+    const n = rib.length, out = [], lft = [], rgt = [], nl = 2 + Math.floor(r() * 2) + 0.5, ph = r();
+    for (let i = 0; i < n; i++) {
+      const a = rib[Math.max(0, i - 1)], b = rib[Math.min(n - 1, i + 1)], dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1, nx = -dy / l, ny = dx / l;
+      const t = i / (n - 1), base = wf(t);
+      const wl = base * (0.64 + 0.36 * Math.pow(Math.abs(Math.sin(Math.PI * (nl * t + ph))), 0.8));
+      const wr = base * 0.82 * (0.64 + 0.36 * Math.pow(Math.abs(Math.sin(Math.PI * (nl * t + ph + 0.5))), 0.8));
+      lft.push([rib[i][0] + nx * wl, rib[i][1] + ny * wl]); rgt.push([rib[i][0] - nx * wr, rib[i][1] - ny * wr]);
+    }
+    for (const p of lft) out.push(p);
+    for (let i = n - 1; i >= 0; i--) out.push(rgt[i]);
+    const hatch = [], L = Math.hypot(rib[n - 1][0] - rib[0][0], rib[n - 1][1] - rib[0][1]);
+    if (L > 34 * K) for (let i = 3; i < n - 2; i += 2) hatch.push([rib[i][0] * 0.82 + lft[i][0] * 0.18, rib[i][1] * 0.82 + lft[i][1] * 0.18, rib[i][0] * 0.3 + lft[i][0] * 0.7, rib[i][1] * 0.3 + lft[i][1] * 0.7]);
+    return { out: out, rib: rib, hatch: hatch, lw: Math.max(1.3, Math.min(2.5, L * 0.062)) * Math.max(0.7, K) };
+  }
+
+  function growArabesque(o) {
+    const K = o.K, r = o.rand, ds = Math.max(1.8, 2.0 * K), clear = 3.4 * K;
+    const occ = occGrid(o.w, o.h, !!o.wrapX, !!o.wrapY, Math.max(2, Math.round(1.6 * K)));
+    if (o.mask) occ.mask(o.mask);
+    const stems = [], leaves = [];
+    let nid = 1;
+    const rnd = (a, b) => a + (b - a) * r();
+    const wprof = (t, w0, wm, w1) => { const u = 1 - t, wc = 2 * wm - 0.5 * (w0 + w1); return Math.max(0.9, u * u * w0 + 2 * u * t * wc + t * t * w1); };
+    const shuffle = (arr) => { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)), t = arr[i]; arr[i] = arr[j]; arr[j] = t; } return arr; };
+
+    // an S bulge (bending against the curl), then a log-like volute: radius of curvature R0 shrinking by c per unit length to rho
+    function trace(x, y, a, P) {
+      const Lc = (P.R0 - P.rho) / P.c, L = P.ls + Lc, n = Math.max(8, Math.round(L / ds)), st = L / n, pts = [[x, y, a]];
+      for (let i = 0; i < n; i++) {
+        const s = (i + 0.5) * st;
+        let k;
+        if (s < P.ls) k = -P.dir * P.kb * Math.sin(Math.PI * s / P.ls);
+        else { const u = s - P.ls, q = Math.min(1, u / P.ramp); k = P.dir * q * q * (3 - 2 * q) / (P.R0 - P.c * u); }
+        a += k * st; x += Math.cos(a) * st; y += Math.sin(a) * st;
+        pts.push([x, y, a]);
+      }
+      return pts;
+    }
+    // longest collision-free prefix of a candidate (half widths hw[]); the first nIgn points may touch `ign` (the parent)
+    function fit(pts, hw, ign, nIgn, minFrac) {
+      const n = pts.length;
+      let hmax = 0; for (let i = 0; i < n; i++) if (hw[i] > hmax) hmax = hw[i];
+      const nSelf = Math.ceil(2.2 * (2 * hmax + clear) / ds) + 1;
+      let m = n;
+      for (let i = 0; i < n; i++) {
+        const p = pts[i];
+        let bad = occ.blocked(p[0], p[1], hw[i] + clear * 0.5, i < nIgn ? ign : 0);
+        for (let j = 0; !bad && j <= i - nSelf; j++) {
+          const q = pts[j], d = hw[i] + hw[j] + clear * 0.8, dx = p[0] - q[0], dy = p[1] - q[1];
+          if (dx * dx + dy * dy < d * d) bad = true;
+        }
+        if (bad) { m = i; break; }
+      }
+      return m >= Math.max(6, Math.ceil(minFrac * n)) ? m : 0;
+    }
+    function commitStem(pts, m, w0, wm, w1, sc) {
+      const id = nid++, out = [];
+      for (let i = 0; i < m; i++) {
+        const w = wprof(i / (m - 1), w0, wm, w1);
+        out.push([pts[i][0], pts[i][1], w, pts[i][2]]);
+        occ.mark(pts[i][0], pts[i][1], w * 0.5 + clear * 0.5, id);
+      }
+      const st = { id: id, pts: out, sc: sc };
+      stems.push(st);
+      return st;
+    }
+    function scrollParams(sc, dir) {
+      return { dir: dir, ls: rnd(3, 18) * K * sc, kb: 1 / (rnd(40, 90) * K * sc), ramp: 14 * K * sc, R0: rnd(28, 42) * K * sc,
+        c: rnd(0.19, 0.27), rho: Math.max(3.2 * K, rnd(4.2, 5.6) * K * Math.pow(sc, 0.8)) };
+    }
+    function tryScroll(x, y, a, dir, sc, w0f, ign, nIgn, minFrac) {
+      const P = scrollParams(sc, dir), pts = trace(x, y, a, P), n = pts.length;
+      const wm = rnd(4.2, 5.6) * K * Math.pow(sc, 0.9), w0 = w0f(wm), w1 = 1.1 * Math.max(0.8, K), hw = [];
+      for (let i = 0; i < n; i++) hw.push(wprof(i / (n - 1), w0, wm, w1) * 0.5);
+      const m = fit(pts, hw, ign, nIgn, minFrac);
+      return m ? commitStem(pts, m, w0, wm, w1, sc) : null;
+    }
+    // an S-scroll: two stems leaving the same point in opposite directions, curling the same way (point symmetric)
+    function root(x, y, a, sc) {
+      const dir = r() < 0.5 ? 1 : -1;
+      const A = tryScroll(x, y, a, dir, sc, (wm) => wm * 0.92, 0, 0, 0.95);
+      if (!A) return false;
+      tryScroll(x, y, a + Math.PI, dir, sc * rnd(0.8, 1.05), (wm) => wm * 0.92, A.id, 12, 0.93);
+      return true;
+    }
+    function attachScroll(par, idx, sd, sc) {
+      const p = par.pts[idx], a = p[3], al = rnd(0.3, 0.8);
+      const x = p[0] - Math.sin(a) * sd * p[2] * 0.2, y = p[1] + Math.cos(a) * sd * p[2] * 0.2;
+      return tryScroll(x, y, a + sd * al, sd, sc, (wm) => Math.max(wm * 0.5, Math.min(wm, p[2] * 0.85)), par.id, Math.ceil((p[2] + 2 * clear) / ds) + 4, 0.95);
+    }
+    function attachLeaf(par, idx, sd, L, W) {
+      const p = par.pts[idx], a = p[3], al = rnd(0.5, 1.0), c0 = rnd(0.35, 0.8), c1 = rnd(0.9, 1.8);
+      let x = p[0] - Math.sin(a) * sd * p[2] * 0.3, y = p[1] + Math.cos(a) * sd * p[2] * 0.3, h = a + sd * al;
+      const N = Math.max(8, Math.round(L / (ds * 0.9))), st = L / N, rib = [[x, y]];
+      for (let i = 0; i < N; i++) {
+        const t = (i + 0.5) / N;
+        h -= sd * (c0 + c1 * t * t) / N;
+        x += Math.cos(h) * st; y += Math.sin(h) * st; rib.push([x, y]);
+      }
+      const wf = (t) => W * Math.pow(Math.sin(Math.PI * Math.pow(t, 0.72)), 0.85);
+      const hw = rib.map((q, i) => wf(i / N) + 1.0);
+      const m = fit(rib, hw, par.id, Math.ceil((p[2] + 2 * clear) / ds) + 3, 0.999);
+      if (!m) return false;
+      const id = nid++;
+      rib.forEach((q, i) => occ.mark(q[0], q[1], hw[i] + clear * 0.35, id));
+      leaves.push(leafGeom(rib, wf, K, r));
+      return true;
+    }
+
+    // 1: S-scrolls at the seeds
+    for (const sp of o.roots) for (let k = 0; k < 4; k++) if (root(sp[0] + (k ? rnd(-30, 30) * K : 0), sp[1] + (k ? rnd(-30, 30) * K : 0), r() * TAU, o.rootScale || 1)) break;
+    // 2: ever smaller scrolls sprouting from the stems already there
+    const sprout = (sc) => {
+      const parents = shuffle(stems.filter((s) => s.sc > sc * 1.15));
+      for (const par of parents) {
+        const n = par.pts.length, step = Math.max(3, Math.round((22 + 60 * sc) * K / ds));
+        for (let i = Math.floor(n * rnd(0.05, 0.2)); i < n * 0.92; i += Math.max(2, Math.round(step * rnd(0.7, 1.3)))) {
+          const sd = r() < 0.5 ? 1 : -1;
+          if (!attachScroll(par, i, sd, sc * rnd(0.92, 1.08))) attachScroll(par, i, -sd, sc * rnd(0.85, 1));
+        }
+      }
+    };
+    const foliage = (Lb, minSc) => {
+      for (const par of shuffle(stems.slice())) {
+        if (par.sc < minSc) continue;
+        const n = par.pts.length, step = Math.max(3, Math.round(Lb * 0.9 * K / ds));
+        for (let i = Math.floor(n * rnd(0.04, 0.2)); i < n - 3; i += Math.max(2, Math.round(step * rnd(0.8, 1.25)))) {
+          const sd = r() < 0.5 ? 1 : -1, L = Lb * K * rnd(0.85, 1.15);
+          if (!attachLeaf(par, i, sd, L, L * rnd(0.27, 0.36))) attachLeaf(par, i, -sd, L * 0.8, L * 0.25);
+        }
+      }
+    };
+    const free = (sc, tries) => {
+      for (let t = 0; t < tries; t++) root(r() * o.w, r() * o.h, r() * TAU, sc * rnd(0.9, 1.1));
+    };
+    for (const lv of o.levels) {
+      if (typeof lv === 'object') free(lv.free, lv.n); else if (lv > 0) sprout(lv); else foliage(-lv, 0);
+    }
+    return { stems: stems, leaves: leaves, w: o.w, h: o.h, K: K };
+  }
+
+  // lay the cuts into the canvas: a lit lip up-left of every cut, a soft penumbra, then the dark core. offs: wrap offsets
+  function paintCuts(g, A, offs, K, mx) {
+    const pad = 40 * K;
+    const polys = A.stems.map((s) => {
+      const pts = s.pts, n = pts.length, L = [], R = [];
+      for (let i = 0; i < n; i++) {
+        const p = pts[i], a = p[3], hw = p[2] * 0.5, nx = -Math.sin(a), ny = Math.cos(a);
+        L.push([p[0] + nx * hw, p[1] + ny * hw]); R.push([p[0] - nx * hw, p[1] - ny * hw]);
+      }
+      return L.concat(R.reverse());
+    });
+    const bbox = (pl) => { let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const p of pl) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; } return [x0 - 4, y0 - 4, x1 + 4, y1 + 4]; };
+    const items = [];
+    A.stems.forEach((s, i) => items.push({ t: 0, pl: polys[i], bb: bbox(polys[i]) }));
+    A.leaves.forEach((l) => items.push({ t: 1, l: l, pl: l.out, bb: bbox(l.out) }));
+    const path = (pl) => { g.beginPath(); g.moveTo(pl[0][0], pl[0][1]); for (let i = 1; i < pl.length; i++) g.lineTo(pl[i][0], pl[i][1]); g.closePath(); };
+    const hl = 1.1 * Math.max(0.8, K);
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    const pass = (mode) => {
+      for (const o of offs) {
+        g.save(); g.translate(o[0] + (mode === 0 ? -hl : 0), o[1] + (mode === 0 ? -hl : 0));
+        for (const it of items) {
+          if (it.bb[2] + o[0] < -pad || it.bb[0] + o[0] > A.w + pad || it.bb[3] + o[1] < -pad || it.bb[1] + o[1] > A.h + pad) continue;
+          const sw = it.t ? it.l.lw : 0;
+          if (mode === 0) {
+            g.fillStyle = g.strokeStyle = 'rgba(255,255,255,0.85)';
+            if (it.t) { g.lineWidth = sw; path(it.pl); g.stroke(); } else { path(it.pl); g.fill(); }
+          } else if (mode === 1) {
+            g.fillStyle = g.strokeStyle = 'rgba(54,56,62,0.34)';
+            g.lineWidth = sw + 2.0 * Math.max(0.8, K); path(it.pl); if (!it.t) g.fill(); g.stroke();
+          } else {
+            g.fillStyle = g.strokeStyle = 'rgba(16,17,21,0.97)';
+            if (it.t) {
+              g.lineWidth = sw; path(it.pl); g.stroke();
+              const rb = it.l.rib, n = rb.length;
+              g.lineWidth = Math.max(1.1, sw * 0.62); g.beginPath();
+              for (let i = 1; i < n - 2; i++) { if (i === 1) g.moveTo(rb[i][0], rb[i][1]); else g.lineTo(rb[i][0], rb[i][1]); }
+              g.stroke();
+              if (it.l.hatch.length) { g.lineWidth = Math.max(0.9, sw * 0.42); g.beginPath(); for (const h of it.l.hatch) { g.moveTo(h[0], h[1]); g.lineTo(h[2], h[3]); } g.stroke(); }
+            } else { path(it.pl); g.fill(); }
+          }
+        }
+        g.restore();
+      }
+    };
+    pass(0); pass(1); pass(2);
+  }
+  function wrapOffs(w, h) { const o = []; for (const dx of [-w, 0, w]) for (const dy of (h ? [-h, 0, h] : [0])) o.push([dx, dy]); return o; }
+
+  // bright satin silver ground: soft patina blotches and a fine grain (the cuts are laid over it)
+  function silverGround(g, w, h, r) {
+    g.fillStyle = '#d3d6db'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 26; i++) {
+      const x = r() * w, y = r() * h, rad = 50 + r() * 150, dark = r() < 0.6;
+      for (const o of wrapOffs(w, h)) {
+        const gr = g.createRadialGradient(x + o[0], y + o[1], 0, x + o[0], y + o[1], rad);
+        gr.addColorStop(0, dark ? 'rgba(70,74,84,0.10)' : 'rgba(255,255,255,0.12)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = gr; g.fillRect(x + o[0] - rad, y + o[1] - rad, rad * 2, rad * 2);
+      }
+    }
+    for (let i = 0, n = w * h / 14; i < n; i++) {
+      g.fillStyle = r() < 0.5 ? 'rgba(64,68,76,0.09)' : 'rgba(255,255,255,0.16)';
+      g.fillRect(r() * w, r() * h, 1, 1 + (r() < 0.2 ? 1 : 0));
     }
   }
 
-  // tileable arabesque: running vines with spirals curling into the pockets, leaves along them, small curls in every gap
+  // tileable all-over arabesque (frame, hammer, guard, butt cap, bands): 6 cm per tile, ~0.6 mm swell cuts, curls 2-5 mm
   function engravingCanvas() {
-    const S = 1024, c = mkCanvas(S, S), g = c.getContext('2d'), r = prng(11);
-    g.fillStyle = '#4e5156'; g.fillRect(0, 0, S, S);
-    stipple(g, S, S, r, 80000, 'rgba(22,24,28,0.7)', 'rgba(140,143,150,0.5)');
-    const bands = [], leaves = [], occ = occGrid(S, S, true);
-    const lam = 512, A = 74;
-    for (let row = 0; row < 2; row++) {
-      const y0 = 256 + 512 * row, sh = row ? lam / 2 : 0;
-      const vy = (x) => y0 + A * Math.sin((x - sh) / lam * TAU);
-      const vine = [];
-      for (let i = 0; i <= 160; i++) { const x = i / 160 * S; vine.push([x, vy(x)]); }
-      bands.push({ pts: vine, w0: 13, w1: 13 });
-      for (let n = 0; n < 2; n++) {
-        const xa = sh + lam / 4 + n * lam, xb = sh + 3 * lam / 4 + n * lam;
-        const R = 112;
-        const ca = [xa - 6, vy(xa) - R - 12], cb = [xb - 6, vy(xb) + R + 12];
-        const sa = spiralPts(ca[0], ca[1], R, Math.PI / 2 + 0.55, -1, 1.75, 120);
-        const sb = spiralPts(cb[0], cb[1], R, -Math.PI / 2 - 0.55, 1, 1.75, 120);
-        bands.push({ pts: sa, w0: 12, w1: 3.5 }, { pts: sb, w0: 12, w1: 3.5 });
-        for (const [sp, cx, cy, dir] of [[sa, ca[0], ca[1], -1], [sb, cb[0], cb[1], 1]]) {
-          for (const t of [0.12, 0.3, 0.48]) {
-            const p = sp[Math.floor(t * (sp.length - 1))], out = Math.atan2(p[1] - cy, p[0] - cx);
-            leaves.push([p[0], p[1], out - dir * 0.8, 50 - t * 30, 14 - t * 6]);
-          }
-          for (const t of [0.22, 0.42]) {
-            const p2 = sp[Math.floor(t * (sp.length - 1))], inn = Math.atan2(cy - p2[1], cx - p2[0]);
-            leaves.push([p2[0], p2[1], inn + dir * 1.0, 36 - t * 20, 11]);
-          }
-          occ.mark(cx, cy, R + 8);
-        }
-        for (const xz of [sh + n * lam, sh + n * lam + lam / 2]) {
-          const up = ((xz - sh) / (lam / 2)) % 2 < 1 ? 1 : -1;
-          leaves.push([xz, vy(xz), -up * 1.1, 66, 18], [xz + 22, vy(xz + 22), up * 2.2, 50, 14]);
-        }
-      }
-    }
-    bands.forEach((b) => occ.band(b)); leaves.forEach((L) => occ.leaf(L));
-    fillCurls(occ, S, S, r, bands, leaves, 4200, 58, 11, 8);
-    engrave(g, bands, leaves, wrapOffs(S, S), 1);
-    tarnish(g, S, S, r, 20);
+    const S = 1024, K = 1.2, c = mkCanvas(S, S), g = c.getContext('2d'), r = prng(11);
+    silverGround(g, S, S, r);
+    const roots = [];
+    for (let j = 0; j < 6; j++) for (let i = 0; i < 6; i++) roots.push([(i + 0.5) * S / 6 + (r() - 0.5) * 70, (j + 0.5) * S / 6 + (r() - 0.5) * 70]);
+    const A = growArabesque({ w: S, h: S, wrapX: true, wrapY: true, K: K, rand: r, roots: roots, rootScale: 1,
+      levels: [0.7, -34, { free: 0.8, n: 200 }, 0.62, { free: 0.55, n: 200 }, 0.52, -26, { free: 0.4, n: 300 }, 0.4, 0.3, -19, { free: 0.3, n: 400 }, 0.23, -14] });
+    paintCuts(g, A, wrapOffs(S, S), K);
     return c;
   }
 
-  // the cylinder: three engraved oval cartouches round it (u = around, v = along the axis), rims at both ends
+  // a ruled (single stroked) cut with the same lit lip / penumbra / core as the scroll cuts. drawPath() builds the path
+  function cutStroke(g, drawPath, w, K) {
+    const hl = 1.1 * Math.max(0.8, K);
+    g.save(); g.lineCap = 'round'; g.lineJoin = 'round';
+    g.save(); g.translate(-hl, -hl); g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = w; drawPath(); g.stroke(); g.restore();
+    g.strokeStyle = 'rgba(54,56,62,0.42)'; g.lineWidth = w + 2.4 * Math.max(0.8, K); drawPath(); g.stroke();
+    g.strokeStyle = 'rgba(16,17,21,0.97)'; g.lineWidth = w; drawPath(); g.stroke();
+    g.restore();
+  }
+  function ellipsePath(g, cx, cy, rx, ry) { return () => { g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, 0, TAU); }; }
+
+  // the cylinder drum: u runs round it (14.5 cm over 1024 px), v along the axis (4.8 cm over 512 px). Drawn in a stretched
+  // space so the curls come out round. Four oval cartouches (mirrored arabesque round a rosette) in a field of small scrolls,
+  // double rules at both ends.
   function cylinderCanvas() {
-    const W = 1024, H = 512, c = mkCanvas(W, H), g = c.getContext('2d'), r = prng(23);
-    g.fillStyle = '#4e5156'; g.fillRect(0, 0, W, H);
-    stipple(g, W, H, r, 40000, 'rgba(22,24,28,0.7)', 'rgba(140,143,150,0.5)');
-    const bands = [], leaves = [], occ = occGrid(W, H, false);
-    for (let y = 0; y < 34; y += 4) for (let x = 0; x < W; x += 4) { occ.mark(x, y, 3); occ.mark(x, H - y, 3); }
-    for (let k = 0; k < 3; k++) {
-      const cx = W / 6 + k * W / 3, cy = H / 2, rx = 122, ry = 196;
-      const ring = []; for (let i = 0; i <= 140; i++) { const a = i / 140 * TAU; ring.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]); }
-      bands.push({ pts: ring, w0: 16, w1: 16 });
-      const inner = []; for (let i = 0; i <= 140; i++) { const a = i / 140 * TAU; inner.push([cx + Math.cos(a) * (rx - 17), cy + Math.sin(a) * (ry - 17)]); }
-      bands.push({ pts: inner, w0: 3, w1: 3 });
-      // mirrored scrolls along the axis on an S stem, a rosette in the middle
-      const sA = spiralPts(cx + 12, cy - 96, 64, Math.PI * 0.95, 1, 1.7, 90);
-      const sB = spiralPts(cx - 12, cy + 96, 64, -Math.PI * 0.05, 1, 1.7, 90);
-      bands.push({ pts: sA, w0: 11, w1: 3 }, { pts: sB, w0: 11, w1: 3 });
-      const stem = []; for (let i = 0; i <= 40; i++) { const t = i / 40; stem.push([cx - 52 + 104 * t, cy - 96 + 192 * t - Math.sin(t * TAU) * 34]); }
-      bands.push({ pts: stem, w0: 10, w1: 10 });
-      for (let q = 0; q < 6; q++) leaves.push([cx, cy, q * Math.PI / 3 + 0.3, 36, 12]);
-      leaves.push([cx + 56, cy - 152, 2.4, 40, 12], [cx - 56, cy + 152, -0.7, 40, 12], [cx - 74, cy - 40, -1.9, 38, 11], [cx + 74, cy + 40, 1.2, 38, 11]);
-      // mark the cartouche frame; inside / outside get their own small curls
-      ring.forEach((p) => occ.mark(p[0], p[1], 14));
+    const W = 1024, H = 512, DH = 340, c = mkCanvas(W, H), g = c.getContext('2d'), r = prng(23);
+    silverGround(g, W, H, r);
+    g.save(); g.scale(1, H / DH);
+    const cy = DH / 2, rx = 88, ry = 128, KF = 0.46, KM = 0.38, cxs = [];
+    for (let k = 0; k < 4; k++) for (const o of [-W, 0, W]) { const x = k * 256 + o; if (x > -rx - 20 && x < W + rx + 20) cxs.push(x); }
+    const inField = (x, y) => {
+      if (y < 27 || y > DH - 27) return false;
+      for (const cx of cxs) { const dx = (x - cx) / (rx + 17), dy = (y - cy) / (ry + 17); if (dx * dx + dy * dy < 1) return false; }
+      return true;
+    };
+    const roots = [];
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) roots.push([i * 256 + 128 + (r() - 0.5) * 30, 60 + j * 74 + (r() - 0.5) * 30]);
+    const F = growArabesque({ w: W, h: DH, wrapX: true, wrapY: false, K: KF, rand: r, roots: roots, rootScale: 0.9, mask: inField,
+      levels: [0.6, -30, { free: 0.7, n: 200 }, 0.5, -26, { free: 0.5, n: 400 }, 0.4, -20, { free: 0.36, n: 600 }, 0.3, -16, { free: 0.26, n: 800 }, 0.2, -12] });
+    paintCuts(g, F, wrapOffs(W, 0), KF);
+    // one cartouche interior: grown in the left half (local frame, origin at the cartouche's left edge), mirrored about the axis
+    const lw = rx + 4, lh = 2 * ry + 12, lcx = lw, lcy = ry + 6;
+    const inCart = (x, y) => {
+      if (x > lcx - 11) return false;
+      const dx = (x - lcx) / (rx - 15), dy = (y - lcy) / (ry - 15);
+      if (dx * dx + dy * dy > 1) return false;
+      if (Math.hypot(x - lcx, y - lcy) < 26) return false;
+      if (Math.hypot(x - lcx, Math.abs(y - lcy) - (ry - 36)) < 21) return false;
+      return true;
+    };
+    const mroots = [];
+    for (let j = 0; j < 6; j++) for (let i = 0; i < 2; i++) mroots.push([18 + i * 36 + (r() - 0.5) * 12, 26 + j * 42 + (r() - 0.5) * 14]);
+    const M = growArabesque({ w: lw, h: lh, wrapX: false, wrapY: false, K: KM, rand: r, roots: mroots, rootScale: 0.9, mask: inCart,
+      levels: [0.62, -26, { free: 0.55, n: 200 }, 0.46, -19, { free: 0.42, n: 400 }, 0.34, 0.26, -14, { free: 0.32, n: 500 }, 0.22, -11, { free: 0.24, n: 600 }, 0.18, -9] });
+    for (const cx of cxs) {
+      for (const mir of [1, -1]) {
+        g.save(); g.translate(cx, cy - lcy);
+        if (mir > 0) g.translate(-lcx, 0); else { g.scale(-1, 1); g.translate(-lcx, 0); }
+        paintCuts(g, M, [[0, 0]], KM);
+        g.restore();
+      }
     }
-    bands.forEach((b) => occ.band(b)); leaves.forEach((L) => occ.leaf(L));
-    fillCurls(occ, W, H, r, bands, leaves, 3200, 40, 10, 7);
-    engrave(g, bands, leaves, wrapOffs(W, 0), 1);
-    // raised rims at both ends
-    for (const [y0, y1] of [[0, 26], [H - 26, H]]) {
-      g.fillStyle = 'rgba(24,26,30,0.95)'; g.fillRect(0, y0 === 0 ? y1 : y0 - 6, W, 6);
-      g.fillStyle = '#e2e4e8'; g.fillRect(0, y0, W, y1 - y0);
-      g.fillStyle = 'rgba(60,62,68,0.9)'; g.fillRect(0, (y0 + y1) / 2 - 1, W, 2);
-      for (let x = 0; x < W; x += 9) { g.fillStyle = 'rgba(50,52,58,0.6)'; g.fillRect(x, y0 + 4, 2, 6); g.fillRect(x + 4, y1 - 10, 2, 6); }
+    // frames: a bold rule inside a fine one, the axis, a rosette in the middle and a leaf fan at both ends
+    for (const x of cxs) {
+      cutStroke(g, ellipsePath(g, x, cy, rx, ry), 3.6, KF);
+      cutStroke(g, ellipsePath(g, x, cy, rx - 8.5, ry - 8.5), 1.6, KF);
+      cutStroke(g, () => { g.beginPath(); g.moveTo(x, cy - ry + 40); g.lineTo(x, cy + ry - 40); }, 1.6, KF);
+      const rr = prng(7);
+      const petals = { A: { stems: [], leaves: [], w: W, h: DH, K: KM } };
+      const leaf = (px, py, ang, L, Wd, bend) => {
+        const rib = []; let hx = px, hy = py, h = ang;
+        for (let i = 0; i <= 12; i++) { rib.push([hx, hy]); h += bend / 12 * (0.6 + i / 12); hx += Math.cos(h) * L / 12; hy += Math.sin(h) * L / 12; }
+        petals.A.leaves.push(leafGeom(rib, (t) => Wd * Math.pow(Math.sin(Math.PI * Math.pow(t, 0.72)), 0.85), KM, rr));
+      };
+      for (let q = 0; q < 8; q++) leaf(x, cy, q * Math.PI / 4 + 0.2, 22, 6.5, 0.5);
+      for (const sg of [-1, 1]) {
+        const py = cy + sg * (ry - 36);
+        for (const da of [-0.95, 0, 0.95]) leaf(x, py, -sg * Math.PI / 2 + da * -sg, da ? 21 : 26, da ? 5.5 : 6.5, da * 0.4);
+      }
+      paintCuts(g, petals.A, [[0, 0]], KM);
     }
-    tarnish(g, W, H, r, 10);
+    for (const y of [7, 15, DH - 7, DH - 15]) {
+      const bold = y === 7 || y === DH - 7;
+      cutStroke(g, () => { g.beginPath(); g.moveTo(-10, y); g.lineTo(W + 10, y); }, bold ? 3.6 : 1.6, KF);
+    }
+    g.restore();
     return c;
   }
 
@@ -3121,28 +3354,31 @@ window.World = (function () {
     return c;
   }
 
-  // dark rosewood / walnut: flowing grain along v, pores, a little figure (tileable)
+  // walnut: u runs round the grip (the tile wraps twice), v down it. Flowing, warped growth rings, dark streaks, a faint
+  // fiddleback figure and elongated pores (tileable). Warm dark brown; used as map and bump (pores / latewood sit lower).
   function woodCanvas() {
-    const S = 1024, c = mkCanvas(S, S), g = c.getContext('2d'), r = prng(31);
-    g.fillStyle = '#34170d'; g.fillRect(0, 0, S, S);
-    const line = (x0, amp1, k1, ph1, amp2, k2, ph2, w, col) => {
-      for (const dx of [-S, 0, S]) {
-        g.strokeStyle = col; g.lineWidth = w; g.beginPath();
-        for (let y = 0; y <= S; y += 8) {
-          const x = x0 + dx + amp1 * Math.sin(y / S * TAU * k1 + ph1) + amp2 * Math.sin(y / S * TAU * k2 + ph2);
-          if (y) g.lineTo(x, y); else g.moveTo(x, y);
-        }
-        g.stroke();
+    const W = 512, H = 1024, c = mkCanvas(W, H), g = c.getContext('2d');
+    const img = g.createImageData(W, H), d = img.data;
+    const w1 = coarse(makeFbm(301, 3, 2, 4, 0.5), 96, 128), w2 = coarse(makeFbm(302, 8, 4, 3, 0.5), 192, 192), st = coarse(makeFbm(303, 5, 1, 4, 0.55), 160, 64);
+    const pore = makeFbm(304, 220, 24, 1, 1), tone = coarse(makeFbm(305, 2, 2, 3, 0.5), 64, 64);
+    for (let y = 0; y < H; y++) {
+      const v = (y + 0.5) / H;
+      for (let x = 0; x < W; x++) {
+        const u = (x + 0.5) / W, i = (y * W + x) * 4;
+        const a = w1(u, v), b = w2(u, v);
+        const ring = u * 15 + (a - 0.5) * 3.4 + (b - 0.5) * 0.8 + 0.35 * Math.sin(TAU * v + a * 4);
+        const f = ring - Math.floor(ring);
+        const late = sm(0.42, 0.74, f) * (1 - sm(0.84, 1.0, f));
+        const fl = 0.5 + 0.5 * Math.sin(TAU * (u * 90 + (a - 0.5) * 22));
+        const streak = sm(0.58, 0.80, st(u, v));
+        const fig = 0.5 + 0.5 * Math.sin(TAU * (v * 34 + b * 4));
+        const pr = sm(0.80, 0.92, pore(u, v));
+        const dk = clamp01(late * 0.70 + streak * 0.55 + pr * 0.45);
+        const t = (0.80 + 0.26 * tone(u, v)) * (0.90 + 0.10 * fl) * (0.95 + 0.07 * fig);
+        d[i] = clamp01(mix(0.34, 0.07, dk) * t) * 255; d[i + 1] = clamp01(mix(0.17, 0.032, dk) * t) * 255; d[i + 2] = clamp01(mix(0.085, 0.018, dk) * t) * 255; d[i + 3] = 255;
       }
-    };
-    for (let i = 0; i < 30; i++) line(r() * S, 30 + r() * 40, 1, r() * TAU, 10, 3, r() * TAU, 30 + r() * 80, r() < 0.55 ? 'rgba(12,4,2,0.22)' : 'rgba(110,48,24,0.16)');
-    for (let i = 0; i < 340; i++) {
-      const dark = r() < 0.75;
-      line(r() * S, 18 + r() * 26, 1, r() * TAU, 3 + r() * 5, 2 + Math.floor(r() * 4), r() * TAU, 0.6 + r() * 2.6,
-        dark ? 'rgba(10,3,1,' + (0.3 + r() * 0.45).toFixed(2) + ')' : 'rgba(132,62,32,' + (0.16 + r() * 0.26).toFixed(2) + ')');
     }
-    for (let i = 0; i < 10000; i++) { g.fillStyle = 'rgba(8,2,1,' + (0.3 + r() * 0.4).toFixed(2) + ')'; g.fillRect(r() * S, r() * S, 1 + r(), 2 + r() * 5); }
-    for (let i = 0; i < 600; i++) { g.fillStyle = 'rgba(160,84,46,0.16)'; g.fillRect(r() * S, r() * S, 1.5, 4 + r() * 8); }
+    g.putImageData(img, 0, 0);
     return c;
   }
 
@@ -3247,12 +3483,12 @@ window.World = (function () {
     const engrT = tex(engravingCanvas()), cylT = tex(cylinderCanvas()), barT = tex(barrelCanvas()), woodT = tex(woodCanvas());
     const envT = tex(envCanvas()); envT.mapping = THREE.EquirectangularReflectionMapping; envT.wrapS = envT.wrapT = THREE.ClampToEdgeWrapping;
 
-    const silver = new THREE.MeshPhongMaterial({ color: col(0xffffff), map: engrT, bumpMap: engrT, bumpScale: 0.00026, specular: col(0xf2f4f8), shininess: 64, envMap: envT, combine: THREE.MixOperation, reflectivity: 0.32 });
+    const silver = new THREE.MeshPhongMaterial({ color: col(0xffffff), map: engrT, bumpMap: engrT, bumpScale: 0.00014, specular: col(0xf2f4f8), shininess: 64, envMap: envT, combine: THREE.MixOperation, reflectivity: 0.32 });
     const silverCyl = silver.clone(); silverCyl.map = cylT; silverCyl.bumpMap = cylT;
     const steel = new THREE.MeshPhongMaterial({ color: col(0xffffff), map: barT, bumpMap: barT, bumpScale: 0.00008, specular: col(0x8d939c), shininess: 60, envMap: envT, combine: THREE.MixOperation, reflectivity: 0.10 });
     // every material is the same Phong variant (map + bump + env, mix blend) so the gun costs one shader compile
     const gold = new THREE.MeshPhongMaterial({ color: col(0xe8b44c), map: engrT, bumpMap: engrT, bumpScale: 0.00018, specular: col(0xffdc8a), shininess: 80, envMap: envT, combine: THREE.MixOperation, reflectivity: 0.12 });
-    const wood = new THREE.MeshPhongMaterial({ color: col(0xffffff), map: woodT, bumpMap: woodT, bumpScale: 0.00006, specular: col(0x4a3022), shininess: 40, envMap: envT, combine: THREE.MixOperation, reflectivity: 0.04 });
+    const wood = new THREE.MeshPhongMaterial({ color: col(0xffffff), map: woodT, bumpMap: woodT, bumpScale: 0.00005, specular: col(0x33261b), shininess: 24, envMap: envT, combine: THREE.MixOperation, reflectivity: 0.03 });
     const dark = new THREE.MeshPhongMaterial({ color: col(0x202124), map: engrT, bumpMap: engrT, bumpScale: 0.00005, specular: col(0x202224), shininess: 20, envMap: envT, combine: THREE.MixOperation, reflectivity: 0.04 });
 
     const mesh = (geo, mat) => { const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; return m; };
@@ -3390,7 +3626,7 @@ window.World = (function () {
     // ---------------------------------------------------------------- grip: wood, backstrap, butt cap, cross inlay, lanyard ring
     const NA = G.NA, L = G.L;
     const woodGeo = G.sheet(NA, 70, (j, i) => { const a = j / NA * TAU; return { s: (G.sCap(a) + 0.0025) * i / 70, a: a, off: 0 }; },
-      (j, i, s) => [j / NA, s / 0.10]);
+      (j, i, s) => [j / NA * 2, s / 0.11]);
     root.add(mesh(woodGeo, wood));
     // the top end of the wood (inside the frame)
     {
@@ -3412,6 +3648,10 @@ window.World = (function () {
       const pts = [];
       for (let j = 0; j < 120; j++) { const a = j / 120 * TAU, sc = G.sCap(a); pts.push(G.base(sc, a).addScaledVector(G.nrm(sc, a), 0.0008)); }
       root.add(mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, 'centripetal'), 240, 0.0009, 8, true), silver));
+      // ... and a fine wire inside it: the cap is framed by a double border
+      const pts2 = [];
+      for (let j = 0; j < 120; j++) { const a = j / 120 * TAU, sc = G.sCap(a) + 0.0044; pts2.push(G.base(sc, a).addScaledVector(G.nrm(sc, a), 0.0008)); }
+      root.add(mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts2, true, 'centripetal'), 240, 0.00036, 6, true), silver));
     }
     // backstrap: a raised engraved strip down the back, widening into the frame and into the cap
     const wb = (s) => 0.64 + 0.26 * (1 - sm(0, 0.03, s)) + 0.25 * sm(0.06, 0.095, s);

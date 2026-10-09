@@ -101,9 +101,20 @@ a knight dies within about 2.5 m, the boss takes 35 %, knights are thrown back a
 multiplier, plus a shove) inside 4.5 m, so throw it at something that is not standing on you. Kills by grenade keep the streak going.
 Debug: `__dbg.grenade.give(n) / .throw() / .state() / .tick(sec)`.
 
+### The revolver
+
+The revolver is built in code (`src/js/gunmodel.js`, no model file), after an antique engraved pistol: a long octagonal barrel in dark
+steel with silver engraved lines and a gold muzzle ring, a bright silver frame and cylinder covered in generated arabesque scrollwork (with
+an oval cartouche on the cylinder), a swan-neck hammer, a thin scrolled trigger guard, and a walnut bird's-head grip with a cross inlay and
+an engraved silver butt cap with a lanyard ring. All textures (engraving with matching bump map, walnut grain, steel) are drawn on canvases
+at load time (5 textures, at most 1024 px, about 55k triangles). The header of `gunmodel.js` is the contract with `weapon.js` (gun space,
+cylinder swing / spin pivots, hammer pivot, grip landmarks the hands are fitted to); if it ever fails, the old GLB revolver is used.
+Review sheet: `node tools/qa/gunshot.mjs [outPrefix]` renders first person, a left profile, a close-up with the hand, a shot and two reload
+frames into one PNG.
+
 ### Revolver hands and reload
 
-The first-person hands are rigged, skinned models (the MIT WebXR generic hands), re-skinned with a generated pale skin texture. Their 25 joints
+The first-person hands are rigged, skinned models (the MIT WebXR generic hands), re-skinned with a generated pale skin texture, with fingernails (glossy plates raycast onto the fingertips and parented to the last joints). Their 25 joints
 are a flat list, so `weapon.js` poses them with its own small forward-kinematics solver (`_poseHand`): the right hand is a firm grip, high on
 the grip with the web of the hand on the backstrap, the index finger through the guard onto the trigger, the other three wrapped round the
 grip and the thumb along the left of the frame. A wrist bend lets the forearm leave down and to the right, and a lofted forearm starts on the
@@ -139,6 +150,7 @@ src/js/world.js           ground, trees, rocks, circular boulder wall, colliders
 src/js/sfx.js             WebAudio synthesized sounds: master chain, reverb, 3D positional audio, ambience, mute / volume
 src/js/hud.js             ammo, HP, wave and boss bars, banners, hitmarkers, damage arcs
 src/js/fx.js              pooled particles, tracers, decals, blood pools, camera shake
+src/js/gunmodel.js        the procedural engraved revolver (geometry, canvas textures, moving parts; contract in its header)
 src/js/weapon.js          revolver viewmodel, rigged pale hands (grip pose + FK), recoil, flash, speedloader reload (separate scene and camera)
 src/js/combat.js          hit zones, damage, knockback, helmet pop, dropped gear physics
 src/js/enemies.js         animated Knight class (mixer, state machine, bone-attached gear, dagger throw, shield rush) + Enemies (incl. thrown daggers)
@@ -182,6 +194,6 @@ the current game does not use them.
 
 ## Credits
 
-The 3D models (knight, gear, revolver, trees, rocks, grass) are from Quaternius CC0 asset packs.
+The 3D models (knight, gear, trees, rocks, grass, and the fallback revolver) are from Quaternius CC0 asset packs. The revolver shown in game is procedural.
 The first-person hands (`assets/hand_right.glb`, `assets/hand_left.glb`) are the WebXR "generic hand" models from
 [`@webxr-input-profiles/assets`](https://github.com/immersive-web/webxr-input-profiles), MIT licensed (Copyright (c) 2019 Amazon, see `assets/HANDS_LICENSE.md`).
