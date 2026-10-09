@@ -4,11 +4,14 @@
           around the arena centre, preferring points behind / beside the player's view, never on a collider and never near
           the player. A wave is complete only when pending == 0 AND alive == 0.  Then the player is healed (25 HP on Normal,
           everything before the boss) via Game.heal, a 4 s countdown banner, then the next wave.
-          The LAST wave is the Boss (Difficulty.waves: 4 on Easy, 5 on Normal, 6 on Hard; intro banner + Sfx.bossRoar, boss bar).
+          The LAST wave is the Boss (Difficulty.waves: 4 on Easy, 5 on Normal, 6 on Hard; a short "Boss wave" banner + the wave horn, then
+          BOSS_DELAY later the Iron Warlord's entrance cinematic (boss.js: letterbox, storm, lightning, it bursts out of the ground,
+          title card, roar; the player keeps control), boss bar).
           Victory only after the boss dies -> HUD.victory(stats).
    Everything is driven by update(dt) timers (no setTimeout), so the QA virtual clock and freezeAI behave.
 
-   Boss (the last wave): `new window.Boss()` (no arguments), then mesh.position is set to the spawn point, `waveNumber` is assigned and
+   Boss (the last wave): `new window.Boss()` (no arguments), then mesh.position is set to the spawn point, `waveNumber` is assigned,
+   `boss.startEntrance()` arms the cinematic (it runs on the boss's first update, after the boss was moved in front of the player) and
    Enemies.add(boss) is called. Waves reads boss.hp / maxHp / displayName / dead. Minions the boss summons itself (Enemies.add)
    are NOT tracked here: they do not hold the wave open and they are killed when the boss dies (victory comes only from the
    boss's death). If the Boss class is missing, throws or comes back unusable, a tougher Knight stands in (Waves.bossFallback).
@@ -35,13 +38,15 @@
   //   boss     x boss HP                           heal     HP restored per wave   windup   x knight windup (telegraph) time
   //   speed    x knight walk / run speed           reach    x boss sweep / slam reach and attack distance
   //   throwers share of knights that throw daggers, rushers share that do the shield rush (both chosen when the knight spawns)
+  //   bossGuard how readily the Iron Warlord raises its shield arm against head shots (0..1: the chance it reacts, and the shorter its reaction
+  //             time and cooldown; boss.js "Head guard")
   //   waves    waves in a run, the boss being the last: more waves as the difficulty rises
   //   streak   kills in a row that earn the bonus weapon (grenade.js), nades = how many grenades it gives (1; a run also starts with 1)
   // ------------------------------------------------------------------------------------------------------------------------
   const LEVELS = {
-    easy:   { key: 'easy',   label: 'Easy',   dmg: 0.6, hp: 0.8,  knights: -2, boss: 0.75, heal: 40, windup: 1.0, speed: 0.9,  reach: 0.9,  throwers: 0.20, rushers: 0.10, streak: 4, nades: 1, waves: 4 },
-    normal: { key: 'normal', label: 'Normal', dmg: 1.0, hp: 1.0,  knights: 0,  boss: 1.0,  heal: 25, windup: 1.0, speed: 1.0,  reach: 1.0,  throwers: 0.35, rushers: 0.20, streak: 5, nades: 1, waves: 5 },
-    hard:   { key: 'hard',   label: 'Hard',   dmg: 1.4, hp: 1.25, knights: 2,  boss: 1.3,  heal: 15, windup: 0.8, speed: 1.15, reach: 1.15, throwers: 0.50, rushers: 0.35, streak: 6, nades: 1, waves: 6 },
+    easy:   { key: 'easy',   label: 'Easy',   dmg: 0.6, hp: 0.8,  knights: -2, boss: 0.75, heal: 40, windup: 1.0, speed: 0.9,  reach: 0.9,  throwers: 0.20, rushers: 0.10, bossGuard: 0.35, streak: 4, nades: 1, waves: 4 },
+    normal: { key: 'normal', label: 'Normal', dmg: 1.0, hp: 1.0,  knights: 0,  boss: 1.0,  heal: 25, windup: 1.0, speed: 1.0,  reach: 1.0,  throwers: 0.35, rushers: 0.20, bossGuard: 0.60, streak: 5, nades: 1, waves: 5 },
+    hard:   { key: 'hard',   label: 'Hard',   dmg: 1.4, hp: 1.25, knights: 2,  boss: 1.3,  heal: 15, windup: 0.8, speed: 1.15, reach: 1.15, throwers: 0.50, rushers: 0.35, bossGuard: 0.90, streak: 6, nades: 1, waves: 6 },
   };
   let level = 'normal';
   try { const saved = localStorage.getItem('kf_difficulty'); if (saved && LEVELS[saved]) level = saved; } catch (e) { /* private mode */ }
@@ -83,7 +88,7 @@
   const COUNTDOWN = 4;                   // seconds between waves
   // HP restored when a wave is cleared comes from Difficulty.heal (25 on Normal; 100 HP, 15 per knight hit, no other healing);
   // the break before the boss restores everything (the boss does 22-36 per hit).
-  const BOSS_DELAY = 1.8;                // boss appears this long after the intro banner / roar
+  const BOSS_DELAY = 1.8;                // boss appears this long after the intro banner (which is gone by then: the entrance cinematic follows)
   const VICTORY_DELAY = 3.0;             // let the boss death play out before the victory screen
   const MAX_ALIVE = 8;                   // never more than this many wave knights alive at once
   const BOSS_NAME = 'The Iron Warlord';
@@ -153,6 +158,7 @@
       const b = new window.Boss();
       if (!b || !b.mesh || typeof b.takeHit !== 'function') throw new Error('Boss instance has no mesh / takeHit');
       b.waveNumber = wave;
+      if (typeof b.startEntrance === 'function') b.startEntrance();       // the storm / lightning / burst-from-the-ground cinematic
       return { enemy: b, fallback: false, error: null };
     } catch (e) { err = e; }
     console.error('[waves] Boss construction failed, using a tougher knight as a stand-in:', err);
@@ -331,13 +337,12 @@
         if (HUD.setKills) HUD.setKills(this.kills);
         if (HUD.bossBar) HUD.bossBar(false);
         if (HUD.banner) {
-          if (this._bossWave) HUD.banner('Boss wave', BOSS_NAME + ' approaches', 3600, { kind: 'boss' });
+          if (this._bossWave) HUD.banner('Boss wave', BOSS_NAME + ' approaches', 1700, { kind: 'boss' });
           else HUD.banner('Wave ' + n, this.pending + ' knights approach', 2600);
         }
       }
       if (window.Sfx) {
-        if (this._bossWave) { if (Sfx.bossRoar) Sfx.bossRoar(); }
-        else if (Sfx.waveStart) Sfx.waveStart();
+        if (Sfx.waveStart) Sfx.waveStart();                    // the boss itself roars at the end of its entrance (boss.js)
         if (Sfx.duck) Sfx.duck(this._bossWave);                // the meadow ambience drops a little during the boss fight
       }
       // first knight is on the field immediately; the boss waits for its intro
