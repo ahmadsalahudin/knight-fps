@@ -303,7 +303,8 @@
       };
 
       let ok = false;
-      try { ok = this._buildRevolver(); } catch (e) { console.error('[Weapon] revolver build failed, using fallback', e); }
+      try { ok = this._buildModelGun(); } catch (e) { console.error('[Weapon] procedural gun model failed, using the GLB revolver', e); ok = false; }
+      if (!ok) { try { ok = this._buildRevolver(); } catch (e) { console.error('[Weapon] revolver build failed, using fallback', e); } }
       if (!ok) this._buildFallbackGun();
       try { this._buildHands(); } catch (e) { console.error('[Weapon] hands build failed', e); }
       this._buildFlash();
@@ -360,6 +361,38 @@
     // -----------------------------------------------------------------------------------------------------
     // revolver
     // -----------------------------------------------------------------------------------------------------
+    // the procedural revolver from gunmodel.js (window.GunModel; see the contract at the top of that file)
+    _buildModelGun: function () {
+      if (!window.GunModel || typeof GunModel.build !== 'function') return false;
+      const r = GunModel.build({ col: (h) => this._col(h), srgb: this.srgb, anisotropy: this.renderer && this.renderer.capabilities ? this.renderer.capabilities.getMaxAnisotropy() : 4 });
+      if (!r || !r.root || !r.muzzle || !r.grip) return false;
+      r.root.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; o.frustumCulled = false; } });
+      this.gunPivot.add(r.root);
+      this.gun = r.root;
+      this.muzzle = new THREE.Object3D();
+      this.muzzle.position.copy(r.muzzle);
+      this.gunPivot.add(this.muzzle);
+      const parts = { cyl: null, hammer: null };
+      if (r.cyl && r.cyl.swing && r.cyl.spin) {
+        parts.cyl = { swing: r.cyl.swing, spin: r.cyl.spin, axisLocal: r.cyl.axisLocal.clone().normalize(), swingSign: r.cyl.swingSign || 1, radius: r.cyl.radius };
+        parts.cylCenterGun = r.cyl.center.clone();
+      }
+      if (r.hammer && r.hammer.pivot) {
+        parts.hammer = { pivot: r.hammer.pivot, axisLocal: r.hammer.axisLocal.clone().normalize(), dirSign: r.hammer.dirSign || 1 };
+        parts.hammerCtrGun = (r.hammer.center || r.hammer.pivot.position).clone();
+      }
+      this.parts = parts;
+      r.root.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(r.root);
+      this.gunPivot.updateMatrixWorld(true);
+      box.applyMatrix4(new THREE.Matrix4().copy(this.gunPivot.matrixWorld).invert());
+      this.lm = {
+        box: box, grip: r.grip.clone(), muzzle: r.muzzle.clone(), length: box.max.z - box.min.z,
+        scale: 1, rotY: 0, hasWood: true, gripTopZ: r.gripTopZ, gripBotZ: r.gripBotZ, model: true,
+      };
+      return true;
+    },
+
     _buildRevolver: function () {
       if (!window.Assets || !Assets.get) return false;
       let raw = null;
