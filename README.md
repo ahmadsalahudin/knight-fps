@@ -71,7 +71,7 @@ The chosen level shows next to the wave counter (`WAVE 2 / 5 HARD`) and on the g
 | Heal after a wave | 40 HP | 25 HP | 15 HP |
 | Knights that throw daggers | 20 % | 35 % | 50 % |
 | Knights that do the shield rush | 10 % | 20 % | 35 % |
-| Kill streak that earns grenades | 3 kills: +3 | 4 kills: +2 | 5 kills: +2 |
+| Kill streak that earns grenades | 4 kills: +1 | 5 kills: +1 | 6 kills: +1 |
 
 The table lives in `window.Difficulty` at the top of `src/js/waves.js`; the other modules read it when they spawn or hit.
 
@@ -92,14 +92,49 @@ you back; **sidestep** it and the knight overshoots and **stumbles** for 1.4 s (
 damage. Shooting a rusher while the strip is showing breaks the charge. After a cooldown of 9-13 s it can do it again.
 Debug: `__dbg.knightRush(i?)`.
 
+### Knight animation touches
+
+* **Shield rush:** during the red-strip wind-up and the charge the knight's shield arm is posed procedurally (upper arm and forearm re-aimed, then rolled so the shield face looks along the charge), eased in and out; `_extraPose` in `enemies.js`.
+* **Sword swing:** the swing keeps the clip but adds a torso twist back during the wind-up, a fast whip through the strike (the clip time follows an ease-in curve) and a forward lean, then eases out in the recovery. Dagger throws and the boss are unchanged.
+* Screenshots: `npm run shots -- knight-shield knight-swing`.
+
+### Iron Warlord entrance
+
+The boss no longer just stands there: it drops out of the sky (0.9 s fall from 30 m), lands with a slam (shockwave ring, ring of dust, sparks, a hard camera shake, a white screen flash and the armour clang), and only then raises the sword and roars. The landing does no damage (`_tickDrop` in `boss.js`).
+
 ### Bonus weapon: grenades
 
-Kill several knights in a row (each within 8 s of the last; 3 / 4 / 5 on Easy / Normal / Hard) and you are given grenades (3 / 2 / 2, at most 6 carried). The HUD
+You start every run with **1 grenade**. Kill several knights in a row (each within 8 s of the last; 4 / 5 / 6 on Easy / Normal / Hard) and you are given one more (at most 6 carried). The HUD
 shows the streak and its timer, and the grenades you hold. Press **G** (or tap **GRENADE** on a touch screen) to lob one in an arc: it bounces off the ground,
 trees and rocks, and goes off on touching a knight or when its 2 s fuse ends (the LED blinks faster as it burns down). The blast reaches 6.5 m with a falloff:
 a knight dies within about 2.5 m, the boss takes 35 %, knights are thrown back and flying daggers are destroyed. It also hurts **you** (up to 30 HP x the difficulty
 multiplier, plus a shove) inside 4.5 m, so throw it at something that is not standing on you. Kills by grenade keep the streak going.
 Debug: `__dbg.grenade.give(n) / .throw() / .state() / .tick(sec)`.
+
+### The revolver
+
+The revolver is built in code (`src/js/gunmodel.js`, no model file), after an antique engraved pistol: a long octagonal barrel in dark
+steel with silver engraved lines and a gold muzzle ring, a bright silver frame and cylinder covered in generated arabesque scrollwork (with
+an oval cartouche on the cylinder), a swan-neck hammer, a thin scrolled trigger guard, and a walnut bird's-head grip with a cross inlay and
+an engraved silver butt cap with a lanyard ring. All textures (engraving with matching bump map, walnut grain, steel) are drawn on canvases
+at load time (5 textures, at most 1024 px, about 55k triangles). The header of `gunmodel.js` is the contract with `weapon.js` (gun space,
+cylinder swing / spin pivots, hammer pivot, grip landmarks the hands are fitted to); if it ever fails, the old GLB revolver is used.
+Review sheet: `node tools/qa/gunshot.mjs [outPrefix]` renders first person, a left profile, a close-up with the hand, a shot and two reload
+frames into one PNG.
+
+### Revolver hands and reload
+
+The first-person hands are rigged, skinned models (the MIT WebXR generic hands), re-skinned with a generated pale skin texture, with fingernails (glossy plates raycast onto the fingertips and parented to the last joints). Their 25 joints
+are a flat list, so `weapon.js` poses them with its own small forward-kinematics solver (`_poseHand`): the right hand is a firm grip, high on
+the grip with the web of the hand on the backstrap, the index finger through the guard onto the trigger, the other three wrapped round the
+grip and the thumb along the left of the frame. A wrist bend lets the forearm leave down and to the right, and a lofted forearm starts on the
+model's own wrist edge and runs into a leather band and the sleeve.
+
+The reload follows how it is done (and how shooters like Hunt: Showdown or Half-Life 2 show it): the gun rolls left and the left hand comes up
+under the frame, the cylinder swings out into the palm, the thumb strokes the ejector rod with the muzzle up and six empties drop, the hand
+dips out of view and comes back with a speedloader, lines it up behind the chambers, pushes it in and twists it to release the rounds, pulls
+the empty loader away, then the palm swings the cylinder shut and the hand leaves. If the hand models were missing, the old procedural hands
+and reload are used. Tuning: `__dbg.weapon.grip({ at, roll, wrist, scale, pose })` (with `?debug=1`) re-poses the right hand live.
 
 ### Sound
 
@@ -125,7 +160,8 @@ src/js/world.js           ground, trees, rocks, circular boulder wall, colliders
 src/js/sfx.js             WebAudio synthesized sounds: master chain, reverb, 3D positional audio, ambience, mute / volume
 src/js/hud.js             ammo, HP, wave and boss bars, banners, hitmarkers, damage arcs
 src/js/fx.js              pooled particles, tracers, decals, blood pools, camera shake
-src/js/weapon.js          revolver viewmodel and hand (separate scene and camera), recoil, flash, reload
+src/js/gunmodel.js        the procedural engraved revolver (geometry, canvas textures, moving parts; contract in its header)
+src/js/weapon.js          revolver viewmodel, rigged pale hands (grip pose + FK), recoil, flash, speedloader reload (separate scene and camera)
 src/js/combat.js          hit zones, damage, knockback, helmet pop, dropped gear physics
 src/js/enemies.js         animated Knight class (mixer, state machine, bone-attached gear, dagger throw, shield rush) + Enemies (incl. thrown daggers)
 src/js/boss.js            Boss extends Knight
@@ -168,4 +204,6 @@ the current game does not use them.
 
 ## Credits
 
-The 3D models (knight, gear, revolver, trees, rocks, grass) are from Quaternius CC0 asset packs.
+The 3D models (knight, gear, trees, rocks, grass, and the fallback revolver) are from Quaternius CC0 asset packs. The revolver shown in game is procedural.
+The first-person hands (`assets/hand_right.glb`, `assets/hand_left.glb`) are the WebXR "generic hand" models from
+[`@webxr-input-profiles/assets`](https://github.com/immersive-web/webxr-input-profiles), MIT licensed (Copyright (c) 2019 Amazon, see `assets/HANDS_LICENSE.md`).
