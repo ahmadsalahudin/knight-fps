@@ -16,7 +16,8 @@
         currentClip, height, bones {head,torso,hips,handR,handL,armL,armR,legL,legR}, helmet, sword, shield (Assets wrappers
         parented to bones), mixer, actions{} (upper/full-body actions by clip name), lowerActions{} (lower-body layer),
         knockback (Vector3, m/s), knockbackScale.
-   States: approach | combatIdle | windup | attack | recover | stagger | dead.
+   States: approach | combatIdle | windup | attack | recover | stagger | dead, plus rushWind | rush | stumble (shield rush) and
+        punchWind | punch | punchRec (left-fist jab).
    Animation is layered: the LOWER body (hips, legs, feet) and the UPPER body (spine, head, arms, hands) each crossfade (0.25 s)
         on their own, so a knight stands planted (Idle_swordRight legs) while its upper body plays Run_swordAttack.
    Hooks for subclasses (Boss): override any of
@@ -36,6 +37,16 @@
         on the ground shows the line, it locks 0.3 s before the charge) -> rush (8 m/s along the locked line, 1.5 m to hit: 16 damage x
         difficulty and a shove) -> stumble (1.4 s after a miss or a crash into a tree / rock, 0.5 s after a hit; takes 1.5x damage).
         Shooting a knight during rushWind breaks the charge. Debug: __dbg.knightRush(i?).
+   Overhead sword swing: the sword arm is posed procedurally on top of the attack clip (_extraPose -> _swingArm, through the same bone-override
+        system as the shield pose: _ovSave / _ovAim / _ovAimBlade). Windup: the arm swings UP and BACK over the shoulder, elbow bent, the blade
+        above and behind the head (the telegraph). Strike: a fast arm-over chop, right-high to left-low; the damage frame (ATK_DAMAGE_T, on the
+        clip time) is the moment the blade comes down in front of the knight. Then a low follow-through and a recovery that hands the arm back
+        to the clip. The torso twist / lean follow the same arc and the arm directions are measured in the TWISTED torso frame. Throwers and
+        the boss are not touched (this._throwing / type 'knight').
+   Left-hand punch: a knight 'combatIdle' / 'approach' with the player within PUNCH_RANGE (1.3 m) in front, off its 4-6 s cooldown, jabs with the
+        shield arm: punchWind (0.22 s: the left arm pulls back) -> punch (0.16 s: fast jab, damage 8 x Difficulty.dmg through Player.hurt(dmg, this)
+        at 45 % of the jab, if the player is still within PUNCH_REACH and in front, plus Game.shove(dir * 6)) -> punchRec (0.4 s). A kick (stagger)
+        or a bullet during punchWind breaks it; the jab itself is not interrupted by a bullet. Debug: __dbg.knightPunch(i?).
    Difficulty (waves.js): knight HP / speed / damage / windup time scale with window.Difficulty; the boss applies its own (boss.js).
    Loose gear: combat.js re-parents helmet / sword / shield into physics holders on death (userData.loose = true); after that this
         module never touches them again.
