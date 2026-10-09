@@ -3059,7 +3059,8 @@ window.World = (function () {
         // bare, pale hands: generated skin textures, smooth shading, a little warm emissive so the shade side never goes grey
         skin: new THREE.MeshPhongMaterial({ color: 0xffffff, map: skin('#ecc6b4', '205,140,135'), specular: col(0x30262a), shininess: 14, emissive: col(0x1e0c08) }),
         skin2: new THREE.MeshPhongMaterial({ color: 0xf2dccf, map: skin('#e6bfa8', '190,140,135'), specular: col(0x30262a), shininess: 16, emissive: col(0x26100b) }),
-        nail: new THREE.MeshPhongMaterial({ color: col(0xf2d6cf), specular: col(0x9a8f8c), shininess: 70, emissive: col(0x1c0d0a) }),
+        nail: new THREE.MeshPhongMaterial({ color: col(0xf0c4bb), specular: col(0xb0a6a4), shininess: 95, emissive: col(0x1c0b09) }),
+        nailEdge: new THREE.MeshPhongMaterial({ color: col(0xf8ece6), specular: col(0xb0a6a4), shininess: 80, emissive: col(0x1a1412) }),
         sleeve: new THREE.MeshPhongMaterial({ color: col(0x4a5668), specular: col(0x141a22), shininess: 6 }),
         cuff: new THREE.MeshPhongMaterial({ color: col(0x3a2a1c), specular: col(0x16100a), shininess: 8 })
       };
@@ -3335,7 +3336,69 @@ window.World = (function () {
       mesh.castShadow = mesh.receiveShadow = false;
       const rest = {};
       Object.keys(J).forEach((k) => { rest[k] = { p: J[k].position.clone(), q: J[k].quaternion.clone() }; });
-      return { root: w, J: J, rest: rest, mesh: mesh, pn: new V3(palmSign, 0, 0) };
+      const rig = { root: w, J: J, rest: rest, mesh: mesh, pn: new V3(palmSign, 0, 0) };
+      try { this._addNails(rig); } catch (e) { console.warn('[Weapon] nails failed', e); }
+      return rig;
+    },
+
+    // Fingernails: the hand models have none. Each nail is a thin, glossy, slightly curved plate (a flattened ellipsoid
+    // half sunk into the skin) placed on the back of the last segment, found on the mesh itself: of the vertices along
+    // that segment, the one furthest out on the back side gives the surface. The plate is parented to the distal joint,
+    // so it follows every pose. A paler free edge sits at the tip end.
+    _addNails: function (rig) {
+      const J = rig.J, rest = rig.rest, M = this.mats;
+      const back = rig.pn.clone().negate();                         // back of the hand (hand space)
+      const geo = new THREE.SphereGeometry(1, 24, 12);
+      const chains = [
+        ['index-finger-phalanx-distal', 'index-finger-tip', back.clone()],
+        ['middle-finger-phalanx-distal', 'middle-finger-tip', back.clone()],
+        ['ring-finger-phalanx-distal', 'ring-finger-tip', back.clone()],
+        ['pinky-finger-phalanx-distal', 'pinky-finger-tip', back.clone()],
+        ['thumb-phalanx-distal', 'thumb-tip', back.clone().multiplyScalar(0.55).add(new V3(0, 0, -0.85))],
+      ];
+      rig.root.updateMatrixWorld(true);
+      const ray = new THREE.Raycaster();
+      const toMesh = rig.mesh.matrixWorld.clone().invert();
+      for (const [dn, tn, guess] of chains) {
+        const bone = J[dn];
+        if (!bone || !J[tn]) continue;
+        const a = rest[dn].p, b = rest[tn].p;
+        const dir = new V3().subVectors(b, a); const len = dir.length(); dir.normalize();
+        const dorsal = guess.addScaledVector(dir, -guess.dot(dir)).normalize();
+        // the skin surface on the back of the last segment: shoot a ray at it from outside (rest pose, mesh space)
+        const axisPt = a.clone().addScaledVector(dir, len * 0.62);
+        const o = axisPt.clone().addScaledVector(dorsal, 0.03).applyMatrix4(rig.mesh.matrixWorld);
+        ray.set(o, dorsal.clone().negate().transformDirection(rig.mesh.matrixWorld));
+        const hit = ray.intersectObject(rig.mesh, false)[0];
+        if (!hit || !hit.face) continue;
+        const surf = hit.point.clone().applyMatrix4(toMesh);
+        const nrm = hit.face.normal.clone().lerp(dorsal, 0.5).normalize();     // face normal, steadied by the finger's back direction
+        const thumb = dn.indexOf('thumb') === 0;
+        const halfW = thumb ? 0.0062 : 0.0050;
+        const halfL = Math.min(len * 0.42, thumb ? 0.0085 : 0.0072);
+        const thick = 0.0011;
+        const fwd = dir.clone().addScaledVector(nrm, -dir.dot(nrm)).normalize();
+        const c = surf.clone().addScaledVector(nrm, thick * 0.15).addScaledVector(fwd, len * 0.08);
+        const x = new V3().crossVectors(nrm, fwd).normalize();
+        const qN = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, nrm, fwd));
+        // into the distal joint's own frame (rest pose)
+        const invQ = rest[dn].q.clone().invert();
+        const toLocal = (p) => p.clone().sub(rest[dn].p).applyQuaternion(invQ);
+        const plate = new THREE.Mesh(geo, M.nail);
+        plate.scale.set(halfW, thick, halfL);
+        plate.position.copy(toLocal(c));
+        plate.quaternion.copy(invQ.clone().multiply(qN));
+        plate.frustumCulled = false;
+        bone.add(plate);
+        const dorsalN = nrm;
+        // paler free edge at the tip end of the nail
+        const edge = new THREE.Mesh(geo, M.nailEdge);
+        edge.scale.set(halfW * 0.92, thick * 0.9, halfL * 0.22);
+        edge.position.copy(toLocal(c.clone().addScaledVector(fwd, halfL * 0.86).addScaledVector(dorsalN, thick * 0.10)));
+        edge.quaternion.copy(plate.quaternion);
+        edge.frustumCulled = false;
+        bone.add(edge);
+      }
     },
 
     // Pose a hand rig. pose.f[i] = [spread, proximal, intermediate, distal] (radians, + curls toward the palm) for
