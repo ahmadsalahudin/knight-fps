@@ -41,7 +41,7 @@
         system as the shield pose: _ovSave / _ovAim / _ovAimBlade). Windup: the arm swings UP and BACK over the shoulder, elbow bent, the blade
         above and behind the head (the telegraph). Strike: a fast arm-over chop, right-high to left-low; the damage frame (ATK_DAMAGE_T, on the
         clip time) is the moment the blade comes down in front of the knight. Then a low follow-through and a recovery that hands the arm back
-        to the clip. The torso twist / lean follow the same arc and the arm directions are measured in the TWISTED torso frame. Throwers and
+        to the clip. The torso twist / lean follow the same arc and the arm directions are measured in the (mostly) twisted torso frame. Throwers and
         the boss are not touched (this._throwing / type 'knight').
    Left-hand punch: a knight 'combatIdle' / 'approach' with the player within PUNCH_RANGE (1.3 m) in front, off its 4-6 s cooldown, jabs with the
         shield arm: punchWind (0.22 s: the left arm pulls back) -> punch (0.16 s: fast jab, damage 8 x Difficulty.dmg through Player.hurt(dmg, this)
@@ -56,6 +56,7 @@
    daggers[], throwDagger(thrower, target?), _tickDaggers(dt)   (ticked by update(), emptied by clear())
    Debug (?debug=1, installed lazily): __dbg.knight.pose(i, state, progress), .gear(i), .info(i),
         __dbg.knightRush(i?)  the knight (default: the nearest living one) starts its shield rush wind-up at once,
+        __dbg.knightPunch(i?)  the knight (default: the nearest living one) starts its left-hand punch at once (no range / cooldown check),
         __dbg.knightThrow(i?, flightSec?)  the knight (default: the nearest living one) throws at once, no windup / cooldown / range check;
         flightSec advances the dagger that long right away (use it with a frozen AI), __dbg.daggers() lists the daggers in flight.
 */
@@ -96,6 +97,19 @@
   const RUSH_MIN = 7, RUSH_MAX = 18, RUSH_WIND = 0.85, RUSH_LOCK = 0.3;     // distance window (m), telegraph (s), line locks this long before the charge
   const RUSH_SPEED = 8, RUSH_HIT_R = 1.5, RUSH_DAMAGE = 16, RUSH_SHOVE = 9;  // m/s, m, base damage, m/s given to the player
   const RUSH_STUMBLE_MISS = 1.4, RUSH_STUMBLE_HIT = 0.5, STUMBLE_DAMAGE = 1.5;
+  // left-hand punch (a shield-arm jab at very close range)
+  const PUNCH_RANGE = 1.3, PUNCH_REACH = 1.75;        // m: it starts when the player is this close in front; it still connects this far away at the hit frame
+  const PUNCH_WIND = 0.22, PUNCH_TIME = 0.16, PUNCH_REC = 0.4, PUNCH_HIT = 0.45;   // s of pull-back, jab and recovery; the fist lands at this fraction of the jab
+  const PUNCH_DAMAGE = 8, PUNCH_SHOVE = 6, PUNCH_CD_MIN = 4, PUNCH_CD_MAX = 6;     // base damage, m/s given to the player, s between two punches
+  // Arm poses of the sword swing and the punch, as directions in the knight's own frame [right, up, forward] (normalised when used, and
+  // turned with the torso twist): upper arm (shoulder -> elbow), forearm (elbow -> wrist) and, for the sword arm, the blade (out of the fist).
+  //                        upper arm              forearm                 blade
+  const SW_COCK = [ 0.70, 0.60, -0.15,   -0.10, 0.75, -0.60,    0.05, 0.86, -0.50 ];   // over the shoulder: elbow out and up, the blade above and behind the head
+  const SW_OVER = [ 0.55, 0.65,  0.40,    0.15, 0.50,  0.85,    0.05, 0.55,  0.83 ];   // the arm comes over the top, the blade rises ahead
+  const SW_HIT  = [ 0.25, 0.30,  0.92,   -0.05,  0.00, 1.00,   -0.35, -0.55, 0.76 ];   // the blade comes down in front of the knight (ATK_DAMAGE_T)
+  const SW_THRU = [-0.15, -0.70, 0.69,   -0.45, -0.45, 0.77,   -0.55, -0.55, 0.63 ];   // follow-through: low, across the body to the left
+  const PU_CHAMBER = [-0.25, -0.65, -0.60,   0.20, 0.30, 0.92 ];                        // left arm pulled back: elbow behind, fist by the chest
+  const PU_JAB     = [ 0.20, -0.12,  0.97,   0.28, 0.03, 0.96 ];                        // left arm straight out ahead
   const NEUTRAL = { dmg: 1, hp: 1, windup: 1, speed: 1, reach: 1, throwers: 0.35, rushers: 0.2 };
   const diff = () => (window.Difficulty && Difficulty.get()) || NEUTRAL;
 
@@ -118,6 +132,22 @@
   const _v2 = new V3(), _v3 = new V3(), _v4 = new V3(), _v5 = new V3(), _v6 = new V3(), _up = new V3(0, 1, 0);
   const _v1 = new V3(), _q1 = new Q(), _q2 = new Q(), _sp = new V3();
   const AX = new V3(1, 0, 0), AZ = new V3(0, 0, 1);
+  const _dU = new V3(), _dF = new V3(), _dB = new V3(), _fc = new V3();           // arm pose directions (world) and the facing of the torso frame
+  const _oq1 = new Q(), _oq2 = new Q(), _oq3 = new Q(), _oq4 = new Q(), _oq5 = new Q();
+
+  const mixKey = (out, a, b, t, n) => { for (let i = 0; i < n; i++) out[i] = a[i] + (b[i] - a[i]) * t; };
+  // direction number `o` (0 upper arm, 3 forearm, 6 blade) of an arm key, knight frame -> world; (sn, cs) = sin / cos of the torso's yaw
+  function keyDir(out, key, o, sn, cs) {
+    const r = key[o], u = key[o + 1], f = key[o + 2];
+    return out.set(-r * cs + f * sn, u, r * sn + f * cs).normalize();
+  }
+  // The strike through its keyframes. su = 0 cocked, 0.27 over the head, 0.54 the blade lands (the clip time of ATK_DAMAGE_T), 1 follow-through.
+  function strikeKey(out, su) {
+    if (su < 0.27) mixKey(out, SW_COCK, SW_OVER, su / 0.27, 9);
+    else if (su < 0.54) mixKey(out, SW_OVER, SW_HIT, (su - 0.27) / 0.27, 9);
+    else mixKey(out, SW_HIT, SW_THRU, smooth((su - 0.54) / 0.46), 9);
+  }
+  const toward0 = (v, s) => (v > s ? v - s : v < -s ? v + s : 0);
 
   // Split every clip once into a lower and an upper body clip (clips are shared by all knights).
   let clipSets = null;
@@ -184,7 +214,10 @@
       this.rusher = this.type === 'knight' && !this.thrower && roll < D.throwers + (D.rushers || 0);
       this._rushCd = 6 + Math.random() * 4;       // s until the first rush may start
       this._rushDir = new V3(0, 0, 1);
-      this._shieldW = 0; this._ov = [];
+      this._shieldW = 0; this._ov = []; this._ovN = 0;       // _ov: pooled slots of the bone overrides (this frame's _ovN are in use)
+      this._swW = 0; this._puW = 0; this._twC = 0; this._leC = 0;                // current weights of the procedural sword arm / punching arm, torso twist / lean
+      this._swKey = new Float32Array(9); this._puKey = new Float32Array(6);      // the arm keys being posed (kept while a weight eases out)
+      this._punchCd = 1.5 + Math.random() * 2;    // s until the next left-hand punch may start (4-6 s after each one)
       this._rushLen = 12; this._rushed = 0; this._rushHit = false; this._strip = null;
       this.knockbackScale = typeof opts.knockbackScale === 'number' ? opts.knockbackScale : 1;
       this.knockback = new V3();
@@ -239,6 +272,7 @@
       this.helmet = opts.helmet === false ? null : this._mount('helmet');
       this.sword = this._mount('sword');
       this.shield = this._mount('shield');
+      this._bladeL = this.sword ? new V3(0, 1, 0).applyQuaternion(this.sword.quaternion) : null;   // the blade (the sword's +Y) in Palm.R's own axes
 
       // ---- animation -----------------------------------------------------------------------------------------------
       this._buildAnimation();
@@ -387,12 +421,12 @@
       this.prevState = prev;
       this.state = name;
       this.stateT = 0;
-      if (name === 'windup') { this._hitDone = false; }
+      if (name === 'windup' || name === 'punch') { this._hitDone = false; }
       if (name !== 'windup' && name !== 'recover') this._throwing = false;
       if (name !== 'rushWind') this._stripOff();
       if (name === 'approach') this._playStateAnim('approach', FADE);
       else if (name === 'combatIdle' || name === 'stagger') this._playStateAnim(name, FADE);
-      else if (name === 'rushWind' || name === 'stumble') this._playStateAnim('combatIdle', FADE);
+      else if (name === 'rushWind' || name === 'stumble' || name === 'punchWind' || name === 'punch' || name === 'punchRec') this._playStateAnim('combatIdle', FADE);
       else if (name === 'rush') { this.gait = 'Run'; this._playBoth('Run', 0.15); this.currentClip = 'Run'; }
       else if (name === 'windup') this._playStateAnim('windup', FADE * 0.8);
       else if ((name === 'attack' || name === 'recover') && this._cur.upper !== this.actions[ATTACK_CLIP]) this._playStateAnim('windup', 0.1);   // jumped in (debug / subclass)
@@ -420,9 +454,11 @@
       this._cool -= dt;
       this._throwCd -= dt;
       this._rushCd -= dt;
+      this._punchCd -= dt;
       const dist = ctx.dist;
       switch (st) {
         case 'approach': {
+          if (this._canPunch(ctx)) { this.startPunch(); break; }
           if (dist <= this.attackStart) { this._idleWait = 0.2 + Math.random() * 0.35; this.setState('combatIdle'); }
           else if (this.thrower && this._throwCd <= 0 && dist >= THROW_MIN && dist <= THROW_MAX && this._facingError(ctx) < 0.7
             && Enemies.daggers.length < DAGGER_MAX) this.startThrow();
@@ -431,6 +467,7 @@
         }
         case 'combatIdle': {
           if (dist > this.attackStart * 1.35) { this.setState('approach'); break; }
+          if (this._canPunch(ctx)) { this.startPunch(); break; }
           if (this.stateT >= this._idleWait && this._cool <= 0 && this._facingError(ctx) < 0.6) this.startWindup();
           break;
         }
@@ -461,6 +498,19 @@
           break;
         }
         case 'rush': this._rushTick(dt, ctx); break;
+        case 'punchWind': {
+          if (this.stateT >= PUNCH_WIND) { this.setState('punch'); sfx('swing', false, soundAt(this)); }
+          break;
+        }
+        case 'punch': {
+          if (!this._hitDone && this.stateT >= PUNCH_TIME * PUNCH_HIT) { this._hitDone = true; this.onPunchHit(ctx); }
+          if (this.stateT >= PUNCH_TIME) this.setState('punchRec');
+          break;
+        }
+        case 'punchRec': {
+          if (this.stateT >= PUNCH_REC) { this._cool = Math.max(this._cool, 0.3 + Math.random() * 0.3); this._idleWait = 0.1; this.setState(dist <= this.attackStart * 1.2 ? 'combatIdle' : 'approach'); }
+          break;
+        }
         case 'stumble': {
           if (this.stateT >= this._stumbleT) { this._cool = 0.3; this.setState(dist <= this.attackStart * 1.2 ? 'combatIdle' : 'approach'); }
           break;
@@ -490,6 +540,32 @@
       this._throwCd = 5 + Math.random() * 3;
       this.windupTime = Math.max(0.45, THROW_WINDUP * diff().windup);
       this.setState('windup');
+    }
+
+    // ---- left-hand punch --------------------------------------------------------------------------------------------------
+    // A wave knight (not the boss) with the player within PUNCH_RANGE straight ahead, off its cooldown and its post-attack pause.
+    _canPunch(ctx) {
+      return this.type === 'knight' && this._punchCd <= 0 && this._cool <= 0 && ctx.dist <= PUNCH_RANGE * this.sizeScale
+        && this._facingError(ctx) < 0.9 && !(window.Game && Game.dead);
+    }
+
+    startPunch() {
+      this._punchCd = PUNCH_CD_MIN + Math.random() * (PUNCH_CD_MAX - PUNCH_CD_MIN);
+      this._throwing = false;
+      this.setState('punchWind');
+    }
+
+    // The fist lands: only if the player is still in front and within reach. Damage x Difficulty, a shove away from the knight.
+    onPunchHit(ctx) {
+      if (ctx.dist > PUNCH_REACH * this.sizeScale) return;
+      const fx = Math.sin(this._yaw), fz = Math.cos(this._yaw);
+      if (ctx.dist > 1e-4 && (fx * ctx.nx + fz * ctx.nz) < 0.5) return;
+      if (window.FX && FX.sparks && this.bones.handL) {
+        try { FX.sparks(this.bones.handL.getWorldPosition(_v5), _v6.set(-ctx.nx, 0.2, -ctx.nz), 6); } catch (e) { /* ignore */ }
+      }
+      sfx('clang', soundAt(this));
+      if (window.Player && Player.hurt) Player.hurt(Math.max(1, Math.round(PUNCH_DAMAGE * diff().dmg)), this);
+      if (window.Game && Game.shove) Game.shove(ctx.nx * PUNCH_SHOVE, ctx.nz * PUNCH_SHOVE);
     }
 
     // ---- shield rush ----------------------------------------------------------------------------------------------------
@@ -667,7 +743,8 @@
 
     _turn(dt, ctx) {
       if (ctx.dist < 1e-3 || this.state === 'rush') return;                 // a charging knight keeps its line
-      const rate = (this.state === 'windup' || this.state === 'attack' || this.state === 'recover' || this.state === 'rushWind') ? this.turnRateAttack : this.turnRate;
+      const s = this.state;
+      const rate = (s === 'windup' || s === 'attack' || s === 'recover' || s === 'rushWind' || s === 'punchWind' || s === 'punch' || s === 'punchRec') ? this.turnRateAttack : this.turnRate;
       const err = angDiff(this._yaw, Math.atan2(ctx.dx, ctx.dz));
       this._yaw += clamp(err, -rate * dt, rate * dt);
       this.mesh.rotation.y = this._yaw;
@@ -745,6 +822,9 @@
           // a short step into the swing so the blade actually reaches the player
           const f = clamp(1 - this.stateT / (this.strikeTime * 0.7), 0, 1);
           tx = ctx.nx * this.lungeSpeed * f; tz = ctx.nz * this.lungeSpeed * f;
+        } else if (this.state === 'punch' && ctx.dist > this.stopDist * 0.8) {
+          const f = clamp(1 - this.stateT / (PUNCH_TIME * 0.8), 0, 1);          // a small step into the jab
+          tx = ctx.nx * 1.4 * this.sizeScale * f; tz = ctx.nz * 1.4 * this.sizeScale * f;
         }
       }
 
@@ -824,9 +904,9 @@
     // whose clip is static at that moment (the head during the sword swing) would keep last frame's rotation and gain a new one every
     // frame: a knight shot mid-swing spun its head round by up to ~3 rad. So the added rotation is taken off again before the mixer runs.
     _undoProcedural() {
-      if (this._ov && this._ov.length) {            // swing twist / shield pose: put the pre-override rotations back (last in, first out)
-        for (let i = this._ov.length - 1; i >= 0; i--) this._ov[i].bone.quaternion.copy(this._ov[i].q);
-        this._ov.length = 0;
+      if (this._ovN > 0) {                          // swing twist / arm poses / shield pose: put the pre-override rotations back (last in, first out)
+        for (let i = this._ovN - 1; i >= 0; i--) this._ov[i].bone.quaternion.copy(this._ov[i].q);
+        this._ovN = 0;
       }
       if (!this._pOn) return;
       this._pOn = false;
@@ -835,8 +915,13 @@
       if (head) head.quaternion.multiply(_q1.copy(this._pH).invert());
     }
 
-    // ---- bone overrides on top of the mixer (swing twist, shield arm). Each one is remembered so _undoProcedural can take it off again.
-    _ovSave(bone) { if (!this._ov) this._ov = []; this._ov.push({ bone: bone, q: bone.quaternion.clone() }); }
+    // ---- bone overrides on top of the mixer (swing twist, sword arm, punching arm, shield arm). Each one is remembered (in a pooled slot,
+    // no allocation) so _undoProcedural can take it off again.
+    _ovSave(bone) {
+      const o = this._ov[this._ovN] || (this._ov[this._ovN] = { bone: null, q: new Q() });
+      o.bone = bone; o.q.copy(bone.quaternion);
+      this._ovN++;
+    }
 
     // rotate `bone` about a WORLD axis by `ang` (needs fresh world matrices on its parent chain): q' = P^-1 R P q
     _ovRotate(bone, axis, ang) {
@@ -851,55 +936,116 @@
     _ovAim(bone, child, dir, w) {
       this._ovSave(bone);
       bone.getWorldPosition(_v1); child.getWorldPosition(_v2);
-      _v2.sub(_v1).normalize();
-      const d = new Q().setFromUnitVectors(_v2, dir);
-      d.slerp(new Q(), 1 - w);
-      const P = bone.parent.getWorldQuaternion(new Q());
-      const W = bone.getWorldQuaternion(new Q());
-      bone.quaternion.copy(P.invert().multiply(d.multiply(W)));
+      this._ovTurn(bone, _v2.sub(_v1).normalize(), dir, w);
+    }
+
+    // swing the hand (and the sword in it) so the blade points along `dir` (world), blended by w
+    _ovAimBlade(hand, dir, w) {
+      this._ovSave(hand);
+      hand.getWorldQuaternion(_oq5);
+      this._ovTurn(hand, _v1.copy(this._bladeL).applyQuaternion(_oq5), dir, w);
+    }
+
+    // turn `bone` (its override is already saved) so the world vector `from` swings toward `to`, by the fraction w of the way: q' = P^-1 d W
+    _ovTurn(bone, from, to, w) {
+      _oq1.setFromUnitVectors(from, to);
+      _oq1.slerp(_oq2.identity(), 1 - w);
+      bone.parent.getWorldQuaternion(_oq3).invert();
+      bone.getWorldQuaternion(_oq4);
+      bone.quaternion.copy(_oq3.multiply(_oq1).multiply(_oq4));
       bone.updateMatrixWorld(true);
     }
 
-    // turn / lean the torso through the sword swing and bring the shield up for the charge
+    // Sword arm: upper arm, forearm and blade along an arm key (see SW_*), blended with the clip by w. (sn, cs): yaw of the torso frame.
+    _swingArm(key, w, sn, cs) {
+      const b = this.bones, fore = b.armR, upper = fore && fore.parent, hand = b.handR;
+      if (!(fore && upper && hand)) return;
+      this._ovAim(upper, fore, keyDir(_dU, key, 0, sn, cs), w);
+      this._ovAim(fore, hand, keyDir(_dF, key, 3, sn, cs), w);
+      if (this._bladeL) this._ovAimBlade(hand, keyDir(_dB, key, 6, sn, cs), w);
+    }
+
+    // Shield arm: upper arm along dU, forearm along dF (world), then the forearm rolled about its axis until the shield face looks along `face`.
+    _poseShieldArm(dU, dF, face, w) {
+      const fore = this.bones.armL, upper = fore && fore.parent, hand = this.bones.handL;
+      if (!(w > 0 && fore && upper && hand && this.shield)) return;
+      this._ovAim(upper, fore, dU, w);
+      this._ovAim(fore, hand, dF, w);
+      this.shield.updateWorldMatrix(true, false);
+      _v1.set(0, 0, 1).transformDirection(this.shield.matrixWorld);
+      _v1.addScaledVector(dF, -_v1.dot(dF)).normalize();
+      _v2.copy(face); _v2.addScaledVector(dF, -_v2.dot(dF)).normalize();
+      let ang = Math.acos(clamp(_v1.dot(_v2), -1, 1));
+      if (_v3.crossVectors(_v1, _v2).dot(dF) < 0) ang = -ang;
+      this._ovRotate(fore, dF, ang * w);
+    }
+
+    // The overhead sword swing, the left-hand punch (both a procedural arm pose, stateless in the state timer), the torso that goes with them,
+    // and the raised shield of the charge. A pose that is cut short (a hit staggers the knight) eases out instead of popping.
     _extraPose(dt) {
       const st = this.state;
       const bones = this.bones;
-      let twist = 0, lean = 0, shieldTarget = 0;
-      if (this.type === 'knight' && !this._throwing) {
-        if (st === 'windup') { const u = clamp(this.stateT / this.windupTime, 0, 1); const k = smooth(Math.min(1, u / 0.6)); twist = -0.34 * k; lean = -0.06 * k; }
-        else if (st === 'attack') { const u = clamp(this.stateT / this.strikeTime, 0, 1); const k = Math.pow(u, 1.8); twist = lerp(-0.34, 0.5, k); lean = lerp(-0.06, 0.2, k); }
-        else if (st === 'recover') { const u = clamp(this.stateT / this.recoverTime, 0, 1); const k = smooth(Math.min(1, u * 1.25)); twist = lerp(0.5, 0, k); lean = lerp(0.2, 0, k); }
+      const knight = this.type === 'knight';
+      let shieldTarget = 0;
+      const swing = knight && !this._throwing && (st === 'windup' || st === 'attack' || st === 'recover');
+      const punch = knight && (st === 'punchWind' || st === 'punch' || st === 'punchRec');
+      if (swing) {
+        // windup: the arm swings up and back over the shoulder, the torso turns away and leans back; strike: the arm comes over and down, the torso
+        // whips round and leans in (same ease-in curve as the clip time, so the blade lands at su 0.54 = ATK_DAMAGE_T); recover: low, then back to the clip
+        const key = this._swKey;
+        if (st === 'windup') {
+          const u = clamp(this.stateT / this.windupTime, 0, 1), k = smooth(Math.min(1, u / 0.55));
+          key.set(SW_COCK); this._swW = k; this._twC = -0.4 * k; this._leC = -0.1 * k;
+        } else if (st === 'attack') {
+          const su = Math.pow(clamp(this.stateT / this.strikeTime, 0, 1), 1.8);
+          strikeKey(key, su); this._swW = 1; this._twC = lerp(-0.4, 0.5, su); this._leC = lerp(-0.1, 0.22, su);
+        } else {
+          const u = clamp(this.stateT / this.recoverTime, 0, 1), k = smooth(Math.min(1, u * 1.25));
+          key.set(SW_THRU); this._swW = 1 - k; this._twC = lerp(0.5, 0, k); this._leC = lerp(0.22, 0, k);
+        }
+      } else if (punch) {
+        // the left shoulder goes back with the fist (torso turned left), then the torso whips right as the arm shoots out
+        const key = this._puKey;
+        if (st === 'punchWind') {
+          const u = clamp(this.stateT / PUNCH_WIND, 0, 1), k = smooth(u);
+          key.set(PU_CHAMBER); this._puW = smooth(Math.min(1, u / 0.8)); this._twC = 0.3 * k; this._leC = -0.05 * k;
+        } else if (st === 'punch') {
+          const u = clamp(this.stateT / PUNCH_TIME, 0, 1), k = 1 - (1 - u) * (1 - u);
+          mixKey(key, PU_CHAMBER, PU_JAB, k, 6); this._puW = 1; this._twC = lerp(0.3, -0.28, k); this._leC = lerp(-0.05, 0.14, k);
+        } else {
+          const u = clamp(this.stateT / PUNCH_REC, 0, 1), k = smooth(u);
+          mixKey(key, PU_JAB, PU_CHAMBER, smooth(Math.min(1, u * 2)) * 0.7, 6); this._puW = 1 - smooth(clamp((u - 0.15) / 0.85, 0, 1)); this._twC = lerp(-0.28, 0, k); this._leC = lerp(0.14, 0, k);
+        }
       }
-      if (this.type === 'knight' && (st === 'rushWind' || st === 'rush')) shieldTarget = 1;
+      if (!swing) { this._swW = Math.max(0, this._swW - dt * 6); if (!punch) { this._twC = toward0(this._twC, dt * 4); this._leC = toward0(this._leC, dt * 4); } }
+      if (!punch) this._puW = Math.max(0, this._puW - dt * 6);
+      if (knight && (st === 'rushWind' || st === 'rush')) shieldTarget = 1;
       this._shieldW += (shieldTarget - this._shieldW) * Math.min(1, dt * (shieldTarget ? 11 : 7));
       if (this._shieldW < 0.01) this._shieldW = 0;
-      if (Math.abs(twist) < 0.002 && Math.abs(lean) < 0.002 && this._shieldW === 0) return;
+      const twist = this._twC, lean = this._leC, swW = this._swW > 0.001 ? this._swW : 0, puW = this._puW > 0.001 ? this._puW : 0;
+      if (Math.abs(twist) < 0.002 && Math.abs(lean) < 0.002 && this._shieldW === 0 && swW === 0 && puW === 0) return;
       this.mesh.updateMatrixWorld(true);
       const yaw = this.mesh.rotation.y, sn = Math.sin(yaw), cs = Math.cos(yaw);
       if (bones.torso && (twist || lean)) {
         _v3.set(0, 1, 0);
         this._ovTorso(bones.torso, _v3, twist, _v4.set(cs, 0, -sn), lean);
       }
-      const W = this._shieldW;
-      const fore = bones.armL, upper = fore && fore.parent, hand = bones.handL;
-      if (W > 0 && fore && upper && hand && this.shield) {
-        const f = _v5.set(sn, 0, cs);
-        _v1.copy(fore.getWorldPosition(_v1)).sub(this.mesh.position);
+      // the arms are posed in the frame of the (twisted) torso (they follow most of the twist, so the arc stays in front of the knight)
+      const fy = yaw + twist * 0.6, fsn = Math.sin(fy), fcs = Math.cos(fy);
+      if (swW) this._swingArm(this._swKey, swW, fsn, fcs);
+      if (puW) {
+        const key = this._puKey;
+        // the shield rides on the forearm with its face looking out to the left (and a little up), so the fist leads the jab
+        this._poseShieldArm(keyDir(_dU, key, 0, fsn, fcs), keyDir(_dF, key, 3, fsn, fcs), _fc.set(fcs, 0.25, -fsn), puW);
+      } else if (this._shieldW > 0 && bones.armL) {
+        // upper arm forward and slightly out, forearm up and forward: the shield stands in front of the chest, its face looking along the charge
+        const f = _fc.set(sn, 0, cs);
+        _v1.copy(bones.armL.getWorldPosition(_v1)).sub(this.mesh.position);
         const side = (_v1.x * cs - _v1.z * sn) >= 0 ? 1 : -1;
         const out = _v6.set(cs * side, 0, -sn * side);
-        // upper arm forward and slightly out, forearm up and forward: the shield stands in front of the chest
-        const dU = new V3().copy(f).multiplyScalar(0.62).addScaledVector(out, 0.22).addScaledVector(_up, -0.5).normalize();
-        this._ovAim(upper, fore, dU, W);
-        const dF = new V3().copy(f).multiplyScalar(0.3).addScaledVector(out, -0.1).addScaledVector(_up, 0.92).normalize();
-        this._ovAim(fore, hand, dF, W);
-        // roll the forearm about its axis until the shield face (+Z of the shield, the side facing out) looks along the charge
-        this.shield.updateWorldMatrix(true, false);
-        const nrm = new V3(0, 0, 1).transformDirection(this.shield.matrixWorld);
-        const axis = new V3().copy(dF);
-        const a = nrm.clone().addScaledVector(axis, -nrm.dot(axis)).normalize();
-        const b = f.clone().addScaledVector(axis, -f.dot(axis)).normalize();
-        let ang = Math.acos(clamp(a.dot(b), -1, 1)); if (new V3().crossVectors(a, b).dot(axis) < 0) ang = -ang;
-        this._ovRotate(fore, axis, ang * W);
+        _dU.copy(f).multiplyScalar(0.62).addScaledVector(out, 0.22).addScaledVector(_up, -0.5).normalize();
+        _dF.copy(f).multiplyScalar(0.3).addScaledVector(out, -0.1).addScaledVector(_up, 0.92).normalize();
+        this._poseShieldArm(_dU, _dF, f, this._shieldW);
       }
     }
 
@@ -995,7 +1141,7 @@
       this._flinch = 1;
       this._flinchPow = zone === 'head' ? 0.55 : (zone === 'limb' ? 0.3 : 0.42);       // peak torso pitch (rad); the head adds 0.7x of it on top
       // a hit while winding up breaks the telegraph; the strike itself is not interrupted
-      if (this.state === 'attack' || this.state === 'recover' || this.state === 'rush' || this.state === 'stumble') return;
+      if (this.state === 'attack' || this.state === 'recover' || this.state === 'rush' || this.state === 'stumble' || this.state === 'punch' || this.state === 'punchRec') return;
       if (this.state !== 'stagger') this.setState('stagger');
       else this.stateT = 0;
     }
@@ -1328,6 +1474,23 @@
       k.startRush();
       return { state: k.state, dir: k._rushDir.toArray().map(round) };
     };
+    // the knight i (default: the nearest living one) starts its left-hand punch at once (no range / cooldown / facing check)
+    window.__dbg.knightPunch = function (i) {
+      let k = typeof i === 'number' ? get(i) : null;
+      if (!k) {
+        const pp = Game.playerObj.position;
+        let best = 1e9;
+        for (const e of Enemies.list) {
+          if (e.dead || e.type !== 'knight') continue;
+          const dd = Math.hypot(e.mesh.position.x - pp.x, e.mesh.position.z - pp.z);
+          if (dd < best) { best = dd; k = e; }
+        }
+      }
+      if (!k) return null;
+      k.hold = false;
+      k.startPunch();
+      return { state: k.state, cd: round(k._punchCd) };
+    };
     window.__dbg.daggers = function () {
       return Enemies.daggers.map((d) => ({ state: d.state, pos: d.mesh.position.toArray().map(round), age: round(d.age), lie: round(d.lie) }));
     };
@@ -1340,7 +1503,7 @@
         k.hold = true;
         if (typeof yaw === 'number') { k._yaw = yaw; k.mesh.rotation.y = yaw; }
         k.setState(state);
-        const dur = { windup: k.windupTime, attack: k.strikeTime, recover: k.recoverTime, stagger: 0.3 }[state] || 1;
+        const dur = { windup: k.windupTime, attack: k.strikeTime, recover: k.recoverTime, stagger: 0.3, punchWind: PUNCH_WIND, punch: PUNCH_TIME, punchRec: PUNCH_REC }[state] || 1;
         k.stateT = (progress || 0) * dur;
         return { state: k.state, stateT: round(k.stateT) };
       },

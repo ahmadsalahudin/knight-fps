@@ -337,7 +337,7 @@
         if (HUD.setKills) HUD.setKills(this.kills);
         if (HUD.bossBar) HUD.bossBar(false);
         if (HUD.banner) {
-          if (this._bossWave) HUD.banner('Boss wave', BOSS_NAME + ' approaches', 1700, { kind: 'boss' });
+          if (this._bossWave) HUD.banner('Boss wave', BOSS_NAME + ' approaches', 1800, { kind: 'boss' });
           else HUD.banner('Wave ' + n, this.pending + ' knights approach', 2600);
         }
       }
@@ -396,7 +396,7 @@
         this.boss = e;
         const hp = hpOf(e);
         this._bossMax = (typeof e.maxHp === 'number' && e.maxHp > 0) ? e.maxHp : (hp > 0 ? hp : 1);
-        if (window.HUD && HUD.bossBar) HUD.bossBar(true, 1, this._bossName());
+        if (window.HUD && HUD.bossBar) HUD.bossBar(!e.cinematic, 1, this._bossName());      // the bar appears when the entrance cinematic has landed
       }
       this._hud();
     },
@@ -419,6 +419,7 @@
     _updateBossBar() {
       const b = this.boss;
       if (!b || this.bossKilled || !window.HUD || !HUD.bossBar) return;
+      if (b.cinematic) return;
       const hp = hpOf(b);
       const max = (typeof b.maxHp === 'number' && b.maxHp > 0) ? b.maxHp : this._bossMax;
       HUD.bossBar(true, typeof hp === 'number' ? Math.max(0, hp) / max : 1, this._bossName());
