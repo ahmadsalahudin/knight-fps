@@ -20,7 +20,8 @@ python3 -m http.server 8877      # or: node tools/qa/serve.mjs 8877
 | Mouse | Aim |
 | Left click | Fire (6-shot revolver) |
 | R | Reload |
-| G | Throw a bonus grenade (earned by a kill streak) |
+| Right click / G | Throw a bonus grenade (earned by a kill streak) |
+| F / V | Kick (melee): knocks knights back and breaks their swing |
 | M | Mute / unmute (a small "MUTED" hint shows on the HUD) |
 | Esc | Release the mouse and pause |
 
@@ -36,6 +37,7 @@ On phones and tablets (and with `?touch=1` on a desktop browser for testing) the
 | GRENADE | Appears above FIRE while you hold bonus grenades |
 | RELOAD | Reload |
 | SPRINT | Latch sprint on / off |
+| KICK | Kick (above SPRINT; dims during its 0.9 s cooldown) |
 | Top right: pause, mute | The touch versions of Esc and M |
 
 Touch mode turns itself on when the primary pointer is coarse or on the first touch; starting with a mouse turns it off again, and `?touch=0` forces it off.
@@ -51,7 +53,7 @@ runs in Chromium, so it does not replace trying it on a real iPhone (Safari) and
 The title screen has a **difficulty** choice (Easy / Normal / Hard) and a **volume** slider. Both are remembered in the browser (`localStorage`).
 
 The knight waves bring 5, 7, 9, 11 and 13 knights on Normal, spawned one at a time from the edge of the arena. You heal 25 HP between waves and get fully healed before the boss.
-In the last wave (wave 5 on Normal) the boss arrives, with an HP bar, three telegraphed attacks (a sweep, a leap slam and a charge), two phase changes, and minions. Victory shows only after the boss dies.
+In the last wave (wave 5 on Normal) the boss arrives, with an HP bar, five telegraphed attacks (a sweep, a leap slam, a charge, the Earthsplitter and the Whirlwind), a head guard, two phase changes, and minions. Victory shows only after the boss dies.
 Head shots kill a knight outright. Torso shots take about 3 hits and limbs about 4.
 
 ### Difficulty
@@ -72,6 +74,8 @@ The chosen level shows next to the wave counter (`WAVE 2 / 5 HARD`) and on the g
 | Knights that throw daggers | 20 % | 35 % | 50 % |
 | Knights that do the shield rush | 10 % | 20 % | 35 % |
 | Kill streak that earns grenades | 4 kills: +1 | 5 kills: +1 | 6 kills: +1 |
+| Knight punch damage (shield-arm jab, 4-6 s cooldown) | 5 | 8 | 11 |
+| Boss head guard (chance it raises the shield when you aim at its head; reacts faster as it grows) | 0.35 | 0.6 | 0.9 |
 
 The table lives in `window.Difficulty` at the top of `src/js/waves.js`; the other modules read it when they spawn or hit.
 
@@ -95,12 +99,37 @@ Debug: `__dbg.knightRush(i?)`.
 ### Knight animation touches
 
 * **Shield rush:** during the red-strip wind-up and the charge the knight's shield arm is posed procedurally (upper arm and forearm re-aimed, then rolled so the shield face looks along the charge), eased in and out; `_extraPose` in `enemies.js`.
-* **Sword swing:** the swing keeps the clip but adds a torso twist back during the wind-up, a fast whip through the strike (the clip time follows an ease-in curve) and a forward lean, then eases out in the recovery. Dagger throws and the boss are unchanged.
-* Screenshots: `npm run shots -- knight-shield knight-swing`.
+* **Overhead sword swing:** the knight's sword arm is posed procedurally on top of the attack clip (`_extraPose` -> `_swingArm` in `enemies.js`, same bone-override system as the shield pose). Wind-up: the arm swings up and back over the shoulder, elbow bent, the blade above and behind the head (the telegraph), the torso turns away and leans back. Strike: a fast arm-over chop, right-high to left-low, with the torso whipping round; the damage frame is the moment the blade comes down in front of the knight. Then a low follow-through and a recovery that hands the arm back to the clip. A swing cut short by a hit eases out instead of popping. Dagger throws and the boss are unchanged.
+* Screenshots: `npm run shots -- knight-shield knight-swing knight-overhead knight-punch`.
+
+### Left-hand punch
+
+A knight that you let come very close (within 1.3 m, in front of it) does not only swing its sword: off a 4-6 s cooldown it jabs with its left fist, the arm that carries the shield. Telegraph: the left arm pulls back for 0.22 s (and the torso turns); then a fast jab (0.16 s) that hits for 8 HP (x the difficulty damage multiplier) and shoves you back if you are still within reach and in front of it; then a 0.4 s recovery. Stepping back or a kick in the wind-up avoids / breaks it (a bullet in the wind-up staggers the knight too). Never during a dagger throw, a shield rush or a stumble; the boss does not punch (its minions do).
+Debug: `__dbg.knightPunch(i?)`; `__dbg.knight.pose(i, 'punchWind' | 'punch' | 'punchRec', progress)`.
+
+### Kick
+
+**F** or **V** (or the **KICK** button on a touch screen) kicks: your right leg, in dark wool trousers and a buckled leather riding boot, snaps up from below the screen while the revolver dips aside. 0.17 s after the press it lands on every living enemy within 2.3 m in front of you (+-38 degrees, at most 3): knights take 30 damage, are knocked back and staggered, even in the middle of a wind-up or a swing (not while rushing); the boss takes 15 and shrugs it off. Kills by kick count like any kill (and for the grenade streak). Cooldown 0.9 s; not while reloading. A miss whooshes, a hit thuds.
+Code: `Weapon.kick()` (the leg viewmodel, `weapon.js`) and `Game.tryKick()` (the hits, `game.js`). Debug: `__dbg.kick()`, `__dbg.weapon.kick()`; screenshots: `npm run shots -- kick-knight kick-touch`.
 
 ### Iron Warlord entrance
 
-The boss no longer just stands there: it drops out of the sky (0.9 s fall from 30 m), lands with a slam (shockwave ring, ring of dust, sparks, a hard camera shake, a white screen flash and the armour clang), and only then raises the sword and roars. The landing does no damage (`_tickDrop` in `boss.js`).
+When the last wave starts, a "Boss wave" banner shows, then the Iron Warlord's entrance plays (about 3.5 s; you keep control and can move and shoot, but the boss cannot be hurt until it lands). Black letterbox bars slide in, the sky and light darken to a storm, a lightning bolt strikes the arena in front of you (flash and thunder), glowing cracks and embers run out of the strike point and the ground rumbles. Then the boss bursts up out of the ground in a column of light, leaps, and lands with a shockwave that shoves you back (no damage) and a heavy camera shake. The title card **THE IRON WARLORD** slams in, it roars, the bars slide out and the sky settles to a light overcast until it dies. The boss bar appears when it lands. Code: `startEntrance` in `boss.js`; the waves.js side is the shorter banner and `boss.startEntrance()`.
+
+### Iron Warlord: head guard
+
+Head shots make most fights too easy, so the Warlord defends its head. When your crosshair stays near its head (the camera ray passes within about 1.9 head radii) it may raise its shield arm in front of its face for 0.8 to 1.6 s, after a short reaction time; it may also throw the shield up right after taking a head shot. A shot that lands on the raised shield does 22 damage (x0.15 of a head shot), clangs and sparks, and counts as a torso hit (no head hit marker, no helmet pop). `Difficulty.bossGuard` sets the chance to react (per second of aiming) and makes the reaction time and the cooldown shorter as it grows; phase 3 is stronger. It cannot guard while it leaps, charges, spins or roars, and not while it is dizzy. Quick shots and body shots are the answer.
+
+### Iron Warlord: new attacks
+
+The boss now has five telegraphed attacks (sweep, leap slam, charge, Earthsplitter, Whirlwind), all drawn on the ground before they land.
+
+* **Earthsplitter** (all phases, player 7 to 30 m away): the sword rises and a red strip follows you, then locks (it brightens). The sword smashes down, a glowing crack races along the strip at 26 m/s and stone spikes erupt every 1.9 m. A spike within 1.1 m of you does 24 damage once and shoves you. Sidestep the strip.
+* **Whirlwind** (phase 2 and up, under 13 m): a red ring (its exact reach, 5.6 m) fills up, then it spins with the sword out and chases you for 2.5 s at 5 m/s (slower than you; it turns slowly, so strafing out of the ring works). Inside the ring you take 14 damage every 0.55 s and are shoved out. Then it is **dizzy** for about 2 s (stars circle its head, it takes 1.5x damage and cannot guard): your punish window.
+
+Damage scales with `Difficulty.dmg` and the phase (x1 / 1.1 / 1.2), reach with `Difficulty.reach`.
+
+Debug: With `?debug=1`: `__dbg.boss.force('sweep'|'leap'|'charge'|'split'|'whirl'|'roar')`, `.guard(on?, sec?)` raises or lowers the shield arm, `.headPos()`, `.entrance()` arms the cinematic on the boss (or builds one 19 m ahead), `.storm(level)` sets the sky mood, `.info()` shows guard and entrance state. Screenshots: `npm run shots -- boss-entrance boss-guard boss-split boss-whirl` (they fast-forward with `Main.step` and render only the frames of interest, so they are quick on a slow software renderer).
 
 ### Bonus weapon: grenades
 
@@ -163,10 +192,10 @@ src/js/fx.js              pooled particles, tracers, decals, blood pools, camera
 src/js/gunmodel.js        the procedural engraved revolver (geometry, canvas textures, moving parts; contract in its header)
 src/js/weapon.js          revolver viewmodel, rigged pale hands (grip pose + FK), recoil, flash, speedloader reload (separate scene and camera)
 src/js/combat.js          hit zones, damage, knockback, helmet pop, dropped gear physics
-src/js/enemies.js         animated Knight class (mixer, state machine, bone-attached gear, dagger throw, shield rush) + Enemies (incl. thrown daggers)
-src/js/boss.js            Boss extends Knight
-src/js/waves.js           Difficulty table, wave flow (4 / 5 / 6 waves, the last is the boss), victory
-src/js/game.js            player movement, hitscan firing, damage
+src/js/enemies.js         animated Knight class (mixer, state machine, bone-attached gear, dagger throw, shield rush, overhead swing, left-hand punch) + Enemies (incl. thrown daggers)
+src/js/boss.js            Boss extends Knight (entrance cinematic and storm, head guard, Earthsplitter, Whirlwind)
+src/js/waves.js           Difficulty table (incl. bossGuard), wave flow (4 / 5 / 6 waves, the last is the boss), victory
+src/js/game.js            player movement, hitscan firing, the kick, damage
 src/js/touch.js           on-screen touch controls (stick, aim drag, fire / reload / sprint / grenade / pause / mute)
 src/js/grenade.js         bonus weapon: kill-streak grenades (throw physics, blast, HUD)
 src/js/debug.js           __dbg helpers (only with ?debug=1)

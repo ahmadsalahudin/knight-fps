@@ -73,6 +73,10 @@
   #tFire.down{background:rgba(230,70,55,.75)}
   #tReload{right:calc(var(--padR) + var(--fire) + 14px);bottom:var(--padB);width:var(--btn);height:var(--btn)}
   #tSprint{right:calc(var(--padR) + var(--fire) + 14px);bottom:calc(var(--padB) + var(--btn) + 12px);width:var(--btn);height:var(--btn)}
+  #tKick{right:calc(var(--padR) + var(--fire) + 14px);bottom:calc(var(--padB) + (var(--btn) + 12px) * 2);width:var(--btn);height:var(--btn);
+         background:rgba(110,76,30,.55);border-color:rgba(240,200,140,.85)}
+  #tKick.down{background:rgba(190,130,50,.75)}
+  #tKick.cool{opacity:.5}
   #tPause,#tMute{top:max(10px,env(safe-area-inset-top));width:var(--top);height:var(--top);font-size:15px;letter-spacing:0}
   #tPause{right:var(--padR)}
   #tMute{right:calc(var(--padR) + var(--top) + 10px)}
@@ -226,7 +230,8 @@
     <div><b>Mouse</b><span>Aim</span></div>
     <div><b>Left click</b><span>Fire</span></div>
     <div><b>R</b><span>Reload</span></div>
-    <div><b>G</b><span>Throw a bonus grenade (earned by a kill streak)</span></div>
+    <div><b>Right click / G</b><span>Throw a bonus grenade (earned by a kill streak)</span></div>
+    <div><b>F / V</b><span>Kick (a close knight is knocked back and staggered)</span></div>
     <div><b>M</b><span>Mute / unmute</span></div>
     <div><b>Esc</b><span>Release the mouse (pauses the game)</span></div>
   </div>
@@ -235,6 +240,7 @@
     <div><b>Right thumb</b><span>Drag to aim</span></div>
     <div><b>FIRE</b><span>Shoot (hold it and drag to aim while shooting)</span></div>
     <div><b>RELOAD / SPRINT</b><span>Reload / latch sprint</span></div>
+    <div><b>KICK</b><span>Kick a knight that gets close (knocks it back)</span></div>
     <div><b>GRENADE</b><span>Bonus grenade from a kill streak</span></div>
     <div><b>Top right</b><span>Pause and mute</span></div>
   </div>
@@ -261,6 +267,7 @@
   <div id="stickBase"><div id="stickKnob"></div></div>
   <button class="tBtn" id="tSprint" type="button">SPRINT</button>
   <button class="tBtn" id="tReload" type="button">RELOAD</button>
+  <button class="tBtn" id="tKick" type="button">KICK</button>
   <button class="tBtn" id="tFire" type="button">FIRE</button>
   <button class="tBtn" id="tGrenade" type="button"><span>GRENADE</span><b>x0</b></button>
   <button class="tBtn" id="tMute" type="button" aria-label="Mute">&#9835;</button>
@@ -307,7 +314,7 @@
   </div>
 
   <div id="streakBox"><div id="streakText">STREAK 0 / 4</div><div id="streakBar"><div id="streakFill"></div></div></div>
-  <div id="grenadeBox"><span>GRENADES</span><span id="grenadePips"></span><span class="key">G</span></div>
+  <div id="grenadeBox"><span>GRENADES</span><span id="grenadePips"></span><span class="key">G / RMB</span></div>
 
   <div id="ammoBox">
     <div id="reloadSpinner">RELOADING</div>

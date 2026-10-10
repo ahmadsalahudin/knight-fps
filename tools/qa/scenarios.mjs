@@ -191,6 +191,7 @@ export const scenarios = {
     viewport: { width: 960, height: 540 },
     run: async (page, h) => {
       await h.clean();
+      await h.freezeAI(false);       // a frozen AI does not tick the animation, the posed knight would stay in its idle pose
       await h.resetView();
       await h.pause();
       const k = await h.spawn('knight', 3.5, 0);
@@ -200,6 +201,58 @@ export const scenarios = {
         await h.advance(60, 33);
         await h.shot(label);
       }
+    },
+  },
+  'knight-overhead': {
+    desc: 'A knight 3.2 m ahead swings its sword overhead: arm up and back over the shoulder (raise), over the top, the blade coming down (chop = the damage frame), the low follow-through, and the raise again from the side.',
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.freezeAI(false);       // the posed knight must keep animating (hold freezes its AI, not its pose)
+      await h.resetView();
+      await h.pause();
+      const k = await h.spawn('knight', 3.2, 0);
+      await h.aimAt(k, 1.3);
+      await page.evaluate(() => { const c = Game.camera; c.fov = 50; c.updateProjectionMatrix(); });
+      await page.evaluate(() => __dbg.knight.pose(0, 'combatIdle', 0));
+      await h.advance(400, 20);      // settle out of the walk (the clips crossfade for 0.25 s)
+      for (const [label, state, t, yaw] of [['raise', 'windup', 0.99], ['over', 'attack', 0.5], ['chop', 'attack', 0.71], ['through', 'attack', 0.99], ['side', 'windup', 0.99, Math.PI / 2]]) {
+        await page.evaluate(([s, u, y]) => __dbg.knight.pose(0, s, u, y === undefined ? 0 : y), [state, t, yaw]);
+        await h.advance(100, 20);
+        await h.shot(label);
+      }
+      return page.evaluate(() => ({ state: Enemies.list[0].state, swW: +Enemies.list[0]._swW.toFixed(2) }));
+    },
+  },
+  'knight-punch': {
+    desc: 'A knight 1.4 m ahead jabs with its shield (left) arm: the pull-back (wind-up) and the jab seen from the player, then the same two frames from the side (3.2 m away).',
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.freezeAI(false);
+      await h.resetView();
+      await h.pause();
+      const k = await h.spawn('knight', 1.4, 0);
+      await h.aimAt(k, 1.35);
+      const pose = (s, u, y) => page.evaluate(([s, u, y]) => __dbg.knight.pose(0, s, u, y === undefined ? 0 : y), [s, u, y]);
+      await pose('combatIdle', 0);
+      await h.advance(400, 20);      // settle out of the walk (the clips crossfade for 0.25 s)
+      for (const [label, state, t] of [['wind', 'punchWind', 0.99], ['jab', 'punch', 0.85]]) {
+        await pose(state, t);
+        await h.advance(100, 20);
+        await h.shot(label);
+      }
+      // from the side: the player steps back to 3.2 m and the knight turns its left (shield) side to the camera
+      const p = await h.player();
+      await page.evaluate(([x, z]) => __dbg.teleport(x, z), [p.x, p.z + 1.8]);
+      await h.aimAt(k, 1.3);
+      await page.evaluate(() => { const c = Game.camera; c.fov = 45; c.updateProjectionMatrix(); });
+      for (const [label, state, t] of [['side-wind', 'punchWind', 0.99], ['side-jab', 'punch', 0.85]]) {
+        await pose(state, t, -Math.PI / 2);
+        await h.advance(100, 20);
+        await h.shot(label);
+      }
+      return page.evaluate(() => ({ state: Enemies.list[0].state, puW: +Enemies.list[0]._puW.toFixed(2) }));
     },
   },
   'knight-close': {
@@ -3218,6 +3271,286 @@ Object.assign(scenarios, {
       await h.shot();
       if (out.problems.length) throw new Error('f2-boundary-ai: ' + out.problems.join(' | '));
       return out;
+    },
+  },
+});
+
+// ---- wave G, worker "boss": the Iron Warlord's entrance cinematic, head guard, Earthsplitter and Whirlwind. Own Object.assign.
+Object.assign(scenarios, {
+  'boss-entrance': {
+    desc: 'Boss: the entrance cinematic, 19 m ahead (game clock paused, 33 ms frames): letterbox bars + storm, the lightning strike (bolt, flash), cracks with embers, the boss bursting out of the ground, in the air, the landing (shockwave ring, dust, title card THE IRON WARLORD), the roar, and the calm afterwards. Result: timeline infos (invulnerable until landed, bar hidden, player shoved without damage).',
+    viewport: { width: 800, height: 450 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.freezeAI(false);
+      await h.pause();
+      await page.evaluate(() => { __dbg.godMode(false); Game.godMode = false; Game.playerHP = 100; });
+      const hp0 = await page.evaluate(() => Game.playerHP);
+      const b0 = await page.evaluate(() => __dbg.boss.entrance());
+      const info = () => page.evaluate(() => { const i = __dbg.boss.info(); return i && { t: i.ent && i.ent.t, y: i.ent && i.ent.y, state: i.state, atk: i.atk, vis: Enemies.list.find((e) => e.type === 'boss').mesh.visible, hp: i.hp }; });
+      const look = (y) => page.evaluate((yy) => { const b = Enemies.list.find((e) => e.type === 'boss'); __dbg.lookAt(b.mesh.position.x, yy, b.mesh.position.z); }, y);
+      const out = { b0, frames: {} };
+      // swiftshader is slow: Main.step fast-forwards without rendering, only the frames of interest are rendered (one 33 ms frame each)
+      const ff = (sec) => page.evaluate(bossFF, { sec });
+      const snap = async (label, y) => { await look(y); await h.advance(33, 33); await h.shot(label); out.frames[label] = await info(); };
+      await ff(0.27); await snap('1-bars-storm', 9);       // t 0.3
+      await ff(0.3); await snap('2-strike', 12);           // t 0.63: the bolt
+      await ff(0.26); await snap('3-cracks', 3);           // t 0.92
+      await ff(0.3); await snap('4-burst', 3);             // t 1.25
+      await ff(0.34); await snap('5-air', 6);              // t 1.6
+      await ff(0.45); await snap('6-landing', 3);          // t 2.07: just before the landing (2.09)
+      await ff(0.3); await snap('7-title', 3);             // t 2.4
+      await ff(0.65); await snap('8-roar', 3);             // t 3.07
+      out.hurtNow = await page.evaluate(() => ({ hp: Game.playerHP, bar: getComputedStyle(document.getElementById('bossBar')).display }));
+      await ff(1.5); await snap('9-after', 3);             // t ~4.6: bars out, calm
+      out.hp = [hp0, await page.evaluate(() => Game.playerHP)];
+      out.final = await page.evaluate(() => __dbg.boss.info());
+      return out;
+    },
+  },
+
+  'boss-guard': {
+    desc: 'Boss: the head guard (AI held in place 13 m ahead). Aiming at the head makes it raise the shield arm after a reaction time (frames: idle, guard front view, guard side view); a head shot into the shield does ~22 HP (x0.15) and counts as a torso hit, an unguarded one 150; then reaction statistics per Difficulty (Easy / Normal / Hard) from 40 simulated aim episodes each.',
+    viewport: { width: 640, height: 360 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.freezeAI(false);
+      await h.pause();
+      await h.spawn('boss', 13, 0);
+      await page.evaluate(() => { const b = Enemies.list[0]; b.atk = null; b.setState('combatIdle'); b.hold = true; b._g.cd = 0; });
+      const out = {};
+      const hp = () => page.evaluate(() => Enemies.list[0].hp);
+      const aimHead = async () => { const hd = await page.evaluate(() => __dbg.boss.headPos()); await page.evaluate((p) => __dbg.lookAt(p[0], p[1], p[2]), hd); return hd; };
+      await h.aimAt({ x: 0, y: 0, z: -13 }, 2.6);
+      await page.evaluate(bossFF, { sec: 0.2 });
+      await h.advance(33, 33); await h.shot('1-idle');
+      out.head = await aimHead();
+      let ms = 0;                                                    // the AI reacts to the aim: how long until the shield is up (NORMAL: 60 % chance per second of aiming)
+      while (ms < 6000 && !(await page.evaluate(() => __dbg.boss.info().guard.on))) { await page.evaluate(bossFF, { sec: 0.1 }); ms += 100; }
+      out.reactMs = ms;
+      await page.evaluate(bossFF, { sec: 0.25 });
+      await h.advance(33, 33); await h.shot('2-guard-front');
+      out.guard = await page.evaluate(() => __dbg.boss.info().guard);
+      await page.evaluate(() => { __dbg.boss.guard(true, 30); });    // keep it up for the side view and the shots
+      await page.evaluate(() => { __dbg.teleport(9, -6); });
+      await page.evaluate(() => { const hd = __dbg.boss.headPos(); __dbg.lookAt(0, hd[1] - 0.6, -13); });
+      await page.evaluate(bossFF, { sec: 0.2 });
+      await h.advance(33, 33); await h.shot('3-guard-side');
+      await page.evaluate(() => { __dbg.teleport(0, -5); const hd = __dbg.boss.headPos(); __dbg.lookAt(hd[0], hd[1] - 0.3, hd[2]); });      // 8 m from it: the shield in front of the face
+      await page.evaluate(bossFF, { sec: 0.1 });
+      await h.advance(33, 33); await h.shot('3b-guard-close');
+      await page.evaluate(() => { __dbg.teleport(0, 0); });
+      await aimHead();
+      await page.evaluate(() => { window.__hm = []; const o = HUD.hitmark; HUD.hitmark = function (k) { window.__hm.push(k); return o.apply(this, arguments); }; });   // which hit marker does the shot give?
+      const hp0 = await hp();
+      const f1 = await h.fire();
+      await h.advance(100, 33);
+      const hp1 = await hp();
+      out.guardedShot = { fired: f1, dmg: hp0 - hp1, hitmarker: await page.evaluate(() => window.__hm.slice()), blocks: await page.evaluate(() => __dbg.boss.info().guard.blocks) };
+      await h.shot('4-block');
+      await page.evaluate(() => { __dbg.boss.guard(false); });       // lowered, no new guard (cooldown 99 s)
+      await page.evaluate(bossFF, { sec: 0.6 });
+      await aimHead();
+      await h.advance(700, 33);                                      // the weapon's own cooldown
+      const hp2 = await hp();
+      const f2 = await h.fire();
+      await h.advance(100, 33);
+      out.openShot = { fired: f2, dmg: hp2 - (await hp()), hitmarker: await page.evaluate(() => window.__hm.slice(1)), guard: await page.evaluate(() => __dbg.boss.info().guard) };
+      out.stats = await page.evaluate(bossGuardStats, { trials: 40 });
+      return out;
+    },
+  },
+
+  'boss-split': {
+    desc: 'Boss: the Earthsplitter. A red strip follows the player and locks, the sword smashes down, a crack races along the strip and stone spikes erupt; seen from the side. Then (not rendered) the damage: a player left in the line is hit once (24), a player who sidesteps 4.5 m after the lock is not.',
+    viewport: { width: 640, height: 360 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.freezeAI(false);
+      await h.pause();
+      await h.spawn('boss', 14, 0);
+      await page.evaluate(() => { const b = Enemies.list[0]; b.atk = null; b.setState('combatIdle'); b._gap = 0; b._leapCd = b._chargeCd = b._whirlCd = 99; __dbg.boss.force('split'); });
+      const out = {};
+      const ff = (sec) => page.evaluate(bossFF, { sec });
+      const info = () => page.evaluate(() => { const i = __dbg.boss.info(); return { state: i.state, atk: i.atk, stateT: i.stateT, split: i.split }; });
+      await h.aimAt({ x: 0, y: 0, z: -14 }, 2.4);
+      await ff(0.3); await h.advance(33, 33); await h.shot('1-follow'); out.follow = await info();
+      await ff(0.2);                                                 // locked (45 % of 1.05 s)
+      await page.evaluate(() => { __dbg.teleport(12, -2); __dbg.lookAt(0, 0.5, -4); });
+      await ff(0.12); await h.advance(33, 33); await h.shot('2-locked'); out.locked = await info();
+      await ff(0.85); await h.advance(33, 33); await h.shot('3-strike'); out.strike = await info();
+      await ff(0.18); await h.advance(33, 33); await h.shot('4-front'); out.front = await info();
+      await ff(0.3); await h.advance(33, 33); await h.shot('5-spikes'); out.spikes = await info();
+      await ff(1.4); await h.advance(33, 33); await h.shot('6-fade'); out.fade = await info();
+      // damage, not rendered
+      const hurt = (sidestep) => page.evaluate(bossSplitDamage, { sidestep });
+      await h.clean();
+      await page.evaluate(() => { __dbg.godMode(false); Game.godMode = false; });
+      out.inLine = await hurt(false);
+      out.sidestep = await hurt(true);
+      await page.evaluate(() => { __dbg.godMode(true); });
+      return out;
+    },
+  },
+
+  'boss-whirl': {
+    desc: 'Boss: the Whirlwind (phase 2). The red ring (its exact reach) fills up while the sword is raised, then it spins with the sword out and chases for 2.5 s, then it is dizzy (stars, sways, takes 1.5x damage). Then (not rendered) the damage: a player standing still is hit about every 0.55 s inside the ring, a player running away at 6 m/s is never hit; a hit shoves him out.',
+    viewport: { width: 640, height: 360 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.freezeAI(false);
+      await h.pause();
+      await h.spawn('boss', 10, 0);
+      await page.evaluate(() => { const b = Enemies.list[0]; b.atk = null; b.phase = 2; b.setState('combatIdle'); b._gap = 0; b._leapCd = b._chargeCd = b._splitCd = 99; __dbg.boss.force('whirl'); });
+      const out = {};
+      const ff = (sec) => page.evaluate(bossFF, { sec });
+      const info = () => page.evaluate(() => { const i = __dbg.boss.info(); return { state: i.state, atk: i.atk, stateT: i.stateT, dist: i.dist, pos: i.pos }; });
+      await h.aimAt({ x: 0, y: 0, z: -10 }, 2.6);
+      await ff(0.45); await h.advance(33, 33); await h.shot('1-windup'); out.windup = await info();
+      await ff(0.7); await h.advance(33, 33); await h.shot('2-spin'); out.spin = await info();      // t 1.2: spinning, 0.35 s into the chase
+      await ff(0.5); await h.advance(33, 33); await h.shot('3-chase'); out.chase = await info();
+      await page.evaluate(() => { __dbg.teleport(14, 8); });
+      await ff(0.3); await page.evaluate(() => { const b = Enemies.list[0]; __dbg.lookAt(b.mesh.position.x, 2.4, b.mesh.position.z); });
+      await h.advance(33, 33); await h.shot('4-side'); out.side = await info();
+      await page.evaluate(() => { __dbg.teleport(0, 0); });
+      await ff(1.55);                                               // t ~3.7: dizzy since 3.33; step back 9 m to see the stars
+      await page.evaluate(() => { const b = Enemies.list[0]; __dbg.teleport(b.mesh.position.x, b.mesh.position.z + 9); __dbg.lookAt(b.mesh.position.x, 4.2, b.mesh.position.z); });
+      await h.advance(33, 33); await h.shot('5-dizzy'); out.dizzy = await info();
+      out.dizzyDamage = await page.evaluate(() => { const b = Enemies.list[0], h0 = b.hp; b.takeHit({ damage: 40, zone: 'torso', point: new THREE.Vector3(0, 2, 0), dir: new THREE.Vector3(0, 0, -1) }); return { state: b.state, dmg: h0 - b.hp }; });
+      // damage, not rendered
+      await h.clean();
+      await page.evaluate(() => { __dbg.godMode(false); Game.godMode = false; });
+      out.standing = await page.evaluate(bossWhirlDamage, { run: 0 });
+      out.running = await page.evaluate(bossWhirlDamage, { run: 6 });
+      await page.evaluate(() => { __dbg.godMode(true); });
+      return out;
+    },
+  },
+});
+
+// helpers of the "boss" scenarios (run inside the page)
+function bossFF(a) {                       // fast-forward `sec` of game time without rendering (the same frame as the main loop)
+  const step = a.step || 1 / 30;
+  for (let t = 0; t < a.sec - 1e-9; t += step) Main.step(step);
+  return window.__dbg && __dbg.boss ? __dbg.boss.info() : null;
+}
+function bossGuardStats(a) {               // how often / how fast does it raise the shield when the camera stays on its head, per difficulty
+  const res = {}, pp = Game.playerObj.position, b = Enemies.list.find((e) => e.type === 'boss');
+  const keep = Difficulty.get().key;
+  const hd = __dbg.boss.headPos(); __dbg.lookAt(hd[0], hd[1], hd[2]);
+  for (const key of ['easy', 'normal', 'hard']) {
+    Difficulty.set(key);
+    let n = 0, sum = 0;
+    for (let i = 0; i < a.trials; i++) {
+      Object.assign(b._g, { on: false, w: 0, t: 0, cd: 0, aim: 0, roll: -1, rollT: 0, pending: -1 });
+      let t = 0;
+      for (; t < 3; t += 1 / 30) { Enemies.update(1 / 30, pp.clone()); if (b._g.on) break; }
+      if (b._g.on) { n++; sum += t; }
+    }
+    res[key] = { bossGuard: Difficulty.get().bossGuard, reactedIn3s: n + '/' + a.trials, meanReactSec: n ? +(sum / n).toFixed(2) : null };
+  }
+  Difficulty.set(keep);
+  b._g.on = false; b._g.cd = 99;
+  return res;
+}
+function bossSplitDamage(a) {              // the Earthsplitter against a player who stays in the line, or sidesteps after the lock
+  const step = 1 / 30, pp = Game.playerObj.position;
+  Game.playerHP = 100;
+  __dbg.teleport(0, 0, 0);
+  Enemies.clear();
+  __dbg.spawn('boss', 14, 0);
+  const b = Enemies.list.find((e) => e.type === 'boss');
+  b.atk = null; b.setState('combatIdle'); b._gap = 0; b._leapCd = b._chargeCd = b._whirlCd = 99;
+  __dbg.boss.force('split');
+  const hits = [];
+  let last = Game.playerHP, t = 0, moved = false;
+  for (; t < 5; t += step) {
+    if (a.sidestep && !moved && t >= 0.6) { moved = true; pp.x += 4.5; }
+    Enemies.update(step, pp.clone());
+    if (window.FX && FX.update) FX.update(step);
+    if (Game.playerHP !== last) { hits.push({ t: +t.toFixed(2), hp: Game.playerHP }); last = Game.playerHP; }
+    if (t > 0.3 && !b._split.active && b._split.t > 0.2) break;
+  }
+  return { sidestep: !!a.sidestep, hp: Game.playerHP, hits, simulated: +t.toFixed(2) };
+}
+function bossWhirlDamage(a) {              // the Whirlwind against a player who stands still, or runs away (+z) at a.run m/s
+  const step = 1 / 30, pp = Game.playerObj.position;
+  Game.playerHP = 100;
+  __dbg.teleport(0, 0, 0);
+  Enemies.clear();
+  __dbg.spawn('boss', 9, 0);
+  const b = Enemies.list.find((e) => e.type === 'boss');
+  b.phase = 2; b.atk = null; b.setState('combatIdle'); b._gap = 0; b._leapCd = b._chargeCd = b._splitCd = 99;
+  __dbg.boss.force('whirl');
+  const hits = [], log = [];
+  let last = Game.playerHP, t = 0, st = '', minDist = 99;
+  for (; t < 9; t += step) {
+    if (a.run && b.state === 'whirl') pp.z += a.run * step;
+    Enemies.update(step, pp.clone());
+    if (window.FX && FX.update) FX.update(step);
+    if (b.state === 'whirl') minDist = Math.min(minDist, Math.hypot(pp.x - b.mesh.position.x, pp.z - b.mesh.position.z));
+    if (Game.playerHP !== last) { hits.push({ t: +t.toFixed(2), hp: Game.playerHP }); last = Game.playerHP; }
+    if (b.state !== st) { st = b.state; log.push({ t: +t.toFixed(2), st }); }
+    if (st === 'combatIdle' && t > 1) break;
+  }
+  return { run: a.run, hp: Game.playerHP, hits, log, minDistInWhirl: +minDist.toFixed(2) };
+}
+
+// ---- wave G, worker "player": the melee kick (F / V / KICK) and the right-click grenade. Appended with its own Object.assign.
+Object.assign(scenarios, {
+  'kick-knight': {
+    desc: 'Player: a knight 1.8 m ahead raises its sword (windup) and the player kicks (game clock paused, 20 ms frames): sword raised, the foot in flight, 60 ms after the landing (hit marker, sparks), and 450 ms after (knocked back ~1 m, staggered). Result: hp 100 -> 70, state stagger, the swing never lands.',
+    god: false,
+    viewport: { width: 960, height: 540 },
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.freezeAI(false);
+      await h.pause();
+      const k = await h.spawn('knight', 1.8, 0);
+      await h.aimAt(k, 1.2);
+      await page.evaluate((i) => Enemies.list[i].startWindup(), k.i);
+      await h.advance(280, 20);
+      const snap = () => page.evaluate((i) => { const e = Enemies.list[i], p = Game.playerObj.position; return { state: e.state, hp: e.hp, dist: +Math.hypot(e.mesh.position.x - p.x, e.mesh.position.z - p.z).toFixed(2), playerHP: Game.playerHP }; }, k.i);
+      const before = await snap();
+      await h.shot('windup');
+      const kick = await page.evaluate(() => __dbg.kick());
+      await h.advance(Math.max(0, Math.round(kick.impactAt * 1000) - 40), 20);
+      await h.shot('foot');
+      await h.advance(100, 20);
+      const hit = await snap();
+      await h.shot('hit');
+      await h.advance(400, 20);
+      await h.shot('knocked-back');
+      const after = await snap();
+      await h.advance(700, 20);
+      return { kick, before, hit, after, later: await snap(), kicks: await page.evaluate(() => Game.kicks) };
+    },
+  },
+
+  'kick-touch': {
+    desc: 'Player: touch mode (?touch=1, 844x390): the KICK button sits above SPRINT beside RELOAD / FIRE without touching the HUD; a knight 1.8 m ahead is kicked with a tap on it and the button dims during the 0.9 s cooldown.',
+    viewport: { width: 844, height: 390 },
+    query: 'debug=1&touch=1',
+    run: async (page, h) => {
+      await h.clean();
+      await h.resetView();
+      await h.freezeAI(false);
+      await h.pause();
+      const k = await h.spawn('knight', 1.8, 0);
+      await h.aimAt(k, 1.2);
+      await h.advance(200, 20);
+      await h.shot('idle');
+      await page.evaluate(() => { const b = document.getElementById('tKick'); b.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 7, bubbles: true, cancelable: true, pointerType: 'touch' })); });
+      await h.advance(240, 20);
+      await page.evaluate(() => document.getElementById('tKick').dispatchEvent(new PointerEvent('pointerup', { pointerId: 7, bubbles: true, cancelable: true, pointerType: 'touch' })));
+      await h.shot('pressed');
+      return page.evaluate((i) => ({ kicks: Game.kicks, hp: Enemies.list[i].hp, state: Enemies.list[i].state, cool: Game._kickCool, dimmed: document.getElementById('tKick').classList.contains('cool'),
+        rect: JSON.stringify(document.getElementById('tKick').getBoundingClientRect()) }), k.i);
     },
   },
 });

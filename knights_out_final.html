@@ -74,6 +74,10 @@
   #tFire.down{background:rgba(230,70,55,.75)}
   #tReload{right:calc(var(--padR) + var(--fire) + 14px);bottom:var(--padB);width:var(--btn);height:var(--btn)}
   #tSprint{right:calc(var(--padR) + var(--fire) + 14px);bottom:calc(var(--padB) + var(--btn) + 12px);width:var(--btn);height:var(--btn)}
+  #tKick{right:calc(var(--padR) + var(--fire) + 14px);bottom:calc(var(--padB) + (var(--btn) + 12px) * 2);width:var(--btn);height:var(--btn);
+         background:rgba(110,76,30,.55);border-color:rgba(240,200,140,.85)}
+  #tKick.down{background:rgba(190,130,50,.75)}
+  #tKick.cool{opacity:.5}
   #tPause,#tMute{top:max(10px,env(safe-area-inset-top));width:var(--top);height:var(--top);font-size:15px;letter-spacing:0}
   #tPause{right:var(--padR)}
   #tMute{right:calc(var(--padR) + var(--top) + 10px)}
@@ -230,7 +234,8 @@
     <div><b>Mouse</b><span>Aim</span></div>
     <div><b>Left click</b><span>Fire</span></div>
     <div><b>R</b><span>Reload</span></div>
-    <div><b>G</b><span>Throw a bonus grenade (earned by a kill streak)</span></div>
+    <div><b>Right click / G</b><span>Throw a bonus grenade (earned by a kill streak)</span></div>
+    <div><b>F / V</b><span>Kick (a close knight is knocked back and staggered)</span></div>
     <div><b>M</b><span>Mute / unmute</span></div>
     <div><b>Esc</b><span>Release the mouse (pauses the game)</span></div>
   </div>
@@ -239,6 +244,7 @@
     <div><b>Right thumb</b><span>Drag to aim</span></div>
     <div><b>FIRE</b><span>Shoot (hold it and drag to aim while shooting)</span></div>
     <div><b>RELOAD / SPRINT</b><span>Reload / latch sprint</span></div>
+    <div><b>KICK</b><span>Kick a knight that gets close (knocks it back)</span></div>
     <div><b>GRENADE</b><span>Bonus grenade from a kill streak</span></div>
     <div><b>Top right</b><span>Pause and mute</span></div>
   </div>
@@ -265,6 +271,7 @@
   <div id="stickBase"><div id="stickKnob"></div></div>
   <button class="tBtn" id="tSprint" type="button">SPRINT</button>
   <button class="tBtn" id="tReload" type="button">RELOAD</button>
+  <button class="tBtn" id="tKick" type="button">KICK</button>
   <button class="tBtn" id="tFire" type="button">FIRE</button>
   <button class="tBtn" id="tGrenade" type="button"><span>GRENADE</span><b>x0</b></button>
   <button class="tBtn" id="tMute" type="button" aria-label="Mute">&#9835;</button>
@@ -311,7 +318,7 @@
   </div>
 
   <div id="streakBox"><div id="streakText">STREAK 0 / 4</div><div id="streakBar"><div id="streakFill"></div></div></div>
-  <div id="grenadeBox"><span>GRENADES</span><span id="grenadePips"></span><span class="key">G</span></div>
+  <div id="grenadeBox"><span>GRENADES</span><span id="grenadePips"></span><span class="key">G / RMB</span></div>
 
   <div id="ammoBox">
     <div id="reloadSpinner">RELOADING</div>
@@ -775,6 +782,7 @@ window.World = (function () {
      shoot, dryFire, reload, cock, swing(heavy?), clang, armorHit, headshot, fleshHit, hurt, kill (= death), bossRoar,
      footstep(kind?), waveStart, victory
      daggers: throwWhoosh(pos), whirr(pos, maxSeconds) -> {move(pos), stop()} | null, dagger('ground'|'clang'|'hit', pos)
+     kick: kickWhoosh() (the player's foot through empty air, not positional), kickThud(pos) (a boot into plate armour)
    Ambience: ambient(on) (meadow wind + occasional birds; main.js starts it on START), duck(on) (quieter during the boss fight), bird(pos?)
    Controls: init() (call from a gesture), volume(v 0..1, remembered in localStorage 'kf_volume'), mute(on?) (M key; shows #muteHint),
      isMuted(). The title screen slider #volSlider is wired here.
@@ -1012,7 +1020,7 @@ window.World = (function () {
 
   // ---------------------------------------------------------------- master, ambience, controls
   const POSITIONAL = ['shoot', 'swing', 'clang', 'armorHit', 'headshot', 'fleshHit', 'kill', 'death', 'bossRoar', 'footstep',
-    'throwWhoosh', 'dagger', 'bird', 'rushCry', 'grenadeBounce', 'grenadeBeep', 'explosion'];
+    'throwWhoosh', 'dagger', 'bird', 'rushCry', 'grenadeBounce', 'grenadeBeep', 'explosion', 'kickThud'];
 
   function applyMaster() {
     if (!S.out) return;
@@ -1464,6 +1472,28 @@ window.World = (function () {
         });
         N({ t: t + 0.3, dur: 0.12, gain: 0.08, type: 'highpass', f0: 5000, f1: 5000, attack: 0.002 });
       });
+    },
+
+    // the player's kick missing: a low, quick "fwoop" of a leg swung through the air with a little cloth snap (your own body: not positional)
+    kickWhoosh: function () {
+      play(1.3, function (t) {
+        if (!gate('kickWhoosh', 0.1)) return;
+        N({ t, dur: 0.26, gain: 0.5, type: 'bandpass', f0: 220, f1: 1300, q: 0.9, attack: 0.1 });
+        N({ t: t + 0.1, dur: 0.18, gain: 0.2, type: 'bandpass', f0: 1500, f1: 420, q: 1.4, attack: 0.02 });
+        T({ t, dur: 0.22, type: 'sine', f0: 135, f1: 70, gain: 0.18, attack: 0.08 });
+      });
+    },
+
+    // the kick landing: a heavy boot into plate armour. A deep thump, a short dull crack of leather on steel and the plate rattling
+    kickThud: function (pos) {
+      play(1.35, function (t) {
+        if (!gate('kickThud', 0.06)) return;
+        T({ t, dur: 0.36, type: 'sine', f0: 120, f1: 34, gain: 1.2, attack: 0.002 });
+        T({ t: t + 0.012, dur: 0.2, type: 'triangle', f0: 210, f1: 72, gain: 0.35, attack: 0.002 });
+        N({ t, dur: 0.15, gain: 0.8, type: 'lowpass', f0: 1500, f1: 160, attack: 0.002 });
+        N({ t, dur: 0.03, gain: 0.5, type: 'bandpass', f0: 2400, f1: 1200, q: 1, attack: 0.0005 });
+        metal(t + 0.015, rnd(280, 430), 0.2, 0.32, 0.25);
+      }, pos, 4);
     },
 
     // a knight about to charge: a short hoarse war cry (two detuned saws through a moving formant) with a rattle of plate
@@ -3965,6 +3995,155 @@ window.World = (function () {
   }
 
   // ---------------------------------------------------------------------------------------------------------
+  // the kick (Weapon.kick): the player's right leg. Generated leather and wool, lofted / revolved surfaces.
+  // ---------------------------------------------------------------------------------------------------------
+  const KICK_IMPACT = 0.16, KICK_DUR = 0.6;    // seconds: the sole lands at KICK_IMPACT, the leg is gone again at KICK_DUR
+  const UPV = new V3(0, 1, 0);
+
+  function seededRnd(seed) { let s = (seed | 0) || 1; return () => (s = (s * 16807) % 2147483647) / 2147483647; }
+
+  // tileable value noise (0..1) on a w x h grid with `cells` lattice cells across
+  function tileNoise(w, h, cells, rnd) {
+    const n = cells, lat = new Float32Array(n * n), out = new Float32Array(w * h);
+    for (let i = 0; i < lat.length; i++) lat[i] = rnd();
+    for (let y = 0; y < h; y++) {
+      const fy = y / h * n, y0 = Math.floor(fy), ty = smooth(fy - y0), ya = (y0 % n) * n, yb = ((y0 + 1) % n) * n;
+      for (let x = 0; x < w; x++) {
+        const fx = x / w * n, x0 = Math.floor(fx), tx = smooth(fx - x0), xa = x0 % n, xb = (x0 + 1) % n;
+        out[y * w + x] = lerp(lerp(lat[ya + xa], lat[ya + xb], tx), lerp(lat[yb + xa], lat[yb + xb], tx), ty);
+      }
+    }
+    return out;
+  }
+
+  // cubic Hermite through [[x, y], ...] (x ascending), finite-difference tangents: smooth with no flat spots at the keys
+  function spline(x, k) {
+    const n = k.length;
+    if (x <= k[0][0]) return k[0][1];
+    if (x >= k[n - 1][0]) return k[n - 1][1];
+    let i = 1;
+    while (x > k[i][0]) i++;
+    const x0 = k[i - 1][0], h = k[i][0] - x0, t = (x - x0) / h, t2 = t * t, t3 = t2 * t;
+    const m0 = i > 1 ? (k[i][1] - k[i - 2][1]) / (k[i][0] - k[i - 2][0]) : (k[1][1] - k[0][1]) / h;
+    const m1 = i < n - 1 ? (k[i + 1][1] - k[i - 1][1]) / (k[i + 1][0] - k[i - 1][0]) : (k[n - 1][1] - k[n - 2][1]) / h;
+    return (2 * t3 - 3 * t2 + 1) * k[i - 1][1] + (t3 - 2 * t2 + t) * h * m0 + (-2 * t3 + 3 * t2) * k[i][1] + (t3 - t2) * h * m1;
+  }
+
+  // Leather: a height field (soft hide undulation, pores, short wandering creases) turned into a colour canvas and a bump canvas.
+  // o: { size, seed, dark, mid, light ([r, g, b] 0..255), pores, creases, pr (pore radius px) }
+  function makeLeatherCanvases(o) {
+    const S = o.size, N = S * S, rnd = seededRnd(o.seed), pr = o.pr || 3;
+    const n1 = tileNoise(S, S, 3, rnd), n2 = tileNoise(S, S, 9, rnd), n3 = tileNoise(S, S, 30, rnd), hg = new Float32Array(N);
+    for (let i = 0; i < N; i++) hg[i] = 0.6 + (n3[i] - 0.5) * 0.2 + (n2[i] - 0.5) * 0.1;
+    const dip = (cx, cy, r, d) => {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const q = Math.sqrt(dx * dx + dy * dy) / r;
+          if (q < 1) hg[((cy + dy + S) % S) * S + ((cx + dx + S) % S)] -= d * (1 - q) * (1 - q);
+        }
+      }
+    };
+    for (let i = 0; i < o.pores; i++) dip((rnd() * S) | 0, (rnd() * S) | 0, pr - 1 + ((rnd() * 3) | 0), 0.06 + rnd() * 0.08);
+    for (let i = 0; i < o.creases; i++) {
+      let x = rnd() * S, y = rnd() * S, a = rnd() * 6.283;
+      const len = 25 + rnd() * 70;
+      for (let k = 0; k < len; k++) { dip(Math.round(x), Math.round(y), 1, 0.07); a += (rnd() - 0.5) * 0.3; x += Math.cos(a); y += Math.sin(a); }
+    }
+    const col = document.createElement('canvas'), bmp = document.createElement('canvas');
+    col.width = col.height = bmp.width = bmp.height = S;
+    const gc = col.getContext('2d'), gb = bmp.getContext('2d'), ic = gc.createImageData(S, S), ib = gb.createImageData(S, S), dc = ic.data, db = ib.data;
+    const D = o.dark, M = o.mid, L = o.light;
+    for (let i = 0; i < N; i++) {
+      const h = clamp(hg[i], 0, 1), t = clamp(0.5 + (h - 0.58) * 0.7 + (n1[i] - 0.5) * 0.55, 0, 1), tint = 0.96 + n2[i] * 0.08;
+      let r, g, b;
+      if (t < 0.5) { const k = t * 2; r = D[0] + (M[0] - D[0]) * k; g = D[1] + (M[1] - D[1]) * k; b = D[2] + (M[2] - D[2]) * k; }
+      else { const k = (t - 0.5) * 2; r = M[0] + (L[0] - M[0]) * k; g = M[1] + (L[1] - M[1]) * k; b = M[2] + (L[2] - M[2]) * k; }
+      dc[i * 4] = r * tint; dc[i * 4 + 1] = g * tint; dc[i * 4 + 2] = b * tint; dc[i * 4 + 3] = 255;
+      db[i * 4] = db[i * 4 + 1] = db[i * 4 + 2] = h * 255; db[i * 4 + 3] = 255;
+    }
+    gc.putImageData(ic, 0, 0); gb.putImageData(ib, 0, 0);
+    return { color: col, bump: bmp };
+  }
+
+  // Wool: a twill (diagonal ridges 16 px apart, so it tiles), fibre noise, heathered mottling, light and dark flecks.
+  function makeWoolCanvases(o) {
+    const S = 256, N = S * S, rnd = seededRnd(o.seed), n1 = tileNoise(S, S, 4, rnd), n2 = tileNoise(S, S, 16, rnd);
+    const col = document.createElement('canvas'), bmp = document.createElement('canvas');
+    col.width = col.height = bmp.width = bmp.height = S;
+    const gc = col.getContext('2d'), gb = bmp.getContext('2d'), ic = gc.createImageData(S, S), ib = gb.createImageData(S, S), dc = ic.data, db = ib.data;
+    const D = o.dark, M = o.mid, L = o.light;
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const i = y * S + x, ridge = 0.5 + 0.5 * Math.cos(((x + y) % 16) / 16 * 6.2832), fib = rnd();
+        const t = clamp(0.42 + ridge * 0.05 + (fib - 0.5) * 0.18 + (n1[i] - 0.5) * 0.42 + (n2[i] - 0.5) * 0.16, 0, 1);
+        let r, g, b;
+        if (t < 0.5) { const k = t * 2; r = D[0] + (M[0] - D[0]) * k; g = D[1] + (M[1] - D[1]) * k; b = D[2] + (M[2] - D[2]) * k; }
+        else { const k = (t - 0.5) * 2; r = M[0] + (L[0] - M[0]) * k; g = M[1] + (L[1] - M[1]) * k; b = M[2] + (L[2] - M[2]) * k; }
+        dc[i * 4] = r; dc[i * 4 + 1] = g; dc[i * 4 + 2] = b; dc[i * 4 + 3] = 255;
+        db[i * 4] = db[i * 4 + 1] = db[i * 4 + 2] = (ridge * 0.7 + fib * 0.3) * 255; db[i * 4 + 3] = 255;
+      }
+    }
+    for (let i = 0; i < 300; i++) {            // flecks: pale undyed fibres and dark burrs
+      const p = (((rnd() * S) | 0) * S + ((rnd() * S) | 0)) * 4, pale = rnd() < 0.6, k = pale ? 1.45 : 0.62;
+      for (let c = 0; c < 3; c++) { dc[p + c] *= k; dc[p + 4 + c] *= k; }
+    }
+    gc.putImageData(ic, 0, 0); gb.putImageData(ib, 0, 0);
+    return { color: col, bump: bmp };
+  }
+
+  // Parametric grid mesh. fn(u, v, out) writes out[0..2] (position) and optionally out[3] (the v texture coordinate); u is the column
+  // direction (wraps round a tube when `wrap`: the seam normals are welded). Triangles are wound to face away from `ref` ([x, y, z], a point
+  // inside the solid), so the callers never have to think about handedness.
+  function gridSurface(nu, nv, fn, wrap, ref) {
+    const cols = nu + 1, count = cols * (nv + 1), P = new Float32Array(count * 3), UV = new Float32Array(count * 2), o = [0, 0, 0, -1];
+    for (let j = 0; j <= nv; j++) {
+      for (let i = 0; i <= nu; i++) {
+        o[3] = -1; fn(i / nu, j / nv, o);
+        const k = j * cols + i;
+        P[k * 3] = o[0]; P[k * 3 + 1] = o[1]; P[k * 3 + 2] = o[2];
+        UV[k * 2] = i / nu; UV[k * 2 + 1] = o[3] >= 0 ? o[3] : j / nv;
+      }
+    }
+    const m = (nv >> 1) * cols + (nu >> 2), a = m * 3, b = (m + cols) * 3, c = (m + 1) * 3;
+    const e1x = P[b] - P[a], e1y = P[b + 1] - P[a + 1], e1z = P[b + 2] - P[a + 2], e2x = P[c] - P[a], e2y = P[c + 1] - P[a + 1], e2z = P[c + 2] - P[a + 2];
+    const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+    const flip = nx * (P[a] - ref[0]) + ny * (P[a + 1] - ref[1]) + nz * (P[a + 2] - ref[2]) < 0;
+    const I = [];
+    for (let j = 0; j < nv; j++) {
+      for (let i = 0; i < nu; i++) {
+        const p = j * cols + i, q = p + cols;
+        if (flip) I.push(p, p + 1, q, q, p + 1, q + 1); else I.push(p, q, p + 1, q, q + 1, p + 1);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(P, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(UV, 2));
+    g.setIndex(I);
+    g.computeVertexNormals();
+    if (wrap) {
+      const N = g.attributes.normal;
+      for (let j = 0; j <= nv; j++) {
+        const k0 = j * cols, k1 = k0 + nu;
+        const x = N.getX(k0) + N.getX(k1), y = N.getY(k0) + N.getY(k1), z = N.getZ(k0) + N.getZ(k1), l = Math.hypot(x, y, z) || 1;
+        N.setXYZ(k0, x / l, y / l, z / l); N.setXYZ(k1, x / l, y / l, z / l);
+      }
+    }
+    return g;
+  }
+
+  // Surface of revolution about the y axis through (0, *, cz): prof = [[y, r], ...] bottom to top, elliptical sections (ex, ez), u = 0 faces +z,
+  // v follows the arc length of the profile. wob(theta, y) -> radius factor (cloth folds).
+  function revolve(prof, nu, ex, ez, cz, wob) {
+    const n = prof.length, arc = [0];
+    for (let i = 1; i < n; i++) arc.push(arc[i - 1] + Math.hypot(prof[i][0] - prof[i - 1][0], prof[i][1] - prof[i - 1][1]));
+    const total = arc[n - 1] || 1;
+    return gridSurface(nu, n - 1, (u, v, o) => {
+      const j = Math.round(v * (n - 1)), y = prof[j][0], r = prof[j][1], th = u * 6.283185307, w = wob ? wob(th, y) : 1;
+      o[0] = Math.sin(th) * r * ex * w; o[1] = y; o[2] = cz + Math.cos(th) * r * ez * w; o[3] = arc[j] / total;
+    }, true, [0, (prof[0][0] + prof[n - 1][0]) / 2, cz]);
+  }
+
+  // ---------------------------------------------------------------------------------------------------------
   // revolver geometry processing
   // ---------------------------------------------------------------------------------------------------------
   function classify(mat) {
@@ -4078,6 +4257,10 @@ window.World = (function () {
     sway: { x: 0, y: 0, vx: 0, vy: 0 },
     lastYaw: null, lastPitch: null,
     _dbgView: null,
+    kleg: null,         // the kick leg rig (see _buildKickLeg)
+    kickT: -1,          // seconds into the kick, -1 = not kicking
+    _kickW: 0,          // 0..1 how far the gun and hands have shifted for the kick
+    _kickFreeze: -1,    // debug: hold the kick at this instant
 
     // -----------------------------------------------------------------------------------------------------
     init: function (camera, renderer) {
@@ -4115,6 +4298,8 @@ window.World = (function () {
       if (!ok) this._buildFallbackGun();
       try { this._buildHands(); } catch (e) { console.error('[Weapon] hands build failed', e); }
       this._buildFlash();
+      const kt0 = performance.now();
+      try { this._buildKickLeg(); this._kickBuildMs = performance.now() - kt0; } catch (e) { console.error('[Weapon] kick leg build failed, Weapon.kick() is off', e); this.kleg = null; }
 
       this._applyPose(0);
       this.scene.updateMatrixWorld(true);
@@ -4555,38 +4740,78 @@ window.World = (function () {
       }
     },
 
-    // Orient a rig: the hand (palm, fingers) ends up turned by handQ, the forearm leaves the wrist along armDir (both gun space).
-    // Sets rig.bendQ (the wrist bend, applied by _poseHand) and returns the quaternion for rig.root.
+    // Orient a rig: the hand (palm, fingers) is turned by handQ and stays undeformed; the forearm leaves the wrist along armDir
+    // (gun space). The bend between the two is made by the forearm itself (a curved loft, _armLoft), not by deforming the hand
+    // mesh: bending the skinned wrist folded the model's cut wrist edge into a ridge on the back of the forearm.
     _aimHand: function (rig, handQ, armDir) {
-      const a = armDir.clone().normalize().applyQuaternion(handQ.clone().invert());
-      rig.bendQ = new THREE.Quaternion().setFromUnitVectors(a, new V3(0, 1, 0));
-      return handQ.clone().multiply(rig.bendQ.clone().invert());
+      rig.bendQ = null;
+      rig.armDir = armDir.clone().normalize().applyQuaternion(handQ.clone().invert());   // in the hand model's own space
+      return handQ.clone();
     },
 
-    // The forearm, built in the hand model's own space so it starts exactly on the model's cut wrist (an ellipse at y ~0.077):
-    // a skin loft widening from that ellipse, a dark leather band, then the sleeve, all along +y (the wrist bend turns the hand,
-    // not the arm).
+    // The forearm, in the hand model's own space. The model ends in a cut, flared wrist; that last part is trimmed off, and a lofted
+    // forearm starts on the model's real cross-section just below the cut, runs on along the wrist (+y) and then curves smoothly into
+    // rig.armDir, through a dark leather band into the sleeve.
     _armLoft: function (rig) {
       const M = this.mats;
       if (rig.arm) { rig.root.children[0].remove(rig.arm); rig.arm.traverse((o) => { if (o.geometry) o.geometry.dispose(); }); }
-      const pos = rig.mesh.geometry.attributes.position, v = new V3();
-      let top = -1;
-      for (let i = 0; i < pos.count; i++) { v.fromBufferAttribute(pos, i); if (v.y > top) top = v.y; }
-      let x0 = 1, x1 = -1, z0 = 1, z1 = -1;
-      for (let i = 0; i < pos.count; i++) {
-        v.fromBufferAttribute(pos, i);
-        if (v.y < top - 0.006) continue;
-        x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); z0 = Math.min(z0, v.z); z1 = Math.max(z1, v.z);
+      const v = new V3();
+      if (!rig.cut) {
+        // trim the flared wrist end of the hand mesh (its own copy of the geometry)
+        const geo = rig.mesh.geometry.clone();
+        rig.mesh.geometry = geo;
+        const pos = geo.attributes.position;
+        let top = -1;
+        for (let i = 0; i < pos.count; i++) { v.fromBufferAttribute(pos, i); if (v.y > top) top = v.y; }
+        const cutY = top - 0.016;
+        if (geo.index) {
+          const src = geo.index.array, keep = [];
+          for (let t = 0; t < src.length; t += 3) {
+            let above = 0;
+            for (let k = 0; k < 3; k++) if (pos.getY(src[t + k]) > cutY) above++;
+            if (above < 2) keep.push(src[t], src[t + 1], src[t + 2]);
+          }
+          geo.setIndex(keep);
+        }
+        // the cross-section just below the cut
+        const secY = cutY - 0.005;
+        let x0 = 1, x1 = -1, z0 = 1, z1 = -1;
+        for (let i = 0; i < pos.count; i++) {
+          v.fromBufferAttribute(pos, i);
+          if (Math.abs(v.y - secY) > 0.004) continue;
+          x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); z0 = Math.min(z0, v.z); z1 = Math.max(z1, v.z);
+        }
+        rig.cut = { y: secY, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, rx: (x1 - x0) / 2, rz: (z1 - z0) / 2 };
       }
-      const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, rx = (x1 - x0) / 2, rz = (z1 - z0) / 2;
+      const C = rig.cut, Y = new V3(0, 1, 0);
+      const A = (rig.armDir && rig.armDir.lengthSq() > 0) ? rig.armDir.clone().normalize() : Y.clone();
+      // path: a quadratic Bezier from the section along +y, bending into A, then straight on along A
+      const p0 = new V3(C.cx, C.y, C.cz), p1 = p0.clone().addScaledVector(Y, 0.040), p2 = p1.clone().addScaledVector(A, 0.040);
+      const pts = [];
+      for (let i = 0; i <= 40; i++) {
+        const t = i / 40, u = 1 - t;
+        pts.push(new V3().addScaledVector(p0, u * u).addScaledVector(p1, 2 * u * t).addScaledVector(p2, t * t));
+      }
+      for (let i = 1; i <= 10; i++) pts.push(p2.clone().addScaledVector(A, 0.04 * i));
+      const len = [0];
+      for (let i = 1; i < pts.length; i++) len.push(len[i - 1] + pts[i].distanceTo(pts[i - 1]));
+      const at = (d) => {
+        let i = 1;
+        while (i < pts.length - 1 && len[i] < d) i++;
+        const t = Math.min(1, Math.max(0, (d - len[i - 1]) / Math.max(1e-6, len[i] - len[i - 1])));
+        return { p: pts[i - 1].clone().lerp(pts[i], t), T: pts[i].clone().sub(pts[i - 1]).normalize() };
+      };
       const SEG = 32;
-      // rings: [y, rx, rz, cx offset]; the forearm rounds out and thickens away from the wrist
+      // rings: [distance along the path, x scale, z scale]; each ring is an ellipse turned from the wrist plane onto the path
       const loft = (rings, mat) => {
-        const P = [], UV = [], I = [];
+        const P = [], UV = [], I = [], q = new THREE.Quaternion(), e = new V3();
         rings.forEach((r, j) => {
+          const f = at(r[0]);
+          q.setFromUnitVectors(Y, f.T);
           for (let i = 0; i <= SEG; i++) {
             const a = i / SEG * Math.PI * 2;
-            P.push(cx + r[3] + Math.cos(a) * r[1], r[0], cz + Math.sin(a) * r[2]);
+            e.set(Math.cos(a) * C.rx * r[1], 0, Math.sin(a) * C.rz * r[2]).applyQuaternion(q).add(f.p);
+            P.push(e.x, e.y, e.z);
             UV.push(i / SEG, j / (rings.length - 1));
           }
         });
@@ -4605,28 +4830,13 @@ window.World = (function () {
         m.frustumCulled = false;
         return m;
       };
-      const y0 = top - 0.020, k = Math.sign(cx) || 1;
       const arm = new THREE.Group();
       arm.add(loft([
-        [y0, rx * 0.92, rz * 0.94, 0],
-        [y0 + 0.010, rx * 0.99, rz * 0.98, 0],
-        [y0 + 0.020, rx * 1.20, rz * 1.00, -k * 0.001],
-        [y0 + 0.034, rx * 1.60, rz * 0.98, -k * 0.003],
-        [y0 + 0.052, rx * 1.95, rz * 0.98, -k * 0.005],
-        [y0 + 0.064, rx * 2.05, rz * 0.99, -k * 0.005],
+        [0.000, 1.02, 1.02], [0.008, 1.05, 1.02], [0.018, 1.16, 1.01], [0.030, 1.36, 0.99],
+        [0.044, 1.58, 0.98], [0.058, 1.74, 0.98], [0.070, 1.82, 0.99],
       ], M.skin));
-      arm.add(loft([
-        [y0 + 0.052, rx * 2.15, rz * 1.06, -k * 0.005],
-        [y0 + 0.054, rx * 2.30, rz * 1.12, -k * 0.005],
-        [y0 + 0.072, rx * 2.36, rz * 1.14, -k * 0.005],
-        [y0 + 0.074, rx * 2.25, rz * 1.09, -k * 0.005],
-      ], M.cuff));
-      arm.add(loft([
-        [y0 + 0.068, rx * 2.32, rz * 1.12, -k * 0.005],
-        [y0 + 0.078, rx * 2.60, rz * 1.22, -k * 0.006],
-        [y0 + 0.200, rx * 2.90, rz * 1.32, -k * 0.007],
-        [y0 + 0.420, rx * 3.20, rz * 1.40, -k * 0.007],
-      ], M.sleeve));
+      arm.add(loft([[0.062, 1.92, 1.05], [0.064, 2.04, 1.10], [0.082, 2.10, 1.12], [0.084, 2.00, 1.07]], M.cuff));
+      arm.add(loft([[0.078, 2.06, 1.10], [0.088, 2.32, 1.20], [0.200, 2.60, 1.30], [0.430, 2.90, 1.38]], M.sleeve));
       rig.root.children[0].add(arm);
       rig.arm = arm;
     },
@@ -4660,7 +4870,7 @@ window.World = (function () {
       rig.root.quaternion.copy(hq);
       rig.root.position.copy(target).sub(knuck.clone().multiplyScalar(C.scale).applyQuaternion(hq));
       rig.root.updateMatrix();
-      if (!rig.arm) this._armLoft(rig);
+      this._armLoft(rig);
     },
 
     _buildRiggedHands: function () {
@@ -5209,6 +5419,262 @@ window.World = (function () {
       this.flashT = 1; this.flashOn = false;
     },
 
+    // -----------------------------------------------------------------------------------------------------
+    // the kick: the player's right leg (charcoal-brown wool trouser, knee-high brown riding boot with a buckled instep strap, welted dark sole,
+    // stacked heel, small iron spur) swings up from below the screen, thrusts the sole forward and snaps at KICK_IMPACT, holds a beat and drops
+    // away by KICK_DUR. The revolver and hands dip down-right and tilt while it is out (the weight shift, see _applyPose). The leg is a 2-bone
+    // IK chain (thigh + shin) from a virtual hip below and behind the camera; the boot rides the shin. All in viewmodel space; no allocations
+    // per frame. Not offered during a reload (the open cylinder and the loading hand are where the leg goes).
+    // -----------------------------------------------------------------------------------------------------
+    // starts the kick if the viewmodel is ready, not already kicking and not reloading; { impactAt, duration } in seconds, else null
+    kick: function () {
+      if (!this.ready || !this.kleg || this.kickT >= 0 || this.rel) return null;
+      this.kickT = 0; this._kickW = 0;
+      this.kleg.root.visible = true;
+      this._poseKickLeg(0);
+      return { impactAt: KICK_IMPACT, duration: KICK_DUR };
+    },
+    isKicking: function () { return this.kickT >= 0; },
+    kickPhase: function () { return this.kickT >= 0 ? clamp(this.kickT / KICK_DUR, 0, 1) : -1; },
+
+    _updateKick: function (dt) {
+      if (this._kickFreeze >= 0) this.kickT = this._kickFreeze;     // debug: hold the leg at one instant
+      else if (this.kickT >= 0) {
+        const prev = this.kickT;
+        this.kickT += dt;
+        if (prev < KICK_IMPACT && this.kickT >= KICK_IMPACT) this.S.kh.kick(0.012);     // the hit goes through the gun as a short jolt
+      } else return;
+      const t = this.kickT;
+      if (t >= KICK_DUR) {
+        this.kickT = -1; this._kickW = 0;
+        this.kleg.root.visible = false;
+        return;
+      }
+      this._kickW = kf(t, [[0, 0], [0.12, 1], [0.34, 1], [0.58, 0]]);
+      this._poseKickLeg(t);
+    },
+
+    // leg pose at time t: sample the keys (ankle, toe hint, knee pole), solve the 2-bone chain, orient the boot
+    _poseKickLeg: function (t) {
+      const C = this.KICK, V = this._kv, B = V.b, L = this.kleg, keys = C.keys, n = keys.length;
+      let i = 1;
+      while (i < n - 1 && t > keys[i][0]) i++;
+      const ka = keys[i - 1], kb = keys[i], f0 = clamp((t - ka[0]) / (kb[0] - ka[0]), 0, 1);
+      const f = kb[13] === 1 ? f0 * f0 : kb[13] === 2 ? 1 - (1 - f0) * (1 - f0) * (1 - f0) : smooth(f0);
+      for (let c = 0; c < 12; c++) B[c] = ka[c + 1] + (kb[c + 1] - ka[c + 1]) * f;
+      const H = V.H.set(B[0], B[1], B[2]), A = V.A.set(B[3], B[4], B[5]), T = V.T.set(B[6], B[7], B[8]), P = V.P.set(B[9], B[10], B[11]);
+      const L1 = C.thigh, L2 = C.shin, d = V.d.subVectors(A, H);
+      let D = d.length();
+      const reach = L1 + L2 - 0.004;
+      if (D > reach) { d.multiplyScalar(reach / D); A.copy(H).add(d); D = reach; }
+      d.multiplyScalar(1 / D);
+      const a = (L1 * L1 - L2 * L2 + D * D) / (2 * D), h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+      const pe = V.pe.copy(P).addScaledVector(d, -P.dot(d));
+      if (pe.lengthSq() < 1e-8) pe.set(0, 1, 0);
+      const K = V.K.copy(H).addScaledVector(d, a).addScaledVector(pe.normalize(), h);
+      const s = V.s.subVectors(K, A).normalize();                      // up the shin, ankle -> knee
+      T.addScaledVector(s, -T.dot(s));                                 // the foot is square to the shin
+      if (T.lengthSq() < 1e-8) T.set(0, 0, -1).addScaledVector(s, s.z);
+      T.normalize();
+      L.boot.position.copy(A);
+      L.boot.quaternion.setFromRotationMatrix(V.m.makeBasis(V.X.crossVectors(s, T), s, T));     // boot space: y up the shaft, z toes
+      L.thigh.position.copy(K);
+      L.thigh.quaternion.setFromUnitVectors(UPV, V.d2.subVectors(H, K).normalize());
+    },
+
+    _buildKickLeg: function () {
+      const srgb = this.srgb, col = (h) => this._col(h);
+      const aniso = this.renderer && this.renderer.capabilities ? Math.min(8, this.renderer.capabilities.getMaxAnisotropy()) : 4;
+      const tex = (cv, rx, ry, color) => {
+        const t = new THREE.CanvasTexture(cv);
+        t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); t.anisotropy = aniso;
+        if (color && srgb) t.encoding = THREE.sRGBEncoding;
+        return t;
+      };
+      const clone = (cv) => { const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height; c.getContext('2d').drawImage(cv, 0, 0); return c; };
+      const phong = (o) => new THREE.MeshPhongMaterial(o);
+
+      const tm0 = performance.now();
+      // ---- textures and materials (r147 bumpScale is in world units: white = that many metres, so it is a millimetre or two here)
+      const lea = makeLeatherCanvases({ size: 512, seed: 11, dark: [56, 34, 20], mid: [94, 60, 36], light: [126, 86, 54], pores: 2300, creases: 60, pr: 3 });
+      const sol = makeLeatherCanvases({ size: 256, seed: 5, dark: [26, 18, 13], mid: [42, 30, 21], light: [60, 44, 31], pores: 300, creases: 10, pr: 2 });
+      const wool = makeWoolCanvases({ seed: 3, dark: [46, 40, 36], mid: [70, 62, 55], light: [104, 93, 82] });
+      // the shaft gets its own copy of the hide: a stitched back seam, a stitched top edge and ankle creases painted on
+      const shaftC = clone(lea.color), shaftB = clone(lea.bump), SC = shaftC.width;
+      const km = this.kmats = {
+        wool: phong({ color: 0xffffff, map: tex(wool.color, 3.5, 3.5, true), bumpMap: tex(wool.bump, 3.5, 3.5), bumpScale: 0.0012, specular: col(0x060606), shininess: 3 }),
+        leather: phong({ color: 0xffffff, map: tex(lea.color, 1.3, 1.7, true), bumpMap: tex(lea.bump, 1.3, 1.7), bumpScale: 0.0016, specular: col(0x5a3f2a), shininess: 42 }),
+        
+        sole: phong({ color: 0xffffff, map: tex(sol.color, 6, 6, true), bumpMap: tex(sol.bump, 6, 6), bumpScale: 0.0012, specular: col(0x2a2018), shininess: 14 }),
+        iron: phong({ color: col(0x5b6068), specular: col(0xa8aeb8), shininess: 60 }),
+      };
+      // the strap: darker, smooth leather with a row of cream stitches along each edge (v runs across its width)
+      const sc = document.createElement('canvas'); sc.width = 128; sc.height = 32;
+      { const g = sc.getContext('2d'); g.fillStyle = '#3e2412'; g.fillRect(0, 0, 128, 32); g.fillStyle = 'rgba(255,220,170,0.06)'; g.fillRect(0, 10, 128, 12);
+        g.fillStyle = '#d9c391'; for (let x = 0; x < 128; x += 16) { g.fillRect(x + 2, 8, 9, 2.4); g.fillRect(x + 2, 22, 9, 2.4); } }
+      km.strap = phong({ color: 0xffffff, map: tex(sc, 3, 1, true), specular: col(0x5a3f2a), shininess: 40 });
+      const stitch = (g, x, y, w, h) => { g.fillRect(x, y, w, h); };
+      const gC = shaftC.getContext('2d'), gB = shaftB.getContext('2d');
+      const YB0 = -0.05, YT = 0.322;                                    // shaft bottom (inside the foot) and top edge, boot space
+      // shaft profile: calf-hugging taper, a rolled top edge, a short inner wall
+      const SHR = [[-0.05, 0.0500], [0.0, 0.0498], [0.05, 0.0505], [0.12, 0.0540], [0.20, 0.0590], [0.27, 0.0618], [YT, 0.0628]];
+      const prof = [];
+      for (let i = 0; i <= 30; i++) { const y = YB0 + (YT - YB0) * i / 30; prof.push([y, spline(y, SHR)]); }
+      const rt = spline(YT, SHR);
+      for (let k = 1; k <= 6; k++) { const a = k / 6 * Math.PI; prof.push([YT + Math.sin(a) * 0.0045, rt - 0.0045 + Math.cos(a) * 0.0045]); }
+      prof.push([YT - 0.016, rt - 0.0095]);
+      let tot = 0; const arc = [0];
+      for (let i = 1; i < prof.length; i++) { tot += Math.hypot(prof[i][0] - prof[i - 1][0], prof[i][1] - prof[i - 1][1]); arc.push(tot); }
+      const vOf = (y) => { let i = 1; while (i < prof.length - 1 && prof[i][0] < y) i++; return arc[i] / tot; };       // canvas row of a height on the shaft
+      const rowOf = (y) => (1 - vOf(y)) * SC;
+      {
+        const thread = 'rgba(224,198,150,0.9)', dent = 'rgba(0,0,0,0.55)', sx = SC * 0.5, y0 = rowOf(0.31), y1 = rowOf(0.02);
+        gC.fillStyle = 'rgba(40,22,10,0.35)'; gC.fillRect(sx - 3, y0, 6, y1 - y0);                        // back seam: a darker welt strip
+        gB.fillStyle = 'rgba(255,255,255,0.45)'; gB.fillRect(sx - 3, y0, 6, y1 - y0);
+        for (let y = y0; y < y1; y += 11) {
+          for (const dx of [-8, 8]) { gC.fillStyle = thread; stitch(gC, sx + dx - 1, y, 2.4, 6); gB.fillStyle = dent; stitch(gB, sx + dx - 1, y, 2.4, 6); }
+        }
+        const ty = rowOf(0.300);                                                                          // top edge stitching
+        for (let x = 0; x < SC; x += 11) { gC.fillStyle = thread; stitch(gC, x, ty, 6, 2.4); gB.fillStyle = dent; stitch(gB, x, ty, 6, 2.4); }
+        for (let k = 0; k < 3; k++) {                                                                      // ankle creases across the front
+          const y = rowOf(0.085 + k * 0.030), w = 110 - k * 16;
+          for (const ox of [0, SC]) {
+            gC.strokeStyle = 'rgba(28,14,6,0.40)'; gC.lineWidth = 3; gC.beginPath(); gC.moveTo(ox - w, y - 4); gC.quadraticCurveTo(ox, y + 12, ox + w, y - 4); gC.stroke();
+            gB.strokeStyle = 'rgba(0,0,0,0.45)'; gB.lineWidth = 4; gB.beginPath(); gB.moveTo(ox - w, y - 4); gB.quadraticCurveTo(ox, y + 12, ox + w, y - 4); gB.stroke();
+            gB.strokeStyle = 'rgba(255,255,255,0.35)'; gB.lineWidth = 3; gB.beginPath(); gB.moveTo(ox - w, y - 9); gB.quadraticCurveTo(ox, y + 7, ox + w, y - 9); gB.stroke();
+          }
+        }
+      }
+      km.shaft = phong({ color: 0xffffff, map: tex(shaftC, 1, 1, true), bumpMap: tex(shaftB, 1, 1), bumpScale: 0.0022, specular: col(0x5a3f2a), shininess: 42 });
+
+      // the welt: tan leather with a dashed cream thread
+      const wc = document.createElement('canvas'); wc.width = 32; wc.height = 16;
+      { const g = wc.getContext('2d'); g.fillStyle = '#8c6038'; g.fillRect(0, 0, 32, 16); g.fillStyle = '#e2cfa0'; g.fillRect(2, 5, 18, 6); }
+      km.welt = phong({ color: 0xffffff, map: tex(wc, 120, 1, true), specular: col(0x3a2a1c), shininess: 20 });
+      // the stacked heel: leather lifts, a thin dark line between each
+      const hc = document.createElement('canvas'); hc.width = 8; hc.height = 16;
+      { const g = hc.getContext('2d'); g.fillStyle = '#3a2412'; g.fillRect(0, 0, 8, 16); g.fillStyle = '#150d07'; g.fillRect(0, 13, 8, 3); }
+      km.heel = phong({ color: 0xffffff, map: tex(hc, 1, 118, true), specular: col(0x1e150c), shininess: 10 });
+
+      const tm1 = performance.now();
+      // ---- rig
+      const root = new THREE.Group(), boot = new THREE.Group(), thigh = new THREE.Group();
+      root.name = 'kickLeg'; root.visible = false;
+      root.add(boot, thigh);
+      this.scene.add(root);
+      const add = (parent, geo, mat) => { const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; parent.add(m); return m; };
+
+      // ---- trouser: thigh tube (from the knee towards the hip, along +y), knee, and the shin cloth bloused over the boot top
+      const fold = (th, y) => 1 + 0.04 * Math.sin(th * 3 + y * 52) * Math.sin(th * 2 - y * 29 + 1.3);
+      const TH = [[0, 0.0668], [0.06, 0.0676], [0.14, 0.0728], [0.24, 0.0800], [0.35, 0.0870], [0.46, 0.0930]], tp = [];
+      for (let i = 0; i <= 14; i++) { const y = 0.46 * i / 14; tp.push([y, spline(y, TH)]); }
+      add(thigh, revolve(tp, 36, 1, 1, 0, fold), km.wool);
+      add(boot, new THREE.SphereGeometry(0.0668, 30, 20), km.wool).position.set(0, 0.40, 0);
+      const TR = [[YT - 0.04, 0.0500], [YT - 0.012, 0.0535], [YT + 0.002, 0.0585], [YT + 0.008, 0.0640], [YT + 0.022, 0.0705], [0.36, 0.0700], [0.40, 0.0668]], trp = [];
+      for (let i = 0; i <= 16; i++) { const y = TR[0][0] + (0.40 - TR[0][0]) * i / 16; trp.push([y, spline(y, TR)]); }
+      add(boot, revolve(trp, 40, 1, 1.03, 0, fold), km.wool);
+
+      // ---- boot shaft
+      add(boot, revolve(prof, 48, 1, 1.07, 0), km.shaft);
+
+      // ---- the foot: lofted superellipse sections from the heel to the toe (boot space, ankle centre at the origin, +z toes, sole top at YB)
+      const YB = -0.062;
+      const FA = [[-0.090, 0.040], [-0.070, 0.043], [-0.045, 0.0455], [-0.010, 0.049], [0.030, 0.0505], [0.075, 0.0525], [0.120, 0.0545], [0.160, 0.052], [0.200, 0.046], [0.236, 0.038]];
+      const FT = [[-0.090, -0.005], [-0.075, 0.010], [-0.050, 0.035], [-0.020, 0.050], [0.020, 0.052], [0.060, 0.040], [0.100, 0.018], [0.140, 0.000], [0.180, -0.012], [0.236, -0.022]];
+      const ZH = -0.090, ZT = 0.236, RH = 0.040, RT = 0.075;
+      const cap = (z) => (z > ZT - RT ? Math.sqrt(Math.max(0, 1 - Math.pow((z - (ZT - RT)) / RT, 2))) : z < ZH + RH ? Math.sqrt(Math.max(0, 1 - Math.pow((ZH + RH - z) / RH, 2))) : 1);
+      const footA = (z) => spline(z, FA) * cap(z);
+      const ring = (z, u, out) => {                                     // u: 0 = top of the foot, 0.25 = +x side, 0.5 = underneath
+        const c = cap(z), a = spline(z, FA) * c, yt = spline(z, FT), b = (yt - YB) / 2 * c, th = u * 6.283185307, cs = Math.cos(th), sn = Math.sin(th);
+        const p = cs > 0 ? 2.4 : 4.0;
+        out[0] = a * Math.sign(sn) * Math.pow(Math.abs(sn), 2 / p);
+        out[1] = (yt + YB) / 2 + b * Math.sign(cs) * Math.pow(Math.abs(cs), 2 / p);
+      };
+      const zAt = (v) => ZH + (ZT - ZH) * (0.5 - 0.5 * Math.cos(Math.PI * v));
+      const rr = [0, 0];
+      add(boot, gridSurface(40, 44, (u, v, o) => { const z = zAt(v); ring(z, u, rr); o[0] = rr[0]; o[1] = rr[1]; o[2] = z; }, true, [0, 0, 0.07]), km.leather);
+
+      // sole: the foot's plan outline, extruded and bevelled; welt thread round its top edge; the heel stack under the back
+      const zs = [], pts = [];
+      for (let i = 0; i <= 40; i++) zs.push(zAt(i / 40));
+      for (let i = 0; i < zs.length; i++) pts.push(new THREE.Vector2(footA(zs[i]) + 0.003, zs[i]));
+      for (let i = zs.length - 2; i > 0; i--) pts.push(new THREE.Vector2(-(footA(zs[i]) + 0.003), zs[i]));
+      const BT = 0.0015, SOLE_D = 0.009;
+      const soleGeo = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: SOLE_D, bevelEnabled: true, bevelThickness: BT, bevelSize: 0.0015, bevelSegments: 2, curveSegments: 8 });
+      soleGeo.rotateX(Math.PI / 2); soleGeo.translate(0, YB - BT, 0);
+      add(boot, soleGeo, km.sole);
+      const wp = [];
+      for (let i = 0; i < pts.length; i++) { const p = pts[i]; wp.push(new V3(p.x * 1.0 + Math.sign(p.x) * 0.0012, YB - 0.0005, p.y)); }
+      add(boot, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(wp, true, 'centripetal'), 140, 0.0030, 6, true), km.welt);
+      const hs = new THREE.Shape(), hz = -0.058;
+      for (let i = 0; i <= 16; i++) { const t = i / 16 * Math.PI; if (i === 0) hs.moveTo(0.0365 * Math.cos(t), hz - 0.030 * Math.sin(t)); else hs.lineTo(0.0365 * Math.cos(t), hz - 0.030 * Math.sin(t)); }
+      hs.lineTo(-0.02, hz + 0.003); hs.lineTo(0, hz - 0.001); hs.lineTo(0.02, hz + 0.003); hs.lineTo(0.0365, hz);
+      const heelGeo = new THREE.ExtrudeGeometry(hs, { depth: 0.024, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 2, curveSegments: 6 });
+      heelGeo.rotateX(Math.PI / 2); heelGeo.translate(0, YB - 0.0125 - 0.002 + 0.0, 0);
+      add(boot, heelGeo, km.heel);
+
+      // ---- instep strap (a ribbon following the foot's section) with an iron buckle on the inner side of the top
+      const rA = [0, 0], rB = [0, 0];
+      const strap = (zc, w, s0, s1, nu, lift) => {
+        const rows = [[-0.5, 0.0010], [-0.5, 0.0036], [-0.38, 0.0046], [0.38, 0.0046], [0.5, 0.0036], [0.5, 0.0010]];
+        return gridSurface(nu, rows.length - 1, (u, v, o) => {
+          const s = lerp(s0, s1, u), row = rows[Math.round(v * (rows.length - 1))], z = zc + row[0] * w;
+          ring(z, (s + 1) % 1, rA); ring(z, (s + 1.002) % 1, rB);
+          let tx = rB[0] - rA[0], ty = rB[1] - rA[1]; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+          o[0] = rA[0] - ty * (row[1] + lift); o[1] = rA[1] + tx * (row[1] + lift); o[2] = z;
+        }, false, [0, 0.0, zc]);
+      };
+      const ZS = 0.060, SB = 0.115;
+      add(boot, strap(ZS, 0.026, -0.30, 0.30, 60, 0), km.strap);
+      add(boot, strap(ZS, 0.020, SB - 0.05, SB + 0.055, 12, 0.0016), km.strap);               // the tail laid back over the strap
+      const roundRect = (p, x, y, w, h, r) => {
+        p.moveTo(x + r, y); p.lineTo(x + w - r, y); p.quadraticCurveTo(x + w, y, x + w, y + r); p.lineTo(x + w, y + h - r); p.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        p.lineTo(x + r, y + h); p.quadraticCurveTo(x, y + h, x, y + h - r); p.lineTo(x, y + r); p.quadraticCurveTo(x, y, x + r, y);
+        return p;
+      };
+      const frame = roundRect(new THREE.Shape(), -0.0200, -0.0160, 0.0400, 0.0320, 0.007);
+      frame.holes.push(roundRect(new THREE.Path(), -0.0150, -0.0115, 0.0300, 0.0230, 0.005));
+      const buckle = new THREE.Group();
+      add(buckle, new THREE.ExtrudeGeometry(frame, { depth: 0.0030, bevelEnabled: true, bevelThickness: 0.0008, bevelSize: 0.0008, bevelSegments: 1, curveSegments: 6 }), km.iron);
+      const prong = add(buckle, new THREE.BoxGeometry(0.0270, 0.0030, 0.0028), km.iron);
+      prong.position.set(0.0015, 0, 0.0034);
+      ring(ZS, (SB - 0.07 + 1) % 1, rA); ring(ZS, (SB - 0.07 + 1.002) % 1, rB);
+      {
+        let tx = rB[0] - rA[0], ty = rB[1] - rA[1]; const l = Math.hypot(tx, ty); tx /= l; ty /= l;
+        const nx = -ty, ny = tx, off = 0.0068;
+        buckle.position.set(rA[0] + nx * off, rA[1] + ny * off, ZS);
+        const X = new V3(tx, ty, 0), Z = new V3(nx, ny, 0);
+        buckle.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, new V3().crossVectors(Z, X), Z));
+        boot.add(buckle);
+      }
+
+      // ---- small iron spur: a yoke round the back of the heel counter, a neck and a toothed rowel
+      {
+        const yp = [];
+        for (let i = 0; i <= 18; i++) { const a = (-100 + 200 * i / 18) * DEG; yp.push(new V3(Math.sin(a) * 0.0455, YB + 0.020, -0.058 - Math.cos(a) * 0.0335)); }
+        add(boot, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(yp, false), 24, 0.0022, 6, false), km.iron);
+        const neck = add(boot, new THREE.CylinderGeometry(0.0020, 0.0032, 0.026, 8), km.iron);
+        neck.rotation.x = Math.PI / 2; neck.position.set(0, YB + 0.020, -0.100);
+        const star = new THREE.Shape();
+        for (let i = 0; i < 16; i++) { const a = i / 16 * Math.PI * 2, r = i % 2 ? 0.0070 : 0.0125; if (i === 0) star.moveTo(Math.cos(a) * r, Math.sin(a) * r); else star.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+        const rg = new THREE.ExtrudeGeometry(star, { depth: 0.0022, bevelEnabled: false });
+        rg.translate(0, 0, -0.0011); rg.rotateY(Math.PI / 2);
+        add(boot, rg, km.iron).position.set(0, YB + 0.020, -0.115);
+      }
+
+      this.kleg = { root: root, boot: boot, thigh: thigh };
+      this._kv = { b: new Array(12).fill(0), H: new V3(), A: new V3(), T: new V3(), P: new V3(), d: new V3(), d2: new V3(), pe: new V3(), K: new V3(), s: new V3(), X: new V3(), m: new THREE.Matrix4() };
+      const tm2 = performance.now();
+      // the first kick must not stall on a shader compile or a texture upload
+      try {
+        if (this.renderer) {
+          Object.keys(km).forEach((k) => { ['map', 'bumpMap'].forEach((n) => { if (km[k][n] && this.renderer.initTexture) this.renderer.initTexture(km[k][n]); }); });
+          this.renderer.compile(this.scene, this.camera);
+        }
+      } catch (e) { /* the first kick compiles instead */ }
+      this._kickBuildParts = { texturesMs: Math.round(tm1 - tm0), geometryMs: Math.round(tm2 - tm1), uploadCompileMs: Math.round(performance.now() - tm2) };
+    },
+
     // state: { moving, sprinting, aimDelta:{x,y}? }  (reloading is ignored: Weapon.reload(ms) owns that animation)
     update: function (dt, state) {
       if (!this.ready) return;
@@ -5238,6 +5704,7 @@ window.World = (function () {
         this.rel.t += dt * 1000;
         if (this.rel.t >= this.rel.dur) { this.rel = null; this.S.kh.kick(0.01); }
       }
+      if (this.kleg) this._updateKick(dt);
       this._applyPose(dt);
     },
 
@@ -5274,6 +5741,26 @@ window.World = (function () {
     // base pose of the hold point in viewmodel camera space
     BASE: { x: 0.145, y: -0.112, z: -0.285, rx: 0.03, ry: 0.12, rz: 0 },   // hold point in viewmodel camera space + resting angles
 
+    // the kick leg: thigh and shin lengths and the pose keys (viewmodel space, x right, y up, -z forward). The hip is virtual, below and behind
+    // the camera, and moves with the kick (the body lunges). Each key: [t seconds, hip x y z, ankle x y z, toe hint x y z (the foot points along
+    // it, made square to the shin), knee pole x y z (the knee bends towards it), ease into this key: 0 smooth, 1 accelerating (the snap),
+    // 2 decelerating]. The knee comes up into view first (chamber), the boot rises from the bottom edge, then snaps out and the sole lands at
+    // KICK_IMPACT; it holds a beat, drops back and is gone by KICK_DUR.
+    KICK: {
+      thigh: 0.44, shin: 0.44,
+      keys: [
+        [0.000, 0.16, -0.62, 0.10, 0.10, -1.00, 0.00, 0.00, -0.6, -1.0, 0.00, 0.0, -1.00, 0],
+        [0.050, 0.16, -0.38, -0.02, 0.04, -0.64, -0.52, 0.00, -0.5, -1.0, -0.35, 0.8, -0.50, 2],
+        [0.075, 0.20, -0.38, 0.02, 0.045, -0.42, -0.50, -0.05, -0.2, -1.0, 0.00, -0.8, -0.30, 0],
+        [0.105, 0.22, -0.32, 0.05, 0.05, -0.20, -0.48, -0.10, 0.1, -1.0, 0.30, -0.8, -0.20, 0],
+        [0.160, 0.30, -0.38, 0.15, 0.03, -0.17, -0.57, -0.60, 0.8, 0.0, 0.50, -0.8, 0.00, 1],
+        [0.260, 0.30, -0.38, 0.15, 0.025, -0.17, -0.60, -0.60, 0.8, 0.0, 0.50, -0.8, 0.00, 2],
+        [0.380, 0.26, -0.34, 0.08, 0.07, -0.25, -0.48, -0.30, 0.6, -0.6, -0.50, -0.6, -0.30, 0],
+        [0.520, 0.20, -0.46, 0.08, 0.12, -0.62, -0.40, 0.00, -0.5, -1.0, -0.60, -0.6, -0.20, 0],
+        [0.600, 0.16, -0.62, 0.10, 0.10, -1.00, 0.00, 0.00, -0.6, -1.0, -0.60, -0.4, -0.20, 0],
+      ],
+    },
+
     _applyPose: function (dt) {
       const S = this.S, B = this.BASE, t = this.time;
       const sb = this.sprintBlend, ba = this.bobAmp * (1 - 0.35 * sb);
@@ -5307,6 +5794,10 @@ window.World = (function () {
       rz += S.kr.x;
       ry += S.ky.x;
       y += S.kh.x; rx += S.kh.x * 3;
+
+      // kick: the weight shifts, the gun and hands dip down-right and tilt while the leg is out
+      const kw = this._kickW;
+      if (kw > 0) { x += 0.052 * kw; y += -0.074 * kw; z += 0.020 * kw; rx += -0.22 * kw; rz += 0.26 * kw; ry += 0.06 * kw; }
 
       // reload
       let swingOut = 0, spinAngle = 0, hand = 0;
@@ -5397,6 +5888,59 @@ window.World = (function () {
       }
     },
 
+    // debug (kickClip): sweeps the kick (gun shift included) and reports the closest the leg's vertices come to the gun / hand / forearm
+    // surfaces, in metres (0 = touching or inside). Only meshes whose boxes overlap are compared, vertex against triangle.
+    _kickClip: function (step) {
+      if (!this.kleg) return null;
+      const leg = [], oth = [];
+      this.kleg.root.traverse((o) => { if (o.isMesh) leg.push(o); });
+      this.viewRoot.traverse((o) => { if (o.isMesh && o.geometry && o.geometry.attributes.position) oth.push(o); });
+      const world = (m, i, out) => { out.fromBufferAttribute(m.geometry.attributes.position, i); if (m.isSkinnedMesh) m.boneTransform(i, out); return out.applyMatrix4(m.matrixWorld); };
+      const tri = new THREE.Triangle(), cp = new V3(), pt = new V3(), bo = new THREE.Box3(), bl = new THREE.Box3(), reg = new THREE.Box3(), tb = new THREE.Box3();
+      const res = { minDist: Infinity, t: -1, leg: null, other: null, samples: 0, worst: [] };
+      const keep = this._kickFreeze;
+      for (let t = 0; t < KICK_DUR - 1e-6; t += step) {
+        this._kickFreeze = t; this.kickT = t; this.kleg.root.visible = true;
+        this._updateKick(0); this._applyPose(0); this.scene.updateMatrixWorld(true);
+        res.samples++;
+        let tmin = Infinity, lname = null, oname = null;
+        for (const L of leg) {
+          bl.setFromObject(L).expandByScalar(0.03);
+          for (const O of oth) {
+            let vis = true; for (let q = O; q; q = q.parent) if (!q.visible) { vis = false; break; }
+            if (!vis) continue;
+            bo.setFromObject(O);
+            if (!bo.intersectsBox(bl)) continue;
+            reg.copy(bl).intersect(bo);
+            const lp = [], P = L.geometry.attributes.position;
+            for (let i = 0; i < P.count; i++) { world(L, i, pt); if (reg.containsPoint(pt)) lp.push(pt.x, pt.y, pt.z); }
+            if (!lp.length) continue;
+            const OP = O.geometry.attributes.position, idx = O.geometry.index, wp = new Float32Array(OP.count * 3), v = new V3();
+            for (let i = 0; i < OP.count; i++) { world(O, i, v); wp[i * 3] = v.x; wp[i * 3 + 1] = v.y; wp[i * 3 + 2] = v.z; }
+            const n = idx ? idx.count / 3 : OP.count / 3;
+            for (let k = 0; k < n; k++) {
+              const ia = idx ? idx.getX(k * 3) : k * 3, ib = idx ? idx.getX(k * 3 + 1) : k * 3 + 1, ic = idx ? idx.getX(k * 3 + 2) : k * 3 + 2;
+              tri.a.fromArray(wp, ia * 3); tri.b.fromArray(wp, ib * 3); tri.c.fromArray(wp, ic * 3);
+              tb.setFromPoints([tri.a, tri.b, tri.c]);
+              if (!tb.intersectsBox(reg)) continue;
+              for (let i = 0; i < lp.length; i += 3) {
+                pt.set(lp[i], lp[i + 1], lp[i + 2]);
+                tri.closestPointToPoint(pt, cp);
+                const d = cp.distanceTo(pt);
+                if (d < tmin) { tmin = d; lname = L.parent === this.kleg.thigh ? 'thigh' : (L.material === this.kmats.shaft ? 'shaft' : L.material === this.kmats.wool ? 'wool' : L.material === this.kmats.leather ? 'foot' : L.material === this.kmats.strap ? 'strap' : L.material === this.kmats.iron ? 'iron' : 'sole'); oname = O.name || (O.material && O.material.name) || (O.isSkinnedMesh ? 'hand' : 'gun'); }
+              }
+            }
+          }
+        }
+        if (tmin < res.minDist) { res.minDist = tmin; res.t = +t.toFixed(3); res.leg = lname; res.other = oname; }
+        if (tmin < 0.02) res.worst.push([+t.toFixed(3), +tmin.toFixed(4), lname, oname]);
+      }
+      this._kickFreeze = keep; this.kickT = keep >= 0 ? keep : -1;
+      if (keep < 0) { this._kickW = 0; this.kleg.root.visible = false; }
+      res.minDist = +res.minDist.toFixed(4);
+      return res;
+    },
+
     _muzzleVm: function () {
       const p = this._tmpC || (this._tmpC = new V3());
       this.viewRoot.updateMatrixWorld(true);
@@ -5436,6 +5980,7 @@ window.World = (function () {
         cylinderStepDeg: Math.round(this.cylStep / DEG), hasCylinder: !!P.cyl, hasHammer: !!P.hammer, hammerFall: +(this._hamFall || 0).toFixed(3),
         recoil: { z: +this.S.kz.x.toFixed(4), pitch: +this.S.kp.x.toFixed(4), climb: +this.S.kc.x.toFixed(4), roll: +this.S.kr.x.toFixed(4) },
         sprintBlend: +this.sprintBlend.toFixed(3), bobAmp: +this.bobAmp.toFixed(3),
+        kick: { built: !!this.kleg, buildMs: Math.round(this._kickBuildMs || 0), buildParts: this._kickBuildParts || null, active: this.kickT >= 0, t: +Math.max(0, this.kickT).toFixed(3), phase: +this.kickPhase().toFixed(3), weight: +this._kickW.toFixed(3) },
         worldLightIntensity: this.worldLight ? +this.worldLight.intensity.toFixed(3) : null,
         worldLightAdded: this._worldLightAdded,
         gunLength: this.lm ? +this.lm.length.toFixed(4) : null,
@@ -5452,6 +5997,17 @@ window.World = (function () {
         state: function () { return self.state(); },
         fire: function () { return self.fire().toArray(); },
         reload: function (ms) { self.reload(ms); return true; },
+        // kick() starts the kick (returns { impactAt, duration } or null); kickAt(sec) freezes the leg at that instant of it (kickAt() or
+        // kickAt(-1) lets it go); kickKeys(keys) / kickRig({ thigh, shin }) retune the pose live
+        kick: function () { return self.kick(); },
+        kickAt: function (sec) {
+          if (!self.kleg) return false;
+          if (sec === undefined || sec < 0) { self._kickFreeze = -1; self.kickT = -1; self._kickW = 0; self.kleg.root.visible = false; return true; }
+          self._kickFreeze = sec; self.kickT = sec; self.kleg.root.visible = true; self._updateKick(0); return true;
+        },
+        kickClip: function (step) { return self._kickClip(step || 0.04); },
+        kickKeys: function (k) { if (k) self.KICK.keys = k; return self.KICK.keys; },
+        kickRig: function (o) { if (o) Object.assign(self.KICK, o); return { thigh: self.KICK.thigh, shin: self.KICK.shin }; },
         // view(px,py,pz, tx,ty,tz) renders the viewmodel from an arbitrary camera (viewmodel space); view() resets
         view: function (px, py, pz, tx, ty, tz) { self._dbgView = (px === undefined) ? null : [px, py, pz, tx, ty, tz]; return true; },
         pose: function (o) { if (o) Object.assign(self.BASE, o); return Object.assign({}, self.BASE); },
@@ -6212,7 +6768,8 @@ window.World = (function () {
         currentClip, height, bones {head,torso,hips,handR,handL,armL,armR,legL,legR}, helmet, sword, shield (Assets wrappers
         parented to bones), mixer, actions{} (upper/full-body actions by clip name), lowerActions{} (lower-body layer),
         knockback (Vector3, m/s), knockbackScale.
-   States: approach | combatIdle | windup | attack | recover | stagger | dead.
+   States: approach | combatIdle | windup | attack | recover | stagger | dead, plus rushWind | rush | stumble (shield rush) and
+        punchWind | punch | punchRec (left-fist jab).
    Animation is layered: the LOWER body (hips, legs, feet) and the UPPER body (spine, head, arms, hands) each crossfade (0.25 s)
         on their own, so a knight stands planted (Idle_swordRight legs) while its upper body plays Run_swordAttack.
    Hooks for subclasses (Boss): override any of
@@ -6232,6 +6789,16 @@ window.World = (function () {
         on the ground shows the line, it locks 0.3 s before the charge) -> rush (8 m/s along the locked line, 1.5 m to hit: 16 damage x
         difficulty and a shove) -> stumble (1.4 s after a miss or a crash into a tree / rock, 0.5 s after a hit; takes 1.5x damage).
         Shooting a knight during rushWind breaks the charge. Debug: __dbg.knightRush(i?).
+   Overhead sword swing: the sword arm is posed procedurally on top of the attack clip (_extraPose -> _swingArm, through the same bone-override
+        system as the shield pose: _ovSave / _ovAim / _ovAimBlade). Windup: the arm swings UP and BACK over the shoulder, elbow bent, the blade
+        above and behind the head (the telegraph). Strike: a fast arm-over chop, right-high to left-low; the damage frame (ATK_DAMAGE_T, on the
+        clip time) is the moment the blade comes down in front of the knight. Then a low follow-through and a recovery that hands the arm back
+        to the clip. The torso twist / lean follow the same arc and the arm directions are measured in the (mostly) twisted torso frame. Throwers and
+        the boss are not touched (this._throwing / type 'knight').
+   Left-hand punch: a knight 'combatIdle' / 'approach' with the player within PUNCH_RANGE (1.3 m) in front, off its 4-6 s cooldown, jabs with the
+        shield arm: punchWind (0.22 s: the left arm pulls back) -> punch (0.16 s: fast jab, damage 8 x Difficulty.dmg through Player.hurt(dmg, this)
+        at 45 % of the jab, if the player is still within PUNCH_REACH and in front, plus Game.shove(dir * 6)) -> punchRec (0.4 s). A kick (stagger)
+        or a bullet during punchWind breaks it; the jab itself is not interrupted by a bullet. Debug: __dbg.knightPunch(i?).
    Difficulty (waves.js): knight HP / speed / damage / windup time scale with window.Difficulty; the boss applies its own (boss.js).
    Loose gear: combat.js re-parents helmet / sword / shield into physics holders on death (userData.loose = true); after that this
         module never touches them again.
@@ -6241,6 +6808,7 @@ window.World = (function () {
    daggers[], throwDagger(thrower, target?), _tickDaggers(dt)   (ticked by update(), emptied by clear())
    Debug (?debug=1, installed lazily): __dbg.knight.pose(i, state, progress), .gear(i), .info(i),
         __dbg.knightRush(i?)  the knight (default: the nearest living one) starts its shield rush wind-up at once,
+        __dbg.knightPunch(i?)  the knight (default: the nearest living one) starts its left-hand punch at once (no range / cooldown check),
         __dbg.knightThrow(i?, flightSec?)  the knight (default: the nearest living one) throws at once, no windup / cooldown / range check;
         flightSec advances the dagger that long right away (use it with a frozen AI), __dbg.daggers() lists the daggers in flight.
 */
@@ -6281,6 +6849,19 @@ window.World = (function () {
   const RUSH_MIN = 7, RUSH_MAX = 18, RUSH_WIND = 0.85, RUSH_LOCK = 0.3;     // distance window (m), telegraph (s), line locks this long before the charge
   const RUSH_SPEED = 8, RUSH_HIT_R = 1.5, RUSH_DAMAGE = 16, RUSH_SHOVE = 9;  // m/s, m, base damage, m/s given to the player
   const RUSH_STUMBLE_MISS = 1.4, RUSH_STUMBLE_HIT = 0.5, STUMBLE_DAMAGE = 1.5;
+  // left-hand punch (a shield-arm jab at very close range)
+  const PUNCH_RANGE = 1.3, PUNCH_REACH = 1.75;        // m: it starts when the player is this close in front; it still connects this far away at the hit frame
+  const PUNCH_WIND = 0.22, PUNCH_TIME = 0.16, PUNCH_REC = 0.4, PUNCH_HIT = 0.45;   // s of pull-back, jab and recovery; the fist lands at this fraction of the jab
+  const PUNCH_DAMAGE = 8, PUNCH_SHOVE = 6, PUNCH_CD_MIN = 4, PUNCH_CD_MAX = 6;     // base damage, m/s given to the player, s between two punches
+  // Arm poses of the sword swing and the punch, as directions in the knight's own frame [right, up, forward] (normalised when used, and
+  // turned with the torso twist): upper arm (shoulder -> elbow), forearm (elbow -> wrist) and, for the sword arm, the blade (out of the fist).
+  //                        upper arm              forearm                 blade
+  const SW_COCK = [ 0.70, 0.60, -0.15,   -0.10, 0.75, -0.60,    0.05, 0.86, -0.50 ];   // over the shoulder: elbow out and up, the blade above and behind the head
+  const SW_OVER = [ 0.55, 0.65,  0.40,    0.15, 0.50,  0.85,    0.05, 0.55,  0.83 ];   // the arm comes over the top, the blade rises ahead
+  const SW_HIT  = [ 0.25, 0.30,  0.92,   -0.05,  0.00, 1.00,   -0.35, -0.55, 0.76 ];   // the blade comes down in front of the knight (ATK_DAMAGE_T)
+  const SW_THRU = [-0.15, -0.70, 0.69,   -0.45, -0.45, 0.77,   -0.55, -0.55, 0.63 ];   // follow-through: low, across the body to the left
+  const PU_CHAMBER = [-0.25, -0.65, -0.60,   0.20, 0.30, 0.92 ];                        // left arm pulled back: elbow behind, fist by the chest
+  const PU_JAB     = [ 0.20, -0.12,  0.97,   0.28, 0.03, 0.96 ];                        // left arm straight out ahead
   const NEUTRAL = { dmg: 1, hp: 1, windup: 1, speed: 1, reach: 1, throwers: 0.35, rushers: 0.2 };
   const diff = () => (window.Difficulty && Difficulty.get()) || NEUTRAL;
 
@@ -6303,6 +6884,22 @@ window.World = (function () {
   const _v2 = new V3(), _v3 = new V3(), _v4 = new V3(), _v5 = new V3(), _v6 = new V3(), _up = new V3(0, 1, 0);
   const _v1 = new V3(), _q1 = new Q(), _q2 = new Q(), _sp = new V3();
   const AX = new V3(1, 0, 0), AZ = new V3(0, 0, 1);
+  const _dU = new V3(), _dF = new V3(), _dB = new V3(), _fc = new V3();           // arm pose directions (world) and the facing of the torso frame
+  const _oq1 = new Q(), _oq2 = new Q(), _oq3 = new Q(), _oq4 = new Q(), _oq5 = new Q();
+
+  const mixKey = (out, a, b, t, n) => { for (let i = 0; i < n; i++) out[i] = a[i] + (b[i] - a[i]) * t; };
+  // direction number `o` (0 upper arm, 3 forearm, 6 blade) of an arm key, knight frame -> world; (sn, cs) = sin / cos of the torso's yaw
+  function keyDir(out, key, o, sn, cs) {
+    const r = key[o], u = key[o + 1], f = key[o + 2];
+    return out.set(-r * cs + f * sn, u, r * sn + f * cs).normalize();
+  }
+  // The strike through its keyframes. su = 0 cocked, 0.27 over the head, 0.54 the blade lands (the clip time of ATK_DAMAGE_T), 1 follow-through.
+  function strikeKey(out, su) {
+    if (su < 0.27) mixKey(out, SW_COCK, SW_OVER, su / 0.27, 9);
+    else if (su < 0.54) mixKey(out, SW_OVER, SW_HIT, (su - 0.27) / 0.27, 9);
+    else mixKey(out, SW_HIT, SW_THRU, smooth((su - 0.54) / 0.46), 9);
+  }
+  const toward0 = (v, s) => (v > s ? v - s : v < -s ? v + s : 0);
 
   // Split every clip once into a lower and an upper body clip (clips are shared by all knights).
   let clipSets = null;
@@ -6369,7 +6966,10 @@ window.World = (function () {
       this.rusher = this.type === 'knight' && !this.thrower && roll < D.throwers + (D.rushers || 0);
       this._rushCd = 6 + Math.random() * 4;       // s until the first rush may start
       this._rushDir = new V3(0, 0, 1);
-      this._shieldW = 0; this._ov = [];
+      this._shieldW = 0; this._ov = []; this._ovN = 0;       // _ov: pooled slots of the bone overrides (this frame's _ovN are in use)
+      this._swW = 0; this._puW = 0; this._twC = 0; this._leC = 0;                // current weights of the procedural sword arm / punching arm, torso twist / lean
+      this._swKey = new Float32Array(9); this._puKey = new Float32Array(6);      // the arm keys being posed (kept while a weight eases out)
+      this._punchCd = 1.5 + Math.random() * 2;    // s until the next left-hand punch may start (4-6 s after each one)
       this._rushLen = 12; this._rushed = 0; this._rushHit = false; this._strip = null;
       this.knockbackScale = typeof opts.knockbackScale === 'number' ? opts.knockbackScale : 1;
       this.knockback = new V3();
@@ -6424,6 +7024,7 @@ window.World = (function () {
       this.helmet = opts.helmet === false ? null : this._mount('helmet');
       this.sword = this._mount('sword');
       this.shield = this._mount('shield');
+      this._bladeL = this.sword ? new V3(0, 1, 0).applyQuaternion(this.sword.quaternion) : null;   // the blade (the sword's +Y) in Palm.R's own axes
 
       // ---- animation -----------------------------------------------------------------------------------------------
       this._buildAnimation();
@@ -6572,12 +7173,12 @@ window.World = (function () {
       this.prevState = prev;
       this.state = name;
       this.stateT = 0;
-      if (name === 'windup') { this._hitDone = false; }
+      if (name === 'windup' || name === 'punch') { this._hitDone = false; }
       if (name !== 'windup' && name !== 'recover') this._throwing = false;
       if (name !== 'rushWind') this._stripOff();
       if (name === 'approach') this._playStateAnim('approach', FADE);
       else if (name === 'combatIdle' || name === 'stagger') this._playStateAnim(name, FADE);
-      else if (name === 'rushWind' || name === 'stumble') this._playStateAnim('combatIdle', FADE);
+      else if (name === 'rushWind' || name === 'stumble' || name === 'punchWind' || name === 'punch' || name === 'punchRec') this._playStateAnim('combatIdle', FADE);
       else if (name === 'rush') { this.gait = 'Run'; this._playBoth('Run', 0.15); this.currentClip = 'Run'; }
       else if (name === 'windup') this._playStateAnim('windup', FADE * 0.8);
       else if ((name === 'attack' || name === 'recover') && this._cur.upper !== this.actions[ATTACK_CLIP]) this._playStateAnim('windup', 0.1);   // jumped in (debug / subclass)
@@ -6605,9 +7206,11 @@ window.World = (function () {
       this._cool -= dt;
       this._throwCd -= dt;
       this._rushCd -= dt;
+      this._punchCd -= dt;
       const dist = ctx.dist;
       switch (st) {
         case 'approach': {
+          if (this._canPunch(ctx)) { this.startPunch(); break; }
           if (dist <= this.attackStart) { this._idleWait = 0.2 + Math.random() * 0.35; this.setState('combatIdle'); }
           else if (this.thrower && this._throwCd <= 0 && dist >= THROW_MIN && dist <= THROW_MAX && this._facingError(ctx) < 0.7
             && Enemies.daggers.length < DAGGER_MAX) this.startThrow();
@@ -6616,6 +7219,7 @@ window.World = (function () {
         }
         case 'combatIdle': {
           if (dist > this.attackStart * 1.35) { this.setState('approach'); break; }
+          if (this._canPunch(ctx)) { this.startPunch(); break; }
           if (this.stateT >= this._idleWait && this._cool <= 0 && this._facingError(ctx) < 0.6) this.startWindup();
           break;
         }
@@ -6646,6 +7250,19 @@ window.World = (function () {
           break;
         }
         case 'rush': this._rushTick(dt, ctx); break;
+        case 'punchWind': {
+          if (this.stateT >= PUNCH_WIND) { this.setState('punch'); sfx('swing', false, soundAt(this)); }
+          break;
+        }
+        case 'punch': {
+          if (!this._hitDone && this.stateT >= PUNCH_TIME * PUNCH_HIT) { this._hitDone = true; this.onPunchHit(ctx); }
+          if (this.stateT >= PUNCH_TIME) this.setState('punchRec');
+          break;
+        }
+        case 'punchRec': {
+          if (this.stateT >= PUNCH_REC) { this._cool = Math.max(this._cool, 0.3 + Math.random() * 0.3); this._idleWait = 0.1; this.setState(dist <= this.attackStart * 1.2 ? 'combatIdle' : 'approach'); }
+          break;
+        }
         case 'stumble': {
           if (this.stateT >= this._stumbleT) { this._cool = 0.3; this.setState(dist <= this.attackStart * 1.2 ? 'combatIdle' : 'approach'); }
           break;
@@ -6675,6 +7292,32 @@ window.World = (function () {
       this._throwCd = 5 + Math.random() * 3;
       this.windupTime = Math.max(0.45, THROW_WINDUP * diff().windup);
       this.setState('windup');
+    }
+
+    // ---- left-hand punch --------------------------------------------------------------------------------------------------
+    // A wave knight (not the boss) with the player within PUNCH_RANGE straight ahead, off its cooldown and its post-attack pause.
+    _canPunch(ctx) {
+      return this.type === 'knight' && this._punchCd <= 0 && this._cool <= 0 && ctx.dist <= PUNCH_RANGE * this.sizeScale
+        && this._facingError(ctx) < 0.9 && !(window.Game && Game.dead);
+    }
+
+    startPunch() {
+      this._punchCd = PUNCH_CD_MIN + Math.random() * (PUNCH_CD_MAX - PUNCH_CD_MIN);
+      this._throwing = false;
+      this.setState('punchWind');
+    }
+
+    // The fist lands: only if the player is still in front and within reach. Damage x Difficulty, a shove away from the knight.
+    onPunchHit(ctx) {
+      if (ctx.dist > PUNCH_REACH * this.sizeScale) return;
+      const fx = Math.sin(this._yaw), fz = Math.cos(this._yaw);
+      if (ctx.dist > 1e-4 && (fx * ctx.nx + fz * ctx.nz) < 0.5) return;
+      if (window.FX && FX.sparks && this.bones.handL) {
+        try { FX.sparks(this.bones.handL.getWorldPosition(_v5), _v6.set(-ctx.nx, 0.2, -ctx.nz), 6); } catch (e) { /* ignore */ }
+      }
+      sfx('clang', soundAt(this));
+      if (window.Player && Player.hurt) Player.hurt(Math.max(1, Math.round(PUNCH_DAMAGE * diff().dmg)), this);
+      if (window.Game && Game.shove) Game.shove(ctx.nx * PUNCH_SHOVE, ctx.nz * PUNCH_SHOVE);
     }
 
     // ---- shield rush ----------------------------------------------------------------------------------------------------
@@ -6852,7 +7495,8 @@ window.World = (function () {
 
     _turn(dt, ctx) {
       if (ctx.dist < 1e-3 || this.state === 'rush') return;                 // a charging knight keeps its line
-      const rate = (this.state === 'windup' || this.state === 'attack' || this.state === 'recover' || this.state === 'rushWind') ? this.turnRateAttack : this.turnRate;
+      const s = this.state;
+      const rate = (s === 'windup' || s === 'attack' || s === 'recover' || s === 'rushWind' || s === 'punchWind' || s === 'punch' || s === 'punchRec') ? this.turnRateAttack : this.turnRate;
       const err = angDiff(this._yaw, Math.atan2(ctx.dx, ctx.dz));
       this._yaw += clamp(err, -rate * dt, rate * dt);
       this.mesh.rotation.y = this._yaw;
@@ -6930,6 +7574,9 @@ window.World = (function () {
           // a short step into the swing so the blade actually reaches the player
           const f = clamp(1 - this.stateT / (this.strikeTime * 0.7), 0, 1);
           tx = ctx.nx * this.lungeSpeed * f; tz = ctx.nz * this.lungeSpeed * f;
+        } else if (this.state === 'punch' && ctx.dist > this.stopDist * 0.8) {
+          const f = clamp(1 - this.stateT / (PUNCH_TIME * 0.8), 0, 1);          // a small step into the jab
+          tx = ctx.nx * 1.4 * this.sizeScale * f; tz = ctx.nz * 1.4 * this.sizeScale * f;
         }
       }
 
@@ -7009,9 +7656,9 @@ window.World = (function () {
     // whose clip is static at that moment (the head during the sword swing) would keep last frame's rotation and gain a new one every
     // frame: a knight shot mid-swing spun its head round by up to ~3 rad. So the added rotation is taken off again before the mixer runs.
     _undoProcedural() {
-      if (this._ov && this._ov.length) {            // swing twist / shield pose: put the pre-override rotations back (last in, first out)
-        for (let i = this._ov.length - 1; i >= 0; i--) this._ov[i].bone.quaternion.copy(this._ov[i].q);
-        this._ov.length = 0;
+      if (this._ovN > 0) {                          // swing twist / arm poses / shield pose: put the pre-override rotations back (last in, first out)
+        for (let i = this._ovN - 1; i >= 0; i--) this._ov[i].bone.quaternion.copy(this._ov[i].q);
+        this._ovN = 0;
       }
       if (!this._pOn) return;
       this._pOn = false;
@@ -7020,8 +7667,13 @@ window.World = (function () {
       if (head) head.quaternion.multiply(_q1.copy(this._pH).invert());
     }
 
-    // ---- bone overrides on top of the mixer (swing twist, shield arm). Each one is remembered so _undoProcedural can take it off again.
-    _ovSave(bone) { if (!this._ov) this._ov = []; this._ov.push({ bone: bone, q: bone.quaternion.clone() }); }
+    // ---- bone overrides on top of the mixer (swing twist, sword arm, punching arm, shield arm). Each one is remembered (in a pooled slot,
+    // no allocation) so _undoProcedural can take it off again.
+    _ovSave(bone) {
+      const o = this._ov[this._ovN] || (this._ov[this._ovN] = { bone: null, q: new Q() });
+      o.bone = bone; o.q.copy(bone.quaternion);
+      this._ovN++;
+    }
 
     // rotate `bone` about a WORLD axis by `ang` (needs fresh world matrices on its parent chain): q' = P^-1 R P q
     _ovRotate(bone, axis, ang) {
@@ -7036,55 +7688,116 @@ window.World = (function () {
     _ovAim(bone, child, dir, w) {
       this._ovSave(bone);
       bone.getWorldPosition(_v1); child.getWorldPosition(_v2);
-      _v2.sub(_v1).normalize();
-      const d = new Q().setFromUnitVectors(_v2, dir);
-      d.slerp(new Q(), 1 - w);
-      const P = bone.parent.getWorldQuaternion(new Q());
-      const W = bone.getWorldQuaternion(new Q());
-      bone.quaternion.copy(P.invert().multiply(d.multiply(W)));
+      this._ovTurn(bone, _v2.sub(_v1).normalize(), dir, w);
+    }
+
+    // swing the hand (and the sword in it) so the blade points along `dir` (world), blended by w
+    _ovAimBlade(hand, dir, w) {
+      this._ovSave(hand);
+      hand.getWorldQuaternion(_oq5);
+      this._ovTurn(hand, _v1.copy(this._bladeL).applyQuaternion(_oq5), dir, w);
+    }
+
+    // turn `bone` (its override is already saved) so the world vector `from` swings toward `to`, by the fraction w of the way: q' = P^-1 d W
+    _ovTurn(bone, from, to, w) {
+      _oq1.setFromUnitVectors(from, to);
+      _oq1.slerp(_oq2.identity(), 1 - w);
+      bone.parent.getWorldQuaternion(_oq3).invert();
+      bone.getWorldQuaternion(_oq4);
+      bone.quaternion.copy(_oq3.multiply(_oq1).multiply(_oq4));
       bone.updateMatrixWorld(true);
     }
 
-    // turn / lean the torso through the sword swing and bring the shield up for the charge
+    // Sword arm: upper arm, forearm and blade along an arm key (see SW_*), blended with the clip by w. (sn, cs): yaw of the torso frame.
+    _swingArm(key, w, sn, cs) {
+      const b = this.bones, fore = b.armR, upper = fore && fore.parent, hand = b.handR;
+      if (!(fore && upper && hand)) return;
+      this._ovAim(upper, fore, keyDir(_dU, key, 0, sn, cs), w);
+      this._ovAim(fore, hand, keyDir(_dF, key, 3, sn, cs), w);
+      if (this._bladeL) this._ovAimBlade(hand, keyDir(_dB, key, 6, sn, cs), w);
+    }
+
+    // Shield arm: upper arm along dU, forearm along dF (world), then the forearm rolled about its axis until the shield face looks along `face`.
+    _poseShieldArm(dU, dF, face, w) {
+      const fore = this.bones.armL, upper = fore && fore.parent, hand = this.bones.handL;
+      if (!(w > 0 && fore && upper && hand && this.shield)) return;
+      this._ovAim(upper, fore, dU, w);
+      this._ovAim(fore, hand, dF, w);
+      this.shield.updateWorldMatrix(true, false);
+      _v1.set(0, 0, 1).transformDirection(this.shield.matrixWorld);
+      _v1.addScaledVector(dF, -_v1.dot(dF)).normalize();
+      _v2.copy(face); _v2.addScaledVector(dF, -_v2.dot(dF)).normalize();
+      let ang = Math.acos(clamp(_v1.dot(_v2), -1, 1));
+      if (_v3.crossVectors(_v1, _v2).dot(dF) < 0) ang = -ang;
+      this._ovRotate(fore, dF, ang * w);
+    }
+
+    // The overhead sword swing, the left-hand punch (both a procedural arm pose, stateless in the state timer), the torso that goes with them,
+    // and the raised shield of the charge. A pose that is cut short (a hit staggers the knight) eases out instead of popping.
     _extraPose(dt) {
       const st = this.state;
       const bones = this.bones;
-      let twist = 0, lean = 0, shieldTarget = 0;
-      if (this.type === 'knight' && !this._throwing) {
-        if (st === 'windup') { const u = clamp(this.stateT / this.windupTime, 0, 1); const k = smooth(Math.min(1, u / 0.6)); twist = -0.34 * k; lean = -0.06 * k; }
-        else if (st === 'attack') { const u = clamp(this.stateT / this.strikeTime, 0, 1); const k = Math.pow(u, 1.8); twist = lerp(-0.34, 0.5, k); lean = lerp(-0.06, 0.2, k); }
-        else if (st === 'recover') { const u = clamp(this.stateT / this.recoverTime, 0, 1); const k = smooth(Math.min(1, u * 1.25)); twist = lerp(0.5, 0, k); lean = lerp(0.2, 0, k); }
+      const knight = this.type === 'knight';
+      let shieldTarget = 0;
+      const swing = knight && !this._throwing && (st === 'windup' || st === 'attack' || st === 'recover');
+      const punch = knight && (st === 'punchWind' || st === 'punch' || st === 'punchRec');
+      if (swing) {
+        // windup: the arm swings up and back over the shoulder, the torso turns away and leans back; strike: the arm comes over and down, the torso
+        // whips round and leans in (same ease-in curve as the clip time, so the blade lands at su 0.54 = ATK_DAMAGE_T); recover: low, then back to the clip
+        const key = this._swKey;
+        if (st === 'windup') {
+          const u = clamp(this.stateT / this.windupTime, 0, 1), k = smooth(Math.min(1, u / 0.55));
+          key.set(SW_COCK); this._swW = k; this._twC = -0.4 * k; this._leC = -0.1 * k;
+        } else if (st === 'attack') {
+          const su = Math.pow(clamp(this.stateT / this.strikeTime, 0, 1), 1.8);
+          strikeKey(key, su); this._swW = 1; this._twC = lerp(-0.4, 0.5, su); this._leC = lerp(-0.1, 0.22, su);
+        } else {
+          const u = clamp(this.stateT / this.recoverTime, 0, 1), k = smooth(Math.min(1, u * 1.25));
+          key.set(SW_THRU); this._swW = 1 - k; this._twC = lerp(0.5, 0, k); this._leC = lerp(0.22, 0, k);
+        }
+      } else if (punch) {
+        // the left shoulder goes back with the fist (torso turned left), then the torso whips right as the arm shoots out
+        const key = this._puKey;
+        if (st === 'punchWind') {
+          const u = clamp(this.stateT / PUNCH_WIND, 0, 1), k = smooth(u);
+          key.set(PU_CHAMBER); this._puW = smooth(Math.min(1, u / 0.8)); this._twC = 0.3 * k; this._leC = -0.05 * k;
+        } else if (st === 'punch') {
+          const u = clamp(this.stateT / PUNCH_TIME, 0, 1), k = 1 - (1 - u) * (1 - u);
+          mixKey(key, PU_CHAMBER, PU_JAB, k, 6); this._puW = 1; this._twC = lerp(0.3, -0.28, k); this._leC = lerp(-0.05, 0.14, k);
+        } else {
+          const u = clamp(this.stateT / PUNCH_REC, 0, 1), k = smooth(u);
+          mixKey(key, PU_JAB, PU_CHAMBER, smooth(Math.min(1, u * 2)) * 0.7, 6); this._puW = 1 - smooth(clamp((u - 0.15) / 0.85, 0, 1)); this._twC = lerp(-0.28, 0, k); this._leC = lerp(0.14, 0, k);
+        }
       }
-      if (this.type === 'knight' && (st === 'rushWind' || st === 'rush')) shieldTarget = 1;
+      if (!swing) { this._swW = Math.max(0, this._swW - dt * 6); if (!punch) { this._twC = toward0(this._twC, dt * 4); this._leC = toward0(this._leC, dt * 4); } }
+      if (!punch) this._puW = Math.max(0, this._puW - dt * 6);
+      if (knight && (st === 'rushWind' || st === 'rush')) shieldTarget = 1;
       this._shieldW += (shieldTarget - this._shieldW) * Math.min(1, dt * (shieldTarget ? 11 : 7));
       if (this._shieldW < 0.01) this._shieldW = 0;
-      if (Math.abs(twist) < 0.002 && Math.abs(lean) < 0.002 && this._shieldW === 0) return;
+      const twist = this._twC, lean = this._leC, swW = this._swW > 0.001 ? this._swW : 0, puW = this._puW > 0.001 ? this._puW : 0;
+      if (Math.abs(twist) < 0.002 && Math.abs(lean) < 0.002 && this._shieldW === 0 && swW === 0 && puW === 0) return;
       this.mesh.updateMatrixWorld(true);
       const yaw = this.mesh.rotation.y, sn = Math.sin(yaw), cs = Math.cos(yaw);
       if (bones.torso && (twist || lean)) {
         _v3.set(0, 1, 0);
         this._ovTorso(bones.torso, _v3, twist, _v4.set(cs, 0, -sn), lean);
       }
-      const W = this._shieldW;
-      const fore = bones.armL, upper = fore && fore.parent, hand = bones.handL;
-      if (W > 0 && fore && upper && hand && this.shield) {
-        const f = _v5.set(sn, 0, cs);
-        _v1.copy(fore.getWorldPosition(_v1)).sub(this.mesh.position);
+      // the arms are posed in the frame of the (twisted) torso (they follow most of the twist, so the arc stays in front of the knight)
+      const fy = yaw + twist * 0.6, fsn = Math.sin(fy), fcs = Math.cos(fy);
+      if (swW) this._swingArm(this._swKey, swW, fsn, fcs);
+      if (puW) {
+        const key = this._puKey;
+        // the shield rides on the forearm with its face looking out to the left (and a little up), so the fist leads the jab
+        this._poseShieldArm(keyDir(_dU, key, 0, fsn, fcs), keyDir(_dF, key, 3, fsn, fcs), _fc.set(fcs, 0.25, -fsn), puW);
+      } else if (this._shieldW > 0 && bones.armL) {
+        // upper arm forward and slightly out, forearm up and forward: the shield stands in front of the chest, its face looking along the charge
+        const f = _fc.set(sn, 0, cs);
+        _v1.copy(bones.armL.getWorldPosition(_v1)).sub(this.mesh.position);
         const side = (_v1.x * cs - _v1.z * sn) >= 0 ? 1 : -1;
         const out = _v6.set(cs * side, 0, -sn * side);
-        // upper arm forward and slightly out, forearm up and forward: the shield stands in front of the chest
-        const dU = new V3().copy(f).multiplyScalar(0.62).addScaledVector(out, 0.22).addScaledVector(_up, -0.5).normalize();
-        this._ovAim(upper, fore, dU, W);
-        const dF = new V3().copy(f).multiplyScalar(0.3).addScaledVector(out, -0.1).addScaledVector(_up, 0.92).normalize();
-        this._ovAim(fore, hand, dF, W);
-        // roll the forearm about its axis until the shield face (+Z of the shield, the side facing out) looks along the charge
-        this.shield.updateWorldMatrix(true, false);
-        const nrm = new V3(0, 0, 1).transformDirection(this.shield.matrixWorld);
-        const axis = new V3().copy(dF);
-        const a = nrm.clone().addScaledVector(axis, -nrm.dot(axis)).normalize();
-        const b = f.clone().addScaledVector(axis, -f.dot(axis)).normalize();
-        let ang = Math.acos(clamp(a.dot(b), -1, 1)); if (new V3().crossVectors(a, b).dot(axis) < 0) ang = -ang;
-        this._ovRotate(fore, axis, ang * W);
+        _dU.copy(f).multiplyScalar(0.62).addScaledVector(out, 0.22).addScaledVector(_up, -0.5).normalize();
+        _dF.copy(f).multiplyScalar(0.3).addScaledVector(out, -0.1).addScaledVector(_up, 0.92).normalize();
+        this._poseShieldArm(_dU, _dF, f, this._shieldW);
       }
     }
 
@@ -7180,7 +7893,7 @@ window.World = (function () {
       this._flinch = 1;
       this._flinchPow = zone === 'head' ? 0.55 : (zone === 'limb' ? 0.3 : 0.42);       // peak torso pitch (rad); the head adds 0.7x of it on top
       // a hit while winding up breaks the telegraph; the strike itself is not interrupted
-      if (this.state === 'attack' || this.state === 'recover' || this.state === 'rush' || this.state === 'stumble') return;
+      if (this.state === 'attack' || this.state === 'recover' || this.state === 'rush' || this.state === 'stumble' || this.state === 'punch' || this.state === 'punchRec') return;
       if (this.state !== 'stagger') this.setState('stagger');
       else this.stateT = 0;
     }
@@ -7513,6 +8226,23 @@ window.World = (function () {
       k.startRush();
       return { state: k.state, dir: k._rushDir.toArray().map(round) };
     };
+    // the knight i (default: the nearest living one) starts its left-hand punch at once (no range / cooldown / facing check)
+    window.__dbg.knightPunch = function (i) {
+      let k = typeof i === 'number' ? get(i) : null;
+      if (!k) {
+        const pp = Game.playerObj.position;
+        let best = 1e9;
+        for (const e of Enemies.list) {
+          if (e.dead || e.type !== 'knight') continue;
+          const dd = Math.hypot(e.mesh.position.x - pp.x, e.mesh.position.z - pp.z);
+          if (dd < best) { best = dd; k = e; }
+        }
+      }
+      if (!k) return null;
+      k.hold = false;
+      k.startPunch();
+      return { state: k.state, cd: round(k._punchCd) };
+    };
     window.__dbg.daggers = function () {
       return Enemies.daggers.map((d) => ({ state: d.state, pos: d.mesh.position.toArray().map(round), age: round(d.age), lie: round(d.lie) }));
     };
@@ -7525,7 +8255,7 @@ window.World = (function () {
         k.hold = true;
         if (typeof yaw === 'number') { k._yaw = yaw; k.mesh.rotation.y = yaw; }
         k.setState(state);
-        const dur = { windup: k.windupTime, attack: k.strikeTime, recover: k.recoverTime, stagger: 0.3 }[state] || 1;
+        const dur = { windup: k.windupTime, attack: k.strikeTime, recover: k.recoverTime, stagger: 0.3, punchWind: PUNCH_WIND, punch: PUNCH_TIME, punchRec: PUNCH_REC }[state] || 1;
         k.stateT = (progress || 0) * dur;
         return { state: k.state, stateT: round(k.stateT) };
       },
@@ -7564,25 +8294,52 @@ window.World = (function () {
    overrides the hooks that enemies.js exposes (updateAI, speedFor, startWindup, onDamageFrame, onEnter, takeHit, onDeath, ...).
 
    new Boss()   no arguments (waves.js and __dbg.spawn('boss') call it that way). opts (optional) are merged over the defaults.
-   Fields: everything Knight has + phase (1..3), atk ('sweep'|'leap'|'charge'|'roar'|null), displayName 'The Iron Warlord',
-           type 'boss', hp / maxHp (1500), knockbackScale 0.1, minions[] (summoned Knights).
+                A boss that Waves spawns also gets boss.startEntrance() (the cinematic, below); a debug boss just stands up and roars.
+   Fields: everything Knight has + phase (1..3), atk ('sweep'|'leap'|'charge'|'split'|'whirl'|'roar'|null), displayName 'The Iron Warlord',
+           type 'boss', hp / maxHp (1500), knockbackScale 0.1, minions[] (summoned Knights), cinematic (true until it has landed).
    Telegraphs (every attack has one, >= 0.5 s):
         sweep   Run_swordAttack, the sword rises and holds (windup 1.0 s -> 0.62 s over the phases); a red fan on the ground (the
                 exact hit area, 6.4 m reach, 140 degrees) fills up; damage once, on the swing frame, if the player is inside it.
-        leap    swordAttackJump: a crouch, a red ring on the ground at the landing spot fills up (the exact AoE, 5.0 - 5.8 m),
+        leap    swordAttackJump: a crouch, a red ring on the ground at the landing spot (the exact AoE, 5.0 - 5.8 m) fills up,
                 the boss leaps (the landing spot is locked half way through the crouch) and lands on it: damage on the landing
                 frame, shockwave ring + dust ring + camera shake (FX.shake).
         charge  (phase 2+) the sword rises and holds while a red strip is drawn on the ground along the locked run line, then
                 a straight Run at 11-13 m/s; damage once if it reaches the player; it stumbles (vulnerable) afterwards.
+        split   EARTHSPLITTER (all phases, 7-30 m away): the sword rises and a red strip (2.8 m wide) follows the player and locks 45 % into the
+                windup; the sword smashes down and a glowing crack races along the strip at 26 m/s while stone spikes erupt every 1.9 m along it
+                (a spike hurts once, within 1.1 m of its centre, and shoves). Sidestep the strip: nothing else is hit.
+        whirl   WHIRLWIND (phase 2+, under 13 m): a red ring (the exact reach, 5.6 m) fills up while the sword is held out, then it spins with the
+                sword out and chases for 2.5 s at 5 m/s (slower than the player; its heading steers at only 2.3 rad/s, so strafing out of the ring
+                works), hurting inside the ring every 0.55 s and shoving the player out; then it is DIZZY for 1.7 - 2 s (stars circle its head, it
+                sways, takes 1.5x damage, cannot guard): the punish window.
    Phases: 66 % and 33 % of maxHp. A phase change is a roar (sword up, shake, shockwave, glow), it is faster (walk / run speed,
-        windups, recovery, cooldowns), unlocks the charge (phase 2) and a double sweep (phase 3) and summons 2 minions (Knights)
-        on the arena ring, away from the player and the boss (never on top of the boss). Minions are not tracked by Waves.
+        windups, recovery, cooldowns), unlocks the charge and the whirlwind (phase 2) and a double sweep (phase 3) and summons 2 minions
+        (Knights) on the arena ring, away from the player and the boss (never on top of the boss). Minions are not tracked by Waves.
    The boss never staggers from bullets (a tiny flinch only). HUD.bossBar is refreshed every frame and hidden on death.
    Death: the slow Death clip (x0.6), a spark / blood / smoke burst, a thud with shake and a dust ring when it hits the ground;
         Waves.onEnemyKilled is called once by Knight.die().
 
-   QA (?debug=1, installed on the first Boss): __dbg.boss.info(), .force('sweep'|'leap'|'charge'|'roar'), .phase(n), .hold(on),
-        .clip(name, t) (freeze a clip pose), .gear(), .tele().
+   HEAD GUARD: every frame the boss checks whether the camera ray passes near its head (within 1.9 head radii, 70 m). Once the player has
+        aimed there for a reaction time it may raise the shield arm in front of its face (procedural pose on UpperArm.L / LowerArm.L, eased
+        in and out) for 0.8 - 1.6 s; right after it takes an unguarded head shot it may do the same. How often and how fast is
+        Difficulty.bossGuard (0.35 / 0.6 / 0.9): that is the chance to react (per second of aiming), and the reaction time and the cooldown
+        shrink as it grows; phase 3 is stronger still. A head shot that lands while the shield is up hits the shield (it sits in front of the
+        face, so a bullet meant for the head lands on it, whatever zone combat.js gives it: a bullet on the shield within 3 head radii of
+        the head centre counts): x0.15 of a head shot's damage (22), clang + sparks, and the shot counts as a torso hit (no head bonus, no helmet
+        pop, no head hitmarker: Combat.onHit / onKill are wrapped once, see patchCombat). It cannot guard while it leaps, charges, spins,
+        is dizzy or roaring.
+
+   ENTRANCE (boss.startEntrance(), called by waves.js; ~3.5 s, the player keeps control): letterbox bars slide in (DOM overlay), the sky
+        and the light darken to a storm (Storm: scene lights, background, fog), a lightning bolt (bright mesh + flash + thunder) strikes the spawn
+        point, glowing cracks run out of it with embers, the ground heaves, then the boss bursts up out of the ground (debris, dust, sparks),
+        jumps and lands with a shockwave that shoves the player without damage (Game.shove, when the ring reaches him), a heavy camera shake
+        and the title card THE IRON WARLORD (DOM overlay), then the roar; the bars slide out and the sky calms to a light overcast. The boss
+        cannot be hurt until it has landed. Everything is dt-driven (no timers) and cleaned up by dispose() / death.
+
+   QA (?debug=1, installed when the page has loaded): __dbg.boss.info(), .force('sweep'|'leap'|'charge'|'split'|'whirl'|'roar'), .phase(n),
+        .hold(on), .clip(name, t) (freeze a clip pose), .gear(), .tele(), .guard(on?, sec?) (raise / lower the shield arm), .headPos(),
+        .guardPose({u, f}) (tune the guard arm live), .entrance() (arm the cinematic on the boss, or build one 19 m ahead), .storm(level)
+        (sky mood 0..1). Scenarios: boss-entrance, boss-guard, boss-split, boss-whirl (tools/qa/scenarios.mjs).
 */
 (() => {
   'use strict';
@@ -7590,7 +8347,6 @@ window.World = (function () {
 
   const Knight = window.Knight;
   const V3 = THREE.Vector3;
-  const DROP_T = 0.9, DROP_H = 30;      // boss entrance: fall time (s) and height (m)
   const TAU = Math.PI * 2;
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -7607,23 +8363,59 @@ window.World = (function () {
   const ATK_RAISE = 0.17;                 // clip time of the raised sword in Run_swordAttack (see enemies.js)
   const J = { takeoff: 0.42, land: 0.66 }; // clip times of swordAttackJump: gather + sword back (0-0.42), sword overhead in flight, slam pose (0.66+)
 
-  const DMG = { sweep: 22, slam: 30, charge: 28 };            // player HP 100; x1.0 / 1.1 / 1.2 by phase
+  const DMG = { sweep: 22, slam: 30, charge: 28, split: 24, whirl: 14 };    // player HP 100; x1.0 / 1.1 / 1.2 by phase (whirl: per hit, every 0.55 s)
   const SWEEP_R = 6.4, SWEEP_COS = Math.cos(70 * Math.PI / 180);   // reach (m) and half angle of the sweep, from the boss centre
   const LEAP_MIN = 9, LEAP_MAX = 26;
   const CHARGE_MIN = 11, CHARGE_MAX = 32, CHARGE_HIT_R = 2.5;     // hit radius around the boss while it charges; also half the strip width
   const WIDTH = 1.22;                     // x / z stretch on top of the uniform size
   const BODY_R = 0.42 * SIZE;
   const ARENA_LIMIT = 57;
+  // Earthsplitter: a crack line (strip) races along the ground and stone spikes erupt along it
+  const SPLIT_MIN = 7, SPLIT_MAX = 30, SPLIT_W = 2.8, SPLIT_LOCK = 0.45;   // distance window (m), strip width (m), share of the windup after which the line locks
+  const SPLIT_SPEED = 26, SPIKE_GAP = 1.9, SPIKE_R = 1.1, SPIKES = 24;      // crack front speed (m/s), spike spacing (m), hit radius (m), pool size
+  // Whirlwind
+  const WHIRL_MAX = 13, WHIRL_R = 5.6, WHIRL_TICK = 0.55, WHIRL_STEER = 2.3, WHIRL_SPIN = 11;   // start window (m), reach (m), s between hits, heading turn rate and spin (rad/s)
+  const DIZZY_DMG = 1.5;                  // damage taken while dizzy
+  const SWOOSH_ARC = 4.4;                 // rad of the translucent arc that trails the spinning sword
+  const WHIRL_POSE = 0.30;                // clip time (s) of Run_swordAttack that is held while it spins: the sword out to the side
+  // head guard
+  const GUARD_NEAR = 1.9, GUARD_MAX_D = 70;   // the camera ray counts as "at the head" within this many head radii; no reaction beyond this distance (m)
+  const HEAD_UP = 0.24, HEAD_R = 0.25;        // head sphere (combat.js), in 1.8 m knight units, x the boss size
+  const GUARD_BLOCK = 0.15;                   // damage factor of a head shot that hits the raised shield
+  const GUARD_HIT = 3.0, GUARD_SHIELD_R = 1.5; // a bullet on the shield (within 1.5 m of its centre) and within 3 head radii of the head centre was meant for the head
+  // the shield arm of the guard, as directions (forward, towards its left, up) of the upper arm (shoulder -> elbow) and the forearm (elbow -> hand)
+  const GUARD_POSE = { u: [0.62, -0.25, 0.1], f: [0.25, -0.05, 0.97] };
   const DEATH_IMPACT = 1.6;               // seconds after the lethal hit (Death clip x0.6) when the body hits the ground
 
   // per phase (index = phase)
   const PH = [null,
-    { walk: 2.3, run: 7.0, windup: 1.00, strike: 0.46, recover: 0.95, gap: 0.55, leapCd: 8.0, leapWind: 1.00, air: 0.85, leapEnd: 1.25, slam: 5.0, charge: false },
+    { walk: 2.3, run: 7.0, windup: 1.00, strike: 0.46, recover: 0.95, gap: 0.55, leapCd: 8.0, leapWind: 1.00, air: 0.85, leapEnd: 1.25, slam: 5.0, charge: false,
+      split: true, splitCd: 11.0, splitWind: 1.05, splitStrike: 0.42, splitRecover: 0.85, whirl: false },
     { walk: 3.0, run: 8.2, windup: 0.80, strike: 0.40, recover: 0.75, gap: 0.40, leapCd: 6.5, leapWind: 0.85, air: 0.75, leapEnd: 1.05, slam: 5.4, charge: true,
-      chargeCd: 9.0, chargeWind: 1.00, chargeSpeed: 11.5, chargeEnd: 1.40 },
+      chargeCd: 9.0, chargeWind: 1.00, chargeSpeed: 11.5, chargeEnd: 1.40,
+      split: true, splitCd: 8.5, splitWind: 0.90, splitStrike: 0.40, splitRecover: 0.70,
+      whirl: true, whirlCd: 15.0, whirlWind: 0.85, whirlT: 2.5, whirlSpeed: 5.0, dizzy: 2.0 },
     { walk: 3.7, run: 9.4, windup: 0.62, strike: 0.36, recover: 0.55, gap: 0.30, leapCd: 5.0, leapWind: 0.70, air: 0.65, leapEnd: 0.90, slam: 5.8, charge: true,
-      chargeCd: 7.0, chargeWind: 0.80, chargeSpeed: 13.0, chargeEnd: 1.15, combo: true },
+      chargeCd: 7.0, chargeWind: 0.80, chargeSpeed: 13.0, chargeEnd: 1.15, combo: true,
+      split: true, splitCd: 7.0, splitWind: 0.75, splitStrike: 0.36, splitRecover: 0.55,
+      whirl: true, whirlCd: 11.0, whirlWind: 0.70, whirlT: 2.6, whirlSpeed: 5.5, dizzy: 1.7 },
   ];
+
+  // The entrance cinematic: seconds since the boss was armed (waves.js calls startEntrance() when it spawns it).
+  const ENT = {
+    bars: 0.45,                           // the letterbox bars slide in
+    strike: 0.55,                         // the lightning hits the spawn point
+    crack: 0.62,                          // the cracks start to run
+    burst: 1.1,                           // the boss bursts out of the ground
+    buryY: -5.6, peak: 3.2, g: 46,        // start height under the ground, top of the jump (m), gravity of the jump
+    end: 3.5, out: 0.5,                   // the bars leave from `end` on, taking `out` seconds; the boss acts from end + 0.1
+    storm: 0.78, calm: 0.12,              // sky mood during the cinematic and the (light overcast) afterwards
+  };
+  ENT.rise = Math.sqrt(2 * (ENT.peak - ENT.buryY) / ENT.g);                 // burst -> top of the jump
+  ENT.v = ENT.g * ENT.rise;                                                // take-off speed (m/s)
+  ENT.land = ENT.burst + ENT.rise + Math.sqrt(2 * ENT.peak / ENT.g);       // ... -> back on the ground (~2.1 s)
+  const BOLT_TRUNK = 27, BOLT_BRANCH = 7, BOLT_PTS = BOLT_TRUNK + 2 * BOLT_BRANCH, BOLT_SEGS = BOLT_TRUNK - 1 + 2 * (BOLT_BRANCH - 1);
+  const N_CRACKS = 9, N_DEBRIS = 16;
 
   // Gear fit (metres of a 1.8 m knight, multiplied by SIZE; see Knight.GEAR). The helmet / sword reuse the knight's mount, only larger.
   const GEAR = {
@@ -7650,6 +8442,207 @@ window.World = (function () {
   const bossHp = () => Math.round(HP * diff().boss);
   const dmgOf = (base) => Math.max(1, Math.round(base * diff().dmg));
 
+  const _gc = new V3(), _gd = new V3(), _gh = new V3(), _gf = new V3(), _go = new V3(), _gU = new V3(), _gF = new V3(), _gN = new V3(), _gA = new V3(), _gB = new V3(), _gC = new V3(), _up = new V3(0, 1, 0);   // head guard scratch
+  const sfx = (name, a, b) => { try { if (window.Sfx && Sfx[name]) Sfx[name](a, b); } catch (e) { /* ignore */ } };
+  const _sv = new V3(), _sn = new V3(0, 1, 0), _sn2 = new V3(0.8, 0.4, 0);          // scratch for FX calls
+
+  // ------------------------------------------------------------------------------------------------------------------------
+  // Storm: the sky / light mood of the entrance. Module level, because the lights belong to the scene, not to a boss. It only touches
+  // the scene while the mood is not zero (or a lightning flash is fading) and puts the exact original values back afterwards.
+  // ------------------------------------------------------------------------------------------------------------------------
+  const Storm = {
+    level: 0, target: 0, flash: 0, on: false,
+    scene: null, lights: [], bg: null, fogC: null, fogD: 0,
+    sky: new THREE.Color(0x1b2231), murk: new THREE.Color(0x2b332f), cool: new THREE.Color(0x9db0da), white: new THREE.Color(0xe8f0ff),
+    grab() {
+      const scene = sceneOf();
+      if (!scene) return false;
+      if (this.scene === scene) return true;
+      this.scene = scene; this.lights.length = 0;
+      scene.traverse((o) => { if (o.isLight) this.lights.push({ l: o, i: o.intensity, c: o.color.clone(), dir: !!o.isDirectionalLight }); });
+      this.bg = scene.background && scene.background.isColor ? scene.background.clone() : null;
+      this.fogC = scene.fog && scene.fog.color ? scene.fog.color.clone() : null;
+      this.fogD = scene.fog && typeof scene.fog.density === 'number' ? scene.fog.density : 0;
+      return true;
+    },
+    apply() {
+      const L = this.level, F = Math.min(1, this.flash), scene = this.scene;
+      for (let i = 0; i < this.lights.length; i++) {
+        const e = this.lights[i];
+        e.l.intensity = e.i * (1 - (e.dir ? 0.76 : 0.58) * L) + F * (e.dir ? 1.7 : 1.3);     // a lightning flash lifts the light, without a white-out
+        e.l.color.copy(e.c).lerp(this.cool, 0.45 * L).lerp(this.white, 0.6 * F);
+      }
+      if (this.bg) scene.background.copy(this.bg).lerp(this.sky, L).lerp(this.white, 0.45 * F);
+      if (this.fogC) { scene.fog.color.copy(this.fogC).lerp(this.murk, L).lerp(this.white, 0.45 * F); if (this.fogD) scene.fog.density = this.fogD * (1 + 0.55 * L); }
+    },
+    restore() {
+      const scene = this.scene;
+      if (scene) {
+        for (let i = 0; i < this.lights.length; i++) { const e = this.lights[i]; e.l.intensity = e.i; e.l.color.copy(e.c); }
+        if (this.bg) scene.background.copy(this.bg);
+        if (this.fogC) { scene.fog.color.copy(this.fogC); if (this.fogD) scene.fog.density = this.fogD; }
+      }
+      this.on = false; this.scene = null; this.lights.length = 0;
+    },
+    tick(dt) {
+      const up = this.target > this.level;
+      this.level += (this.target - this.level) * (1 - Math.exp(-(up ? 2.4 : 0.7) * dt));
+      if (Math.abs(this.level - this.target) < 0.004) this.level = this.target;
+      this.flash = this.flash > 0 ? Math.max(0, this.flash - dt * 2.8) : 0;
+      if (this.level === 0 && this.flash === 0) { if (this.on) this.restore(); return; }
+      if (!this.grab()) return;
+      this.on = true;
+      this.apply();
+    },
+    reset() { this.target = 0; this.level = 0; this.flash = 0; if (this.on) this.restore(); },
+  };
+
+  // ------------------------------------------------------------------------------------------------------------------------
+  // Cine: the letterbox bars, the title card and the screen flash of the entrance (DOM, driven by the cinematic's own clock).
+  // ------------------------------------------------------------------------------------------------------------------------
+  const Cine = {
+    bars: null, top: null, bot: null, card: null, main: null, sub: null, rule: null, flashEl: null,
+    v: { bars: -1, card: -1, slam: -1, flash: -1 },
+    build() {
+      if (this.bars) return true;
+      try {
+        const div = (css, parent) => { const d = document.createElement('div'); d.style.cssText = css; parent.appendChild(d); return d; };
+        this.bars = div('position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:9;display:none', document.body);
+        this.bars.id = 'bossBars';
+        this.top = div('position:absolute;left:0;right:0;top:0;height:12.5%;background:#000;transform:translateY(-100%)', this.bars);
+        this.bot = div('position:absolute;left:0;right:0;bottom:0;height:12.5%;background:#000;transform:translateY(100%)', this.bars);
+        this.card = div('position:fixed;left:0;right:0;top:53%;text-align:center;pointer-events:none;z-index:11;opacity:0;visibility:hidden;'
+          + 'text-shadow:0 0 34px rgba(255,70,20,.75),0 4px 16px #000', document.body);
+        this.card.id = 'bossTitle';
+        this.main = div('font:700 clamp(24px,5.6vw,88px) Georgia,"Palatino Linotype","Book Antiqua",serif;text-transform:uppercase;color:#ff7a45;white-space:nowrap;'
+          + 'letter-spacing:.12em;margin-right:-.12em', this.card);
+        this.main.textContent = NAME;
+        this.rule = div('height:3px;width:0;margin:10px auto 0;background:linear-gradient(90deg,rgba(241,210,138,0),#f1d28a,rgba(241,210,138,0))', this.card);
+        this.sub = div('margin-top:10px;font-size:clamp(13px,2vw,24px);letter-spacing:.42em;text-transform:uppercase;color:#f1d28a', this.card);
+        this.sub.textContent = 'The final wave';
+        this.flashEl = div('position:fixed;inset:0;background:#e6efff;pointer-events:none;z-index:41;opacity:0;visibility:hidden', document.body);
+        this.flashEl.id = 'bossCineFlash';
+      } catch (e) { this.bars = null; return false; }
+      return true;
+    },
+    setBars(k) {
+      if (!this.build() || Math.abs(k - this.v.bars) < 0.002) return;
+      this.v.bars = k;
+      this.bars.style.display = k > 0 ? 'block' : 'none';
+      this.top.style.transform = 'translateY(' + (-(1 - k) * 100) + '%)';
+      this.bot.style.transform = 'translateY(' + ((1 - k) * 100) + '%)';
+    },
+    // a = opacity 0..1, slam = 0..1: the letters pull together and the card settles from 1.45x
+    setCard(a, slam) {
+      if (!this.build()) return;
+      if (Math.abs(a - this.v.card) > 0.004 || Math.abs(slam - this.v.slam) > 0.004) {
+        this.v.card = a; this.v.slam = slam;
+        const st = this.card.style;
+        st.opacity = String(a); st.visibility = a > 0 ? 'visible' : 'hidden';
+        const k = slam * slam * (3 - 2 * slam);
+        this.main.style.letterSpacing = (0.12 + 0.18 * (1 - k)) + 'em';
+        this.main.style.marginRight = (-(0.12 + 0.18 * (1 - k))) + 'em';
+        this.main.style.transform = 'scale(' + (1 + 0.2 * (1 - k)) + ')';
+        this.rule.style.width = (62 * k) + '%';
+      }
+    },
+    // a full-screen tint, capped low (photosensitivity: the bolt and the scene light carry the strike, the overlay only hints at it)
+    setFlash(a) {
+      a = Math.min(0.24, a * 0.4);
+      if (!this.build() || Math.abs(a - this.v.flash) < 0.004) return;
+      this.v.flash = a;
+      this.flashEl.style.opacity = String(a); this.flashEl.style.visibility = a > 0 ? 'visible' : 'hidden';
+    },
+    hide() { if (!this.bars) return; this.v.bars = this.v.card = this.v.flash = -1; this.setBars(0); this.setCard(0, 0); this.setFlash(0); },
+  };
+
+  // procedural textures (drawn once, shared by every boss): a glowing crack down the middle, and a soft ember glow
+  let crackTex = null, glowTex = null;
+  function getCrackTex() {
+    if (crackTex) return crackTex;
+    const W = 128, H = 512, cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const g = cv.getContext('2d');
+    // a jagged line from the top (near the boss; the strip's v = 1) to the bottom (far end), thinner towards the end
+    const pts = [];
+    let x = W / 2;
+    for (let y = 0; y <= H; y += 22) { x = clamp(x + (Math.random() - 0.5) * 26, W * 0.3, W * 0.7); pts.push([x, y]); }
+    const stroke = (lw, style, blur) => {
+      g.lineJoin = 'round'; g.lineCap = 'round'; g.shadowBlur = blur || 0; g.shadowColor = 'rgba(255,90,10,.9)';
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const k = 1 - 0.55 * (i / pts.length);
+        g.lineWidth = lw * k; g.strokeStyle = style;
+        g.beginPath(); g.moveTo(pts[i][0], pts[i][1]); g.lineTo(pts[i + 1][0], pts[i + 1][1]); g.stroke();
+      }
+    };
+    // a few side cracks
+    const branches = [];
+    for (let i = 3; i < pts.length - 3; i += 3) {
+      const side = Math.random() < 0.5 ? -1 : 1, b = [[pts[i][0], pts[i][1]]];
+      let bx = pts[i][0], by = pts[i][1];
+      for (let j = 0; j < 3; j++) { bx += side * (8 + Math.random() * 10); by += 10 + Math.random() * 10; b.push([bx, by]); }
+      branches.push(b);
+    }
+    const strokeBranches = (lw, style, blur) => {
+      g.lineJoin = 'round'; g.lineCap = 'round'; g.shadowBlur = blur || 0; g.shadowColor = 'rgba(255,90,10,.9)'; g.lineWidth = lw; g.strokeStyle = style;
+      for (const b of branches) { g.beginPath(); g.moveTo(b[0][0], b[0][1]); for (let j = 1; j < b.length; j++) g.lineTo(b[j][0], b[j][1]); g.stroke(); }
+    };
+    stroke(30, 'rgba(8,5,3,.88)', 0); strokeBranches(12, 'rgba(8,5,3,.88)', 0);
+    stroke(12, 'rgba(255,96,16,.95)', 14); strokeBranches(5, 'rgba(255,96,16,.95)', 8);
+    stroke(4.5, 'rgba(255,226,150,1)', 0); strokeBranches(2, 'rgba(255,226,150,1)', 0);
+    crackTex = new THREE.CanvasTexture(cv);
+    crackTex.encoding = THREE.sRGBEncoding;
+    return crackTex;
+  }
+  let pillarTex = null;
+  function getPillarTex() {                // a column of heat: opaque at the bottom, fading to nothing at the top
+    if (pillarTex) return pillarTex;
+    const cv = document.createElement('canvas');
+    cv.width = 8; cv.height = 128;
+    const g = cv.getContext('2d'), gr = g.createLinearGradient(0, 128, 0, 0);
+    gr.addColorStop(0, 'rgba(255,214,140,0.95)'); gr.addColorStop(0.18, 'rgba(255,130,40,0.7)'); gr.addColorStop(0.6, 'rgba(220,60,15,0.25)'); gr.addColorStop(1, 'rgba(120,20,0,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 8, 128);
+    pillarTex = new THREE.CanvasTexture(cv);
+    pillarTex.encoding = THREE.sRGBEncoding;
+    return pillarTex;
+  }
+  function getGlowTex() {
+    if (glowTex) return glowTex;
+    const S = 128, cv = document.createElement('canvas');
+    cv.width = S; cv.height = S;
+    const g = cv.getContext('2d'), gr = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+    gr.addColorStop(0, 'rgba(255,214,140,1)'); gr.addColorStop(0.25, 'rgba(255,120,30,.8)'); gr.addColorStop(0.6, 'rgba(200,50,10,.35)'); gr.addColorStop(1, 'rgba(120,20,0,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, S, S);
+    glowTex = new THREE.CanvasTexture(cv);
+    glowTex.encoding = THREE.sRGBEncoding;
+    return glowTex;
+  }
+
+  // free what a boss added to the scene (meshes, geometries, materials; the shared textures stay)
+  function disposeRes(res) {
+    for (const o of res.objs) { if (o.parent) o.parent.remove(o); }
+    for (const g of res.geos) { try { g.dispose(); } catch (e) { /* ignore */ } }
+    for (const m of res.mats) { try { m.dispose(); } catch (e) { /* ignore */ } }
+    res.objs.length = 0; res.geos.length = 0; res.mats.length = 0;
+  }
+
+  // A head shot that lands on the raised shield must not count as a head shot anywhere: Game computes the zone from the ray (head) before it
+  // calls takeHit, and Combat.onHit / onKill look at the zone cached on the ray hit. Boss.takeHit flags such a shot (_blockedHit) and these
+  // wrappers (installed once) turn the cached zone into 'torso' for exactly that call: armour sound and sparks, 'hit' hitmarker, no helmet pop.
+  let combatPatched = false;
+  function patchCombat() {
+    if (combatPatched || !window.Combat) return;
+    combatPatched = true;
+    for (const fn of ['onHit', 'onKill']) {
+      const orig = Combat[fn];
+      if (typeof orig !== 'function') continue;
+      Combat[fn] = function (enemy, hit) {
+        if (enemy && enemy._blockedHit && hit) { try { hit.__cmbZone = 'torso'; hit.__cmbEnemy = enemy; } catch (e) { /* frozen */ } }
+        return orig.apply(this, arguments);
+      };
+    }
+  }
+
   // ------------------------------------------------------------------------------------------------------------------------
   // Boss
   // ------------------------------------------------------------------------------------------------------------------------
@@ -7662,7 +8655,7 @@ window.World = (function () {
       // timings of the base attack (sweep); everything else is driven by the phase table
       this.attackStart = 2.2 * this.sizeScale * diff().reach;     // starts a sweep from here (the sweep reaches 6.4 m on Normal)
       this.stopDist = 1.55 * this.sizeScale;
-      this.lungeSpeed = 1.2 * this.sizeScale;      // a small step into the swing
+      this.lungeSpeed = this._lunge0 = 1.2 * this.sizeScale;      // a small step into the swing (not in the Earthsplitter)
       this.turnRate = 3.2;
       this.turnRateAttack = 2.0;
 
@@ -7673,6 +8666,8 @@ window.World = (function () {
       this._gap = 1.0;
       this._leapCd = 3.5;
       this._chargeCd = 6;
+      this._splitCd = 4.5;                    // Earthsplitter / Whirlwind cooldowns (s), randomised when they are used
+      this._whirlCd = 7;
       this._combo = 0;
       this._leap = { sx: 0, sz: 0, tx: 0, tz: 0, h: 4, locked: false };
       this._cdir = new V3(0, 0, 1);
@@ -7685,6 +8680,22 @@ window.World = (function () {
       this._deathEvents = [];
       this._roarFx = 0;
       this._stepAcc = 0;
+      // head guard
+      this._g = { w: 0, on: false, t: 0, cd: 1.0, aim: 0, roll: -1, rollT: 0, pending: -1, aimed: false, blocks: 0, lastD: 99 };
+      this._blockedHit = false;
+      this._shieldMats = [];
+      this._shieldFlash = 0;
+      // earthsplitter
+      this._sdir = new V3(0, 0, 1);
+      this._sLen = 20;
+      this._split = { active: false, t: 0, front: 0, nextD: 0, ox: 0, oz: 0, fade: 0, hit: false, spikes: null, crackOp: 0 };
+      // whirlwind / dizzy
+      this._wdir = new V3(0, 0, 1);
+      this._spinRate = 0; this._whirlHitCd = 0; this._whirlSnd = 0; this._whirlDust = 0; this._wSpeed = 0;
+      this._stars = null;
+      // everything this boss adds to the scene besides its model (disposed with it)
+      this._res = { geos: [], mats: [], objs: [] };
+      this._ent = null;
 
       // a broader build than the knight's slim frame (the whole posed model is stretched across x / z)
       this.model.scale.x *= WIDTH; this.model.scale.z *= WIDTH;
@@ -7694,12 +8705,13 @@ window.World = (function () {
       this._buildExtraClips();
       installDebug();
 
-      // the arrival: it stands, raises the sword and roars before it starts to walk
+      patchCombat();
+
+      // the arrival: it stands, raises the sword and roars before it starts to walk. Waves calls startEntrance() on top of this
+      // (the cinematic replaces the plain roar); a debug-spawned boss only does the roar.
       this.atk = 'roar';
       this._roarKind = 'intro';
-      this.windupTime = 1.5 + DROP_T;       // it drops out of the sky first (DROP_T), then raises the sword and roars
-      this._landed = false;
-      this.mesh.position.y = DROP_H;
+      this.windupTime = 1.5;
       this.setState('windup');
     }
 
@@ -7745,6 +8757,7 @@ window.World = (function () {
         if (m.name === 'Metal') { m.color.setRGB(PAINT.blade[0], PAINT.blade[1], PAINT.blade[2]); m.metalness = 0.4; m.roughness = 0.35; this._blade = m; }
       });
       own(this.shield, null);
+      this.shield && this.shield.traverse((o) => { if (o.isMesh) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { if (m.emissive && this._shieldMats.indexOf(m) < 0) this._shieldMats.push(m); }); });
     }
 
     // a pair of curved horns on the helmet (child of the helmet: they come off with it)
@@ -7839,7 +8852,7 @@ window.World = (function () {
     get P() { return PH[this.phase]; }
 
     updateAI(dt, ctx) {
-      this._gap -= dt; this._leapCd -= dt; this._chargeCd -= dt;
+      this._gap -= dt; this._leapCd -= dt; this._chargeCd -= dt; this._splitCd -= dt; this._whirlCd -= dt;
       const st = this.state;
       const P = this.P;
       switch (st) {
@@ -7853,7 +8866,10 @@ window.World = (function () {
           break;
         case 'windup':
           if (this.atk === 'roar') this._tickRoar(dt, ctx);
-          else if (this.stateT >= this.windupTime) this.startStrike();
+          else {
+            if (this.atk === 'split' && this.stateT < SPLIT_LOCK * this.windupTime) this._aimSplit(ctx);       // the line follows the player, then locks
+            if (this.stateT >= this.windupTime) this.startStrike();
+          }
           break;
         case 'attack': {
           const t = this._attackClipT();
@@ -7885,6 +8901,15 @@ window.World = (function () {
         case 'chargeEnd':
           if (this.stateT >= this._endT) this._afterAttack();
           break;
+        case 'whirlWind':
+          if (this.stateT >= P.whirlWind) this.setState('whirl');
+          break;
+        case 'whirl':
+          this._tickWhirl(dt, ctx);
+          break;
+        case 'dizzy':
+          if (this.stateT >= P.dizzy) this._afterAttack();
+          break;
         default: break;
       }
     }
@@ -7897,6 +8922,8 @@ window.World = (function () {
       const d = ctx.dist, fe = this._facingError(ctx);
       if (this._leapCd <= 0 && d > LEAP_MIN && d < LEAP_MAX && fe < 0.9) { this.startLeap(ctx); return; }
       if (P.charge && this._chargeCd <= 0 && d > CHARGE_MIN && d < CHARGE_MAX && fe < 0.5) { this.startCharge(ctx); return; }
+      if (P.split && this._splitCd <= 0 && d > SPLIT_MIN && d < SPLIT_MAX && fe < 0.45) { this.startSplit(ctx); return; }
+      if (P.whirl && this._whirlCd <= 0 && d < WHIRL_MAX && fe < 0.9) { this.startWhirl(ctx); return; }
       if (d <= this.attackStart * 1.05 && fe < 0.6 && (this.state !== 'combatIdle' || this.stateT >= this._idleWait)) this.startWindup();
     }
 
@@ -7924,6 +8951,7 @@ window.World = (function () {
       const P = this.P;
       this.atk = 'sweep';
       if (P.combo && !second) this._combo = 1;
+      this.lungeSpeed = this._lunge0;
       this.windupTime = second ? Math.max(0.5, P.windup * 0.8) : P.windup;
       this.strikeTime = P.strike;
       this.recoverTime = (this._combo > 0) ? 0.3 : P.recover;
@@ -7937,6 +8965,7 @@ window.World = (function () {
 
     // damage frame of the sweep: the player inside the fan drawn on the ground
     onDamageFrame(ctx) {
+      if (this.atk === 'split') { this._splitStart(); return; }
       const pp = playerPos();
       if (!pp || !window.Player || !Player.hurt) return;
       const p = this.mesh.position;
@@ -8068,6 +9097,315 @@ window.World = (function () {
     }
 
     // -------------------------------------------------------------------------------------------------------------------
+    // entrance cinematic (see the header): storm, lightning, cracks, the burst out of the ground, the landing, the title card
+    // -------------------------------------------------------------------------------------------------------------------
+    get cinematic() { return !!(this._ent && !this._ent.landed); }
+
+    // arm the cinematic: the boss is buried and hidden; it starts on the first update (after _placeInView has put it in front of the player)
+    startEntrance() {
+      if (this._ent || this.dead) return;
+      this._ent = {
+        t: 0, built: false, landed: false, done: false, cleaned: false, y: ENT.buryY, sx: 0, sz: 0,
+        stormed: false, calmed: false, struck: false, reStruck: false, burst: false, roared: false, shoving: false, titleT0: -1,
+        boltT: -1, ringR: 0, flashK: 0, emberT: 0, hot: 0, crackK: 1,
+        bp: null, core: null, halo: null, crackMat: null, cracks: null, disc: null, pillar: null, debris: null, res: { geos: [], mats: [], objs: [] },
+      };
+      this.atk = 'roar'; this._roarKind = 'entrance'; this._roarFx = 0;
+      this.windupTime = ENT.end + 0.1;
+      this.mesh.position.y = ENT.buryY;
+      this.mesh.visible = false;
+      this.setState('windup');
+    }
+
+    _entBuild() {
+      const E = this._ent, scene = this.mesh.parent || sceneOf(), R = E.res;
+      E.built = true;
+      E.sx = this.mesh.position.x; E.sz = this.mesh.position.z;
+      if (!scene) return;
+      const mat = (o) => { const m = new THREE.MeshBasicMaterial(Object.assign({ transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide }, o)); R.mats.push(m); return m; };
+      const add = (geo, m, order) => {
+        const o = new THREE.Mesh(geo, m);
+        o.frustumCulled = false; o.visible = false; o.renderOrder = order; o.castShadow = false; o.receiveShadow = false;
+        scene.add(o); R.objs.push(o);
+        return o;
+      };
+      // lightning: two ribbons of crossed quads (a thin bright core and a wide soft halo) that share one point list
+      E.bp = new Float32Array(BOLT_PTS * 3);
+      const ribbon = () => {
+        const g = new THREE.BufferGeometry(), idx = [];
+        g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BOLT_SEGS * 8 * 3), 3));
+        for (let i = 0; i < BOLT_SEGS * 2; i++) { const o = i * 4; idx.push(o, o + 1, o + 2, o, o + 2, o + 3); }
+        g.setIndex(idx);
+        R.geos.push(g);
+        return g;
+      };
+      E.core = add(ribbon(), mat({ color: 0xf4f8ff, blending: THREE.AdditiveBlending }), 12);
+      E.halo = add(ribbon(), mat({ color: 0x6f9bff, blending: THREE.AdditiveBlending, opacity: 0.4 }), 11);
+      // cracks that run out of the strike point
+      const strip = new THREE.PlaneGeometry(1, 1); strip.rotateX(-Math.PI / 2); strip.translate(0, 0, 0.5);
+      R.geos.push(strip);
+      E.crackMat = mat({ map: getCrackTex(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+      E.cracks = [];
+      for (let i = 0; i < N_CRACKS; i++) {
+        const m = add(strip, E.crackMat, 5 + i * 0.01);
+        m.position.set(E.sx, 0.045, E.sz);
+        m.userData.ang = (i / N_CRACKS) * TAU + (Math.random() - 0.5) * 0.45;
+        m.userData.len = 5 + Math.random() * 7 + (i % 3 === 0 ? 3 : 0);
+        m.userData.w = 1.7 + Math.random() * 0.9;
+        m.userData.delay = Math.random() * 0.18;
+        m.userData.flip = Math.random() < 0.5 ? -1 : 1;
+        m.rotation.y = m.userData.ang;
+        E.cracks.push(m);
+      }
+      // the glow of the heat under the ground
+      const disc = new THREE.CircleGeometry(1, 40); disc.rotateX(-Math.PI / 2);
+      R.geos.push(disc);
+      E.disc = add(disc, mat({ map: getGlowTex(), blending: THREE.AdditiveBlending }), 4);
+      E.disc.position.set(E.sx, 0.04, E.sz);
+      // the column of heat and light the boss comes up in
+      const pg = new THREE.CylinderGeometry(1, 1.5, 1, 22, 1, true); pg.translate(0, 0.5, 0);
+      R.geos.push(pg);
+      E.pillar = add(pg, mat({ map: getPillarTex(), blending: THREE.AdditiveBlending }), 10);
+      E.pillar.position.set(E.sx, 0, E.sz);
+      // debris chunks
+      const dg = new THREE.DodecahedronGeometry(1, 0), dm = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0, flatShading: true });
+      dm.color.setRGB(0.12, 0.1, 0.082);
+      R.geos.push(dg); R.mats.push(dm);
+      E.debris = [];
+      for (let i = 0; i < N_DEBRIS; i++) {
+        const m = new THREE.Mesh(dg, dm);
+        m.castShadow = true; m.visible = false;
+        scene.add(m); R.objs.push(m);
+        E.debris.push({ m: m, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0, s: 0.4, rest: false });
+      }
+    }
+
+    // a new jagged bolt from high up to the strike point (+ two forks)
+    _boltShape() {
+      const E = this._ent, bp = E.bp;
+      if (!bp) return;
+      const topX = E.sx + 6 + Math.random() * 9, topZ = E.sz - 7 + Math.random() * 14, topY = 88;
+      for (let i = 0; i < BOLT_TRUNK; i++) {
+        const t = i / (BOLT_TRUNK - 1), amp = (i === 0 || i === BOLT_TRUNK - 1) ? 0 : 2.3 * (1 - 0.5 * t);
+        bp[i * 3] = lerp(topX, E.sx, t) + (Math.random() - 0.5) * 2 * amp;
+        bp[i * 3 + 1] = lerp(topY, 0.05, t);
+        bp[i * 3 + 2] = lerp(topZ, E.sz, t) + (Math.random() - 0.5) * 2 * amp;
+      }
+      for (let b = 0; b < 2; b++) {
+        const base = BOLT_TRUNK + b * BOLT_BRANCH, k = 7 + b * 7 + Math.floor(Math.random() * 3);
+        let x = bp[k * 3], y = bp[k * 3 + 1], z = bp[k * 3 + 2];
+        const a = Math.random() * TAU, dx = Math.cos(a) * 3.2, dz = Math.sin(a) * 3.2;
+        for (let j = 0; j < BOLT_BRANCH; j++) {
+          bp[(base + j) * 3] = x; bp[(base + j) * 3 + 1] = y; bp[(base + j) * 3 + 2] = z;
+          x += dx * (0.5 + Math.random()); y -= 4.5 + Math.random() * 3; z += dz * (0.5 + Math.random());
+        }
+      }
+      this._boltFill(E.core.geometry, 0.15, 0.07);
+      this._boltFill(E.halo.geometry, 0.75, 0.32);
+    }
+
+    // write the quads of the point list: w = half width of the trunk, wb = of the forks
+    _boltFill(geo, w, wb) {
+      const bp = this._ent.bp, pos = geo.attributes.position.array;
+      let o = 0;
+      const seg = (a, b, h) => {
+        const ax = bp[a * 3], ay = bp[a * 3 + 1], az = bp[a * 3 + 2], bx = bp[b * 3], by = bp[b * 3 + 1], bz = bp[b * 3 + 2];
+        pos[o++] = ax - h; pos[o++] = ay; pos[o++] = az;  pos[o++] = ax + h; pos[o++] = ay; pos[o++] = az;
+        pos[o++] = bx + h; pos[o++] = by; pos[o++] = bz;  pos[o++] = bx - h; pos[o++] = by; pos[o++] = bz;
+        pos[o++] = ax; pos[o++] = ay; pos[o++] = az - h;  pos[o++] = ax; pos[o++] = ay; pos[o++] = az + h;
+        pos[o++] = bx; pos[o++] = by; pos[o++] = bz + h;  pos[o++] = bx; pos[o++] = by; pos[o++] = bz - h;
+      };
+      for (let i = 0; i < BOLT_TRUNK - 1; i++) seg(i, i + 1, w * (1 + 0.5 * i / BOLT_TRUNK));
+      for (let b = 0; b < 2; b++) { const base = BOLT_TRUNK + b * BOLT_BRANCH; for (let j = 0; j < BOLT_BRANCH - 1; j++) seg(base + j, base + j + 1, wb * (1 - j / BOLT_BRANCH)); }
+      geo.attributes.position.needsUpdate = true;
+    }
+
+    _entTick(dt) {
+      const E = this._ent;
+      if (E.cleaned) return;
+      if (!E.built) this._entBuild();
+      E.t += dt;
+      const t = E.t, p = this.mesh.position, pp = playerPos(), wasLanded = E.landed;
+
+      // ---- letterbox bars, storm mood, flash overlay
+      if (!E.stormed) { E.stormed = true; Storm.target = ENT.storm; }
+      if (!E.done) {
+        Cine.setBars(t < ENT.end ? smooth(t / ENT.bars) : 1 - smooth((t - ENT.end) / ENT.out));
+        if (t >= ENT.end && !E.calmed) { E.calmed = true; Storm.target = ENT.calm; }
+        if (t >= ENT.end + ENT.out) { E.done = true; Cine.hide(); }
+      }
+      E.flashK = Math.max(0, E.flashK - dt * 3.2);
+      Cine.setFlash(E.flashK);
+
+      // ---- the lightning strikes
+      if (!E.struck && t >= ENT.strike) {
+        E.struck = true; E.boltT = 0;
+        this._boltShape();
+        Storm.flash = 1; E.flashK = 0.6;
+        if (window.FX && FX.shake) FX.shake(0.75);
+        _sv.set(E.sx, 0.25, E.sz);
+        if (window.FX) { try { FX.sparks(_sv, _sn, 46); FX.dust(_sv, _sn, 2.2); } catch (e) { /* ignore */ } }
+        sfx('explosion', p);                                     // thunder
+      }
+      if (E.struck) {
+        const bt = t - ENT.strike;
+        let k;
+        if (bt < 0.09) k = 1;
+        else if (bt < 0.15) k = 0.1;
+        else if (bt < 0.28) {
+          k = 1;
+          if (!E.reStruck) { E.reStruck = true; this._boltShape(); Storm.flash = 0.85; E.flashK = Math.max(E.flashK, 0.5); if (window.FX && FX.shake) FX.shake(0.25); }
+        } else k = Math.max(0, 1 - (bt - 0.28) / 0.4);
+        const vis = k > 0.01;
+        if (E.core.visible !== vis) { E.core.visible = vis; E.halo.visible = vis; }
+        if (vis) { E.core.material.opacity = k; E.halo.material.opacity = 0.4 * k; }
+      }
+
+      // ---- cracks, embers, the heat glow, the rumble
+      if (t >= ENT.crack) {
+        let maxU = 0;
+        for (let i = 0; i < E.cracks.length; i++) {
+          const m = E.cracks[i], d = m.userData;
+          const u = smooth((t - ENT.crack - d.delay) / 0.7);
+          if (u > maxU) maxU = u;
+          m.visible = u > 0.01;
+          m.scale.set(d.w * d.flip, 1, d.len * u);
+        }
+        const heat = smooth((t - ENT.crack) / (ENT.burst - ENT.crack));
+        const after = t > ENT.burst ? clamp((t - ENT.burst) / 1.0, 0, 1) : 0;
+        E.disc.visible = true;
+        const r = 3.2 + 2.6 * heat + 3 * after;
+        E.disc.scale.set(r, 1, r);
+        E.disc.material.opacity = clamp((0.25 + 0.55 * heat + 0.12 * Math.sin(t * 17)) * (1 - after), 0, 1);
+        if (t < ENT.land) {
+          E.emberT += dt;
+          if (E.emberT >= 0.06) {
+            E.emberT = 0;
+            const m = E.cracks[(Math.random() * E.cracks.length) | 0], d = m.userData, rr = Math.random() * d.len * smooth((t - ENT.crack - d.delay) / 0.7);
+            _sv.set(E.sx + Math.sin(d.ang) * rr, 0.12, E.sz + Math.cos(d.ang) * rr);
+            if (window.FX && FX.sparks) { try { FX.sparks(_sv, _sn, 2); } catch (e) { /* ignore */ } }
+          }
+          if (t < ENT.burst && window.FX && FX.shake) FX.shake((0.3 + 1.1 * heat) * dt);       // the ground rumbles louder and louder
+        }
+        // the scar fades once the boss is up: the cracks go dark and are gone ~6 s after the landing
+        if (t > ENT.land + 1.2) E.crackK = Math.max(0, 1 - (t - ENT.land - 1.2) / 5);
+        E.crackMat.opacity = E.crackK;
+        if (E.crackK <= 0) { this._entClean(); return; }
+      }
+
+      // ---- the column of heat around the burst
+      if (t > ENT.burst - 0.15 && t < ENT.burst + 1.0) {
+        const u = (t - (ENT.burst - 0.15)) / 1.15, r = 1.6 + 2.4 * smooth(u);
+        E.pillar.visible = true;
+        E.pillar.scale.set(r, 26 * (0.4 + 0.6 * smooth(u * 3)), r);
+        E.pillar.material.opacity = clamp(Math.min(u * 6, 1) * (1 - u * u), 0, 1);
+        E.pillar.rotation.y = t * 3;
+      } else if (E.pillar.visible) E.pillar.visible = false;
+
+      // ---- debris physics
+      if (E.burst) {
+        const D = E.debris;
+        for (let i = 0; i < D.length; i++) {
+          const d = D[i];
+          if (d.rest) continue;
+          d.vy -= 24 * dt;
+          d.m.position.x += d.vx * dt; d.m.position.y += d.vy * dt; d.m.position.z += d.vz * dt;
+          d.m.rotation.x += d.wx * dt; d.m.rotation.y += d.wy * dt; d.m.rotation.z += d.wz * dt;
+          if (d.m.position.y < d.s * 0.45 && d.vy < 0) {
+            d.m.position.y = d.s * 0.45;
+            if (d.vy > -3) { d.rest = true; continue; }
+            d.vy *= -0.32; d.vx *= 0.6; d.vz *= 0.6; d.wx *= 0.5; d.wy *= 0.5; d.wz *= 0.5;
+          }
+        }
+      }
+
+      // ---- the burst out of the ground
+      if (!E.burst && t >= ENT.burst) {
+        E.burst = true;
+        this.mesh.visible = true;
+        const D = E.debris;
+        for (let i = 0; i < D.length; i++) {
+          const d = D[i], a = Math.random() * TAU, sp = 2.5 + Math.random() * 7;
+          d.s = 0.25 + Math.random() * 0.55;
+          d.m.scale.set(d.s * (0.8 + Math.random() * 0.5), d.s * (0.6 + Math.random() * 0.5), d.s * (0.8 + Math.random() * 0.5));
+          d.m.position.set(E.sx + Math.cos(a) * (0.6 + Math.random() * 2), 0.2, E.sz + Math.sin(a) * (0.6 + Math.random() * 2));
+          d.vx = Math.cos(a) * sp; d.vz = Math.sin(a) * sp; d.vy = 9 + Math.random() * 12;
+          d.wx = (Math.random() - 0.5) * 12; d.wy = (Math.random() - 0.5) * 12; d.wz = (Math.random() - 0.5) * 12;
+          d.rest = false; d.m.visible = true;
+        }
+        for (let i = 0; i < 14; i++) { const a = i / 14 * TAU; this._dustAt(E.sx + Math.cos(a) * 2.8, E.sz + Math.sin(a) * 2.8, 2.0); }
+        _sv.set(E.sx, 0.3, E.sz);
+        if (window.FX) { try { FX.sparks(_sv, _sn, 60); if (FX.shake) FX.shake(0.95); } catch (e) { /* ignore */ } }
+        E.flashK = Math.max(E.flashK, 0.3);
+        sfx('explosion', p); sfx('footstep', 'boss', p);
+      }
+
+      // ---- its jump (a parabola from under the ground), then the landing
+      if (E.burst && !E.landed) {
+        const tau = t - ENT.burst;
+        E.y = ENT.buryY + ENT.v * tau - 0.5 * ENT.g * tau * tau;
+        if (t >= ENT.land) {
+          E.landed = true; E.y = 0;
+          const x = E.sx, z = E.sz;
+          this._wave = { t: 0, x: x, z: z, R: 26 };
+          for (let i = 0; i < 24; i++) { const a = i / 24 * TAU; this._dustAt(x + Math.cos(a) * 5.5, z + Math.sin(a) * 5.5, 1.8); }
+          for (let i = 0; i < 8; i++) { const a = i / 8 * TAU; this._dustAt(x + Math.cos(a) * 2.5, z + Math.sin(a) * 2.5, 2.4); }
+          _sv.set(x, 0.2, z);
+          if (window.FX) { try { FX.sparks(_sv, _sn, 50); FX.sparks(_sv, _sn2, 30); if (FX.shake) FX.shake(1.25); } catch (e) { /* ignore */ } }
+          sfx('footstep', 'boss', p); sfx('clang', p); sfx('armorHit', p);
+          E.flashK = Math.max(E.flashK, 0.55);
+          E.shoving = true; E.ringR = 0; E.titleT0 = t;
+        }
+      }
+      if (!wasLanded) p.y = E.y;
+
+      // ---- the shockwave shoves the player when its front reaches him (no damage)
+      if (E.shoving) {
+        E.ringR += dt * 38;
+        if (pp) {
+          const dx = pp.x - p.x, dz = pp.z - p.z, d = Math.hypot(dx, dz) || 1;
+          if (E.ringR >= d) {
+            E.shoving = false;
+            const v = 12 * clamp(1 - d / 32, 0.4, 1);
+            if (window.Game && Game.shove) { try { Game.shove(dx / d * v, dz / d * v); } catch (e) { /* ignore */ } }
+            if (window.FX && FX.shake) FX.shake(0.35);
+          }
+        } else E.shoving = false;
+      }
+
+      // ---- the title card, then the roar
+      if (E.titleT0 >= 0) {
+        const ta = t - E.titleT0 - 0.08;
+        const a = ta < 0 ? 0 : (t < ENT.end ? clamp(ta / 0.12, 0, 1) : 1 - clamp((t - ENT.end) / 0.45, 0, 1));
+        Cine.setCard(a, clamp(ta / 0.32, 0, 1));
+      }
+      if (!E.roared && E.landed && t >= ENT.land + 0.3) {
+        E.roared = true;
+        sfx('bossRoar', p);
+        this._shake(0.6);
+      }
+    }
+
+    // free everything the cinematic put in the scene (the cracks have faded, or the boss died / was removed)
+    _entClean() {
+      const E = this._ent;
+      if (!E || E.cleaned) return;
+      E.cleaned = true;
+      disposeRes(E.res);
+      E.cracks = E.debris = E.core = E.halo = E.disc = E.pillar = null;
+    }
+
+    // the boss died or was removed mid-cinematic
+    _entAbort() {
+      const E = this._ent;
+      if (!E) return;
+      E.landed = true; E.done = true; E.y = 0;
+      this.mesh.visible = true;
+      Cine.hide();
+      this._entClean();
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------
     // roar, phases, minions
     // -------------------------------------------------------------------------------------------------------------------
     startRoar(kind) {
@@ -8079,39 +9417,12 @@ window.World = (function () {
       this.setState('windup');
     }
 
-    // the dramatic entrance: it plunges from DROP_H, lands with a slam (shockwave, dust ring, sparks, shake, white flash)
-    _tickDrop() {
-      const u = Math.min(1, this.stateT / DROP_T);
-      this.mesh.position.y = DROP_H * (1 - u * u);
-      if (u < 1 || this._landed) return;
-      this._landed = true;
-      this.mesh.position.y = 0;
-      const x = this.mesh.position.x, z = this.mesh.position.z;
-      this._shake(1.6);
-      this._wave = { t: 0, x: x, z: z, R: 16 };
-      for (let i = 0; i < 24; i++) { const a = i / 24 * TAU; this._dustAt(x + Math.cos(a) * 5.5, z + Math.sin(a) * 5.5, 1.8); }
-      for (let i = 0; i < 8; i++) { const a = i / 8 * TAU; this._dustAt(x + Math.cos(a) * 2.5, z + Math.sin(a) * 2.5, 2.4); }
-      if (window.FX && FX.sparks) { try { FX.sparks(new V3(x, 0.2, z), new V3(0, 1, 0), 50); FX.sparks(new V3(x, 0.2, z), new V3(0.8, 0.4, 0), 30); } catch (e) { /* ignore */ } }
-      if (window.Sfx) { try { if (Sfx.footstep) Sfx.footstep('boss', this.mesh.position); if (Sfx.clang) Sfx.clang(this.mesh.position); if (Sfx.armorHit) Sfx.armorHit(this.mesh.position); } catch (e) { /* ignore */ } }
-      this._whiteFlash();
-    }
-
-    _whiteFlash() {
-      try {
-        let el = document.getElementById('bossFlash');
-        if (!el) {
-          el = document.createElement('div'); el.id = 'bossFlash';
-          el.style.cssText = 'position:fixed;inset:0;background:#fff;pointer-events:none;z-index:40;opacity:0;transition:opacity 60ms linear';
-          document.body.appendChild(el);
-        }
-        el.style.transition = 'opacity 60ms linear'; el.style.opacity = '0.75';
-        setTimeout(() => { el.style.transition = 'opacity 650ms ease-out'; el.style.opacity = '0'; }, 70);
-      } catch (e) { /* ignore */ }
-    }
-
     _tickRoar(dt, ctx) {
-      if (this._roarKind === 'intro' && !this._landed) { this._tickDrop(); if (!this._landed) return; }
-      const t = this._roarKind === 'intro' ? this.stateT - DROP_T : this.stateT;
+      if (this._roarKind === 'entrance') {                       // the cinematic (_entTick) does the effects; this only ends the state
+        if (this.stateT >= this.windupTime) { this.atk = null; this._gap = 0.4; this._idleWait = 0.1; this.setState('combatIdle'); }
+        return;
+      }
+      const t = this.stateT;
       if (this._roarFx < 1 && t >= 0.35) {
         this._roarFx = 1;
         this._shake(0.55);
@@ -8184,6 +9495,343 @@ window.World = (function () {
     }
 
     // -------------------------------------------------------------------------------------------------------------------
+    // head guard: raises the shield arm in front of the face when the player aims at the head (see the header)
+    // -------------------------------------------------------------------------------------------------------------------
+    // 0..1: Difficulty.bossGuard (the chance to react, shorter reaction time and cooldown as it grows), stronger in phase 3
+    _guardLevel() {
+      const D = diff(), G = clamp(typeof D.bossGuard === 'number' ? D.bossGuard : 0.6, 0, 1);
+      return this.phase >= 3 ? Math.min(1, G * 1.3 + 0.05) : G;
+    }
+
+    _canGuard() {
+      if (this.dead || (this._ent && !this._ent.landed)) return false;
+      const s = this.state;
+      if (s === 'approach' || s === 'combatIdle' || s === 'stagger' || s === 'attack' || s === 'recover') return true;
+      return s === 'windup' && (this.atk === 'sweep' || this.atk === 'split');
+    }
+
+    // does the camera ray pass near the head? (every frame; the head sphere is combat.js's, 1.9 radii wide)
+    _aimingAtHead() {
+      const cam = window.Game && Game.camera, head = this.bones.head;
+      if (!cam || !head) return false;
+      cam.getWorldPosition(_gc); cam.getWorldDirection(_gd);
+      head.getWorldPosition(_gh);
+      _gh.y += HEAD_UP * this.sizeScale;
+      _gh.sub(_gc);
+      const t = _gh.dot(_gd);
+      if (t < 1 || t > GUARD_MAX_D) return false;
+      const perp2 = Math.max(0, _gh.lengthSq() - t * t), r = HEAD_R * this.sizeScale * GUARD_NEAR;
+      this._g.lastD = Math.sqrt(perp2);
+      return perp2 < r * r;
+    }
+
+    // did a bullet land on the raised shield (the tower shield is ~3 m tall and stands about 1.5 m in front of the face) within reach of the head?
+    _onGuard(pt) {
+      const head = this.bones.head;
+      if (!pt || !head || !this.shield) return false;
+      head.getWorldPosition(_gh);
+      _gh.y += HEAD_UP * this.sizeScale;
+      const rh = HEAD_R * this.sizeScale * GUARD_HIT;
+      if (_gh.distanceToSquared(pt) > rh * rh) return false;
+      this.shield.getWorldPosition(_gc);
+      return _gc.distanceToSquared(pt) < GUARD_SHIELD_R * GUARD_SHIELD_R;
+    }
+
+    _guardTick(dt) {
+      const g = this._g, G = this._guardLevel();
+      const can = this._canGuard();
+      g.cd -= dt;
+      const aimed = can && this._aimingAtHead();
+      g.aimed = aimed;
+      if (g.on) {
+        g.t -= dt;
+        if (g.t <= 0 || !can) this._guardEnd(G);
+      } else if (can) {
+        if (g.pending >= 0) {                                    // reacting to a head shot it just took
+          g.pending -= dt;
+          if (g.pending < 0) this._guardStart();
+        } else if (aimed && g.cd <= 0) {
+          // a roll when the aim arrives (and again after every second it keeps on aiming without a reaction), then the reaction time
+          if (g.roll < 0) { g.roll = Math.random() < G ? 1 : 0; g.rollT = 0; }
+          else if (g.roll === 0 && (g.rollT += dt) >= 1) { g.roll = Math.random() < G ? 1 : 0; g.rollT = 0; }
+          if (g.roll === 1) { g.aim += dt; if (g.aim >= lerp(0.7, 0.18, G)) this._guardStart(); }
+        }
+      }
+      if (!aimed) { g.aim = Math.max(0, g.aim - dt * 2); if (g.aim === 0) g.roll = -1; }
+    }
+
+    _guardStart() {
+      const g = this._g;
+      g.on = true; g.pending = -1; g.aim = 0; g.roll = -1;
+      g.t = (0.8 + Math.random() * 0.8) * (this.phase >= 3 ? 1.15 : 1);
+    }
+
+    _guardEnd(G) {
+      const g = this._g;
+      g.on = false; g.aim = 0; g.roll = -1; g.rollT = 0;
+      g.cd = lerp(3.0, 1.0, G) * (this.phase >= 3 ? 0.75 : 1) * (0.85 + Math.random() * 0.3);
+    }
+
+    // right after an unguarded head shot it may throw the shield up (the cooldown is mostly ignored)
+    _guardAlert() {
+      const g = this._g, G = this._guardLevel();
+      if (g.on || g.pending >= 0 || !this._canGuard() || g.cd > 1.0) return;
+      if (Math.random() < Math.min(1, G + 0.25)) g.pending = 0.1 + 0.2 * (1 - G);
+    }
+
+    // the shield arm, on top of the clip: upper arm down and forward, forearm up in front of the face, shield turned to the front
+    _extraPose(dt) {
+      const g = this._g, target = g.on ? 1 : 0;
+      g.w += (target - g.w) * Math.min(1, dt * (target ? 11 : 6));
+      if (g.w < 0.01) { g.w = 0; return; }
+      const fore = this.bones.armL, upper = fore && fore.parent, hand = this.bones.handL;
+      if (!fore || !upper || !hand || !this.shield) return;
+      this.mesh.updateMatrixWorld(true);
+      const yaw = this.mesh.rotation.y, sn = Math.sin(yaw), cs = Math.cos(yaw), W = g.w;
+      _gf.set(sn, 0, cs);                                        // the way it faces
+      _go.set(cs, 0, -sn);                                       // its left (the shield arm's side)
+      const GP = GUARD_POSE;
+      _gU.copy(_gf).multiplyScalar(GP.u[0]).addScaledVector(_go, GP.u[1]).addScaledVector(_up, GP.u[2]).normalize();
+      this._ovAim(upper, fore, _gU, W);
+      _gF.copy(_gf).multiplyScalar(GP.f[0]).addScaledVector(_go, GP.f[1]).addScaledVector(_up, GP.f[2]).normalize();
+      this._ovAim(fore, hand, _gF, W);
+      // roll the forearm about its axis until the shield face looks along the way it faces
+      this.shield.updateWorldMatrix(true, false);
+      _gN.set(0, 0, 1).transformDirection(this.shield.matrixWorld);
+      _gA.copy(_gN).addScaledVector(_gF, -_gN.dot(_gF)).normalize();
+      _gB.copy(_gf).addScaledVector(_gF, -_gf.dot(_gF)).normalize();
+      let ang = Math.acos(clamp(_gA.dot(_gB), -1, 1));
+      if (_gC.crossVectors(_gA, _gB).dot(_gF) < 0) ang = -ang;
+      this._ovRotate(fore, _gF, ang * W);
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------
+    // Earthsplitter: a red strip follows the player and locks, the sword smashes down, a crack races along the strip and
+    // stone spikes erupt along it. Sidestep the strip.
+    // -------------------------------------------------------------------------------------------------------------------
+    startSplit(ctx) {
+      const P = this.P;
+      this.atk = 'split';
+      this._splitCd = P.splitCd * (0.85 + Math.random() * 0.3);
+      this._aimSplit(ctx);
+      this.windupTime = P.splitWind; this.strikeTime = P.splitStrike; this.recoverTime = P.splitRecover;
+      this.lungeSpeed = 0;
+      this.setState('windup');
+    }
+
+    _aimSplit(ctx) {
+      this._sdir.set(ctx.nx, 0, ctx.nz);
+      if (this._sdir.lengthSq() < 1e-6) this._sdir.set(Math.sin(this._yaw), 0, Math.cos(this._yaw));
+      this._sdir.normalize();
+      this._sLen = clamp(ctx.dist + 10, 16, 36);
+    }
+
+    // the sword hits the ground: the crack starts
+    _splitStart() {
+      const S = this._split, p = this.mesh.position;
+      this._ensureSpikes();
+      S.active = true; S.t = 0; S.front = 0; S.nextD = 3.2; S.fade = 1; S.hit = false; S.n = 0;
+      S.ox = p.x; S.oz = p.z; S.dx = this._sdir.x; S.dz = this._sdir.z; S.len = this._sLen;
+      this._shake(0.55);
+      const hx = p.x + S.dx * 3.6, hz = p.z + S.dz * 3.6;
+      this._dustAt(hx, hz, 1.8);
+      _sv.set(hx, 0.2, hz);
+      if (window.FX && FX.sparks) { try { FX.sparks(_sv, _sn, 22); } catch (e) { /* ignore */ } }
+      sfx('clang', this.mesh.position); sfx('footstep', 'boss', this.mesh.position);
+    }
+
+    _ensureSpikes() {
+      if (this._spikes) return;
+      const scene = this.mesh.parent || sceneOf();
+      if (!scene) return;
+      const R = this._res;
+      const geo = new THREE.ConeGeometry(1, 1, 7); geo.translate(0, 0.5, 0);
+      const mat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, flatShading: true });
+      mat.color.setRGB(0.075, 0.062, 0.05); mat.emissive.setRGB(0.1, 0.03, 0.006);          // linear colours: dark stone with a hint of heat
+      R.geos.push(geo); R.mats.push(mat);
+      this._spikes = [];
+      for (let i = 0; i < SPIKES; i++) {
+        const m = new THREE.Mesh(geo, mat);
+        m.castShadow = true; m.visible = false; m.frustumCulled = false;
+        scene.add(m); R.objs.push(m);
+        this._spikes.push({ m: m, age: -1, x: 0, z: 0, h: 2, r: 0.6 });
+      }
+    }
+
+    _spikeAt(d) {
+      const S = this._split, sp = this._spikes;
+      if (!sp) return;
+      let k = null;
+      for (let i = 0; i < sp.length; i++) if (sp[i].age < 0) { k = sp[i]; break; }
+      if (!k) return;
+      const lat = (Math.random() - 0.5) * 0.5;
+      k.x = S.ox + S.dx * d - S.dz * lat; k.z = S.oz + S.dz * d + S.dx * lat;
+      k.h = 2.1 + Math.random() * 1.5; k.r = 0.55 + Math.random() * 0.25; k.age = 0;
+      k.m.rotation.set((Math.random() - 0.5) * 0.35, Math.random() * TAU, (Math.random() - 0.5) * 0.35);
+      k.m.scale.set(k.r, k.h, k.r);
+      k.m.position.set(k.x, -k.h, k.z);
+      k.m.visible = true;
+      _sv.set(k.x, 0.1, k.z);
+      if (window.FX) { try { FX.dust(_sv, _sn, 1.0); if (FX.sparks) FX.sparks(_sv, _sn, 3); } catch (e) { /* ignore */ } }
+      if ((S.n++ & 1) === 0) sfx('footstep', 'boss', _sv);
+      const pp = playerPos();
+      if (pp && !S.hit && Math.hypot(pp.x - k.x, pp.z - k.z) < SPIKE_R) {
+        S.hit = true;
+        if (window.Player && Player.hurt) Player.hurt(dmgOf(DMG.split * (1 + 0.1 * (this.phase - 1))), this);
+        const dx = pp.x - k.x, dz = pp.z - k.z, l = Math.hypot(dx, dz) || 1;
+        if (window.Game && Game.shove) { try { Game.shove(dx / l * 8, dz / l * 8); } catch (e) { /* ignore */ } }
+        if (window.FX && FX.shake) FX.shake(0.4);
+      }
+    }
+
+    _splitTick(dt) {
+      const S = this._split, sp = this._spikes;
+      if (S.active) {
+        S.t += dt;
+        S.front = Math.min(S.len, S.t * SPLIT_SPEED);
+        while (S.nextD <= S.front) { this._spikeAt(S.nextD); S.nextD += SPIKE_GAP; }
+        if (S.front >= S.len) S.active = false;
+      } else if (S.fade > 0) S.fade = Math.max(0, S.fade - dt / 2.4);
+      if (!sp) return;
+      for (let i = 0; i < sp.length; i++) {
+        const k = sp[i];
+        if (k.age < 0) continue;
+        k.age += dt;
+        const a = k.age;
+        let y = 0;
+        if (a < 0.12) { const u = a / 0.12; y = -k.h * (1 - (1 - (1 - u) * (1 - u))); }
+        else if (a > 1.2) { y = -k.h * smooth((a - 1.2) / 0.5); if (a > 1.7) { k.age = -1; k.m.visible = false; continue; } }
+        k.m.position.y = y;
+      }
+    }
+
+    _splitAbort() {
+      const S = this._split;
+      S.active = false; S.fade = 0;
+      if (this._spikes) for (let i = 0; i < this._spikes.length; i++) { this._spikes[i].age = -1; this._spikes[i].m.visible = false; }
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------
+    // Whirlwind: windup (the ring on the ground is the reach), a spinning chase, then dizzy
+    // -------------------------------------------------------------------------------------------------------------------
+    startWhirl(ctx) {
+      this.atk = 'whirl';
+      this._whirlCd = this.P.whirlCd * (0.85 + Math.random() * 0.3);
+      this.setState('whirlWind');
+    }
+
+    _tickWhirl(dt, ctx) {
+      const P = this.P, p = this.mesh.position;
+      this._spinRate += (WHIRL_SPIN - this._spinRate) * (1 - Math.exp(-6 * dt));
+      this._yaw = (this._yaw + this._spinRate * dt) % TAU;
+      this.mesh.rotation.y = this._yaw;
+      // it runs along a heading that steers towards the player at a limited rate: strafing out of the ring works
+      const want = Math.atan2(ctx.dx, ctx.dz), cur = Math.atan2(this._wdir.x, this._wdir.z);
+      const na = cur + clamp(angDiff(cur, want), -WHIRL_STEER * dt, WHIRL_STEER * dt);
+      this._wdir.set(Math.sin(na), 0, Math.cos(na));
+      const sp = P.whirlSpeed * clamp(ctx.dist / 3.5, 0.15, 1) * Math.min(1, this.stateT / 0.5);
+      this._wSpeed += (sp - this._wSpeed) * (1 - Math.exp(-5 * dt));
+      p.x += this._wdir.x * this._wSpeed * dt; p.z += this._wdir.z * this._wSpeed * dt;
+      this._resolve(p, BODY_R, ctx);
+      p.y = 0;
+      const ts = Math.max(0.2, this._wSpeed / (Knight.CLIP_SPEED.Run * this.sizeScale));
+      if (this._cur.lower) this._cur.lower.setEffectiveTimeScale(ts);
+      // hits inside the ring
+      this._whirlHitCd -= dt;
+      const R = WHIRL_R * diff().reach, pp = playerPos();
+      if (pp && this._whirlHitCd <= 0 && ctx.dist < R) {
+        this._whirlHitCd = WHIRL_TICK;
+        sfx('clang', this.mesh.position);
+        if (window.Player && Player.hurt) Player.hurt(dmgOf(DMG.whirl * (1 + 0.1 * (this.phase - 1))), this);
+        const l = ctx.dist || 1;
+        if (window.Game && Game.shove) { try { Game.shove(-ctx.dx / l * 10, -ctx.dz / l * 10); } catch (e) { /* ignore */ } }
+        this._shake(0.3);
+      }
+      // the whoosh of the blade and a dust trail
+      this._whirlSnd -= dt; this._whirlDust -= dt;
+      if (this._whirlSnd <= 0) { this._whirlSnd = 0.32; sfx('swing', true, this.mesh.position); }
+      if (this._whirlDust <= 0 && window.FX && FX.dust) {
+        this._whirlDust = 0.14;
+        _sv.set(p.x + Math.sin(this._yaw) * 3.2, 0.05, p.z + Math.cos(this._yaw) * 3.2);
+        try { FX.dust(_sv, _sn, 0.9); } catch (e) { /* ignore */ }
+      }
+      if (this.stateT >= P.whirlT) this.setState('dizzy');
+    }
+
+    // three stars circle the head while it is dizzy
+    _ensureStars() {
+      if (this._stars) return;
+      const scene = this.mesh.parent || sceneOf();
+      if (!scene) return;
+      const R = this._res;
+      const geo = new THREE.OctahedronGeometry(0.4, 0), mat = new THREE.MeshBasicMaterial({ color: 0xffe27a, fog: false });
+      R.geos.push(geo); R.mats.push(mat);
+      this._stars = [];
+      for (let i = 0; i < 4; i++) {
+        const m = new THREE.Mesh(geo, mat);
+        m.visible = false; m.frustumCulled = false;
+        scene.add(m); R.objs.push(m);
+        this._stars.push(m);
+      }
+    }
+
+    // the blade's sweep while it spins: a translucent arc on the ground plane that trails behind the sword (the whole thing turns with the boss)
+    _ensureSwoosh() {
+      if (this._swoosh) return;
+      const scene = this.mesh.parent || sceneOf();
+      if (!scene) return;
+      const R = this._res, SEG = 36;
+      const geo = new THREE.RingGeometry(2.4, WHIRL_R * 0.96, SEG, 1, 0, SWOOSH_ARC);
+      geo.rotateX(-Math.PI / 2);
+      const n = geo.attributes.position.count, col = new Float32Array(n * 4);
+      for (let k = 0; k < n; k++) {                       // RingGeometry: index = ring * (SEG + 1) + step; the alpha grows towards the leading edge (the sword)
+        const u = (k % (SEG + 1)) / SEG;
+        col[k * 4] = 1; col[k * 4 + 1] = 0.9; col[k * 4 + 2] = 0.7; col[k * 4 + 3] = Math.pow(u, 1.7) * 0.62;
+      }
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 4));
+      const mat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false, blending: THREE.AdditiveBlending });
+      R.geos.push(geo); R.mats.push(mat);
+      const m = new THREE.Mesh(geo, mat);
+      m.visible = false; m.frustumCulled = false; m.renderOrder = 9;
+      scene.add(m); R.objs.push(m);
+      this._swoosh = m;
+    }
+
+    _updateSwoosh(dt) {
+      const whirling = this.state === 'whirl' && !this.dead;
+      if (whirling) this._ensureSwoosh();
+      else if (this._spinRate > 0.05) this._spinRate *= Math.exp(-7 * dt);     // fades out after the spin
+      const m = this._swoosh;
+      if (!m) return;
+      const k = clamp(this._spinRate / WHIRL_SPIN, 0, 1);
+      if (k < 0.03) { m.visible = false; return; }
+      const p = this.mesh.position;
+      m.visible = true;
+      m.position.set(p.x, 2.9, p.z);
+      m.rotation.y = this._yaw - SWOOSH_ARC;             // the leading edge lies where the sword points (boss-local +x)
+      m.material.opacity = k;
+    }
+
+    _updateDizzy(dt) {
+      const dizzy = this.state === 'dizzy' && !this.dead;
+      if (dizzy) {
+        const dur = this.P.dizzy, t = this.stateT, env = Math.min(1, t / 0.3) * clamp((dur - t) / 0.4, 0, 1);
+        this.mesh.rotation.z = 0.1 * env * Math.sin(this._t * 4.4);
+        if (this._stars && this.bones.head) {
+          this.bones.head.getWorldPosition(_sv);
+          for (let i = 0; i < this._stars.length; i++) {
+            const m = this._stars[i], a = this._t * 6 + i * (TAU / this._stars.length);
+            m.visible = true;
+            m.position.set(_sv.x + Math.cos(a) * 1.9, _sv.y + 1.9 + Math.sin(a * 1.7) * 0.18, _sv.z + Math.sin(a) * 1.9);
+            m.rotation.y = a * 2; m.rotation.x = a;
+          }
+        }
+      } else if (this._stars && this._stars[0].visible) {
+        for (let i = 0; i < this._stars.length; i++) this._stars[i].visible = false;
+      }
+    }
+
+    // -------------------------------------------------------------------------------------------------------------------
     // state hooks
     // -------------------------------------------------------------------------------------------------------------------
     onEnter(state, prev) {
@@ -8200,8 +9848,28 @@ window.World = (function () {
           if (window.Sfx && Sfx.swing) { try { Sfx.swing(true, this.mesh.position); } catch (e) { /* ignore */ } }
           break;
         case 'chargeEnd': this._playStateAnim('combatIdle', 0.35); break;
+        case 'whirlWind':
+          this._playStateAnim('windup', 0.25);
+          sfx('swing', true, this.mesh.position);
+          break;
+        case 'whirl': {
+          const ctx = this._ctx;
+          this._wdir.set(ctx.nx, 0, ctx.nz);
+          this._spinRate = 0; this._wSpeed = 0; this._whirlHitCd = 0.3; this._whirlSnd = 0; this._whirlDust = 0;
+          this._play('lower', 'Run', 0.2);
+          const a = this._play('upper', ATTACK, 0.15);
+          if (a) a.setEffectiveTimeScale(0);
+          this.currentClip = ATTACK; this.gait = 'Run';
+          break;
+        }
+        case 'dizzy':
+          this._playStateAnim('combatIdle', 0.3);
+          this._ensureStars();
+          sfx('clang', this.mesh.position);
+          break;
         default: break;
       }
+      if (prev === 'dizzy') this.mesh.rotation.z = 0;
     }
 
     // -------------------------------------------------------------------------------------------------------------------
@@ -8209,11 +9877,17 @@ window.World = (function () {
     // -------------------------------------------------------------------------------------------------------------------
     _custom() {
       const s = this.state;
-      return s === 'leapWind' || s === 'leap' || s === 'leapEnd' || s === 'chargeWind' || s === 'charge' || s === 'chargeEnd';
+      return s === 'leapWind' || s === 'leap' || s === 'leapEnd' || s === 'chargeWind' || s === 'charge' || s === 'chargeEnd'
+        || s === 'whirlWind' || s === 'whirl' || s === 'dizzy';
     }
 
     _move(dt, ctx) {
       const s = this.state;
+      if (this._ent && !this._ent.landed) {                              // the entrance owns its height (and it does not move sideways)
+        this._speed = 0; this._vel.set(0, 0, 0); this._decayKnockback(dt);
+        this.mesh.position.y = this._ent.y;
+        return;
+      }
       if (!this._custom()) { super._move(dt, ctx); return; }
       const p = this.mesh.position;
       this._speed = 0; this._vel.set(0, 0, 0);
@@ -8234,12 +9908,19 @@ window.World = (function () {
 
     _turn(dt, ctx) {
       const s = this.state;
+      if (this.atk === 'split' && (s === 'windup' || s === 'attack' || s === 'recover')) {       // faces the line (which follows the player until it locks)
+        this._yaw += clamp(angDiff(this._yaw, Math.atan2(this._sdir.x, this._sdir.z)), -4 * dt, 4 * dt);
+        this.mesh.rotation.y = this._yaw;
+        return;
+      }
       if (!this._custom()) { super._turn(dt, ctx); return; }
       let target = null, rate = 0;
       if (s === 'leapWind') { target = Math.atan2(this._leap.tx - this._leap.sx, this._leap.tz - this._leap.sz); rate = 4.0; }
       else if (s === 'chargeWind') { target = Math.atan2(this._cdir.x, this._cdir.z); rate = 4.5; }
       else if (s === 'leap') { target = Math.atan2(this._leap.tx - this._leap.sx, this._leap.tz - this._leap.sz); rate = 4.0; }
       else if (s === 'charge') { target = Math.atan2(this._cdir.x, this._cdir.z); rate = 6; }
+      else if (s === 'whirlWind') { target = Math.atan2(ctx.dx, ctx.dz); rate = 3.0; }
+      else if (s === 'dizzy') { target = Math.atan2(ctx.dx, ctx.dz); rate = 0.7; }
       if (target === null) return;
       this._yaw += clamp(angDiff(this._yaw, target), -rate * dt, rate * dt);
       this.mesh.rotation.y = this._yaw;
@@ -8255,19 +9936,32 @@ window.World = (function () {
       if (s === 'leapWind') this._setJumpTime(lerp(0, J.takeoff, smooth(this.stateT / this.P.leapWind)));
       else if (s === 'leap') this._setJumpTime(lerp(J.takeoff, J.land, clamp(this.stateT / this.P.air, 0, 1)));
       else if (s === 'leapEnd') this._setJumpTime(lerp(J.land, J.dur || 1.16, smooth(this.stateT / (this._endT * 0.8))));
-      else if (s === 'chargeWind') {
+      else if (s === 'chargeWind' || s === 'whirlWind') {
         const a = this.actions[ATTACK];
         if (a && this._cur.upper === a) { a.time = lerp(0, ATK_RAISE, smooth(this.stateT / 0.45)); a.setEffectiveTimeScale(0); }
+      } else if (s === 'whirl') {
+        const a = this.actions[ATTACK];
+        if (a && this._cur.upper === a) { a.time = WHIRL_POSE; a.setEffectiveTimeScale(0); }
       }
       super._animate(dt, ctx);
       this._updateLook(dt);
       this._updateTele(dt);
+      this._updateDizzy(dt);
+      this._updateSwoosh(dt);
+    }
+
+    // during the entrance the sword rises as it bursts out of the ground and is held up for the roar
+    _attackClipT() {
+      if (this.state === 'windup' && this.atk === 'roar' && this._roarKind === 'entrance' && this._ent) {
+        return lerp(0, ATK_RAISE, smooth((this._ent.t - ENT.burst + 0.1) / (ENT.land - ENT.burst + 0.3)));
+      }
+      return super._attackClipT();
     }
 
     // heavy boots, only close by
     _footsteps(ctx) {
       const s = this.state;
-      if ((s !== 'approach' && s !== 'charge') || !window.Sfx || !Sfx.footstep) return;
+      if ((s !== 'approach' && s !== 'charge' && s !== 'whirl') || !window.Sfx || !Sfx.footstep) return;
       const a = this._cur.lower;
       if (!a) return;
       const clip = a.getClip();
@@ -8276,7 +9970,7 @@ window.World = (function () {
         this._stepPhase = step;
         if (ctx.dist > 40) return;
         try { Sfx.footstep('boss', this.mesh.position); } catch (e) { /* ignore */ }
-        this._shake(s === 'charge' ? 0.16 : 0.07);
+        this._shake(s === 'charge' || s === 'whirl' ? 0.16 : 0.07);
       }
     }
 
@@ -8289,6 +9983,12 @@ window.World = (function () {
         const m = this._armorMats[i], b = m._baseEmissive;
         m.emissive.setRGB(b.r + g * 0.30 + f * 0.30, b.g + g * 0.035 + f * 0.20, b.b + f * 0.10);
       }
+      this._shieldFlash = Math.max(0, this._shieldFlash - dt * 4);
+      const sf = this._shieldFlash;
+      for (let i = 0; i < this._shieldMats.length; i++) {
+        const m = this._shieldMats[i], b = m._baseEmissive;
+        if (b) m.emissive.setRGB(b.r + 0.85 * sf, b.g + 0.5 * sf, b.b + 0.2 * sf);
+      }
       if (this._blade) {
         const b = this._blade._baseEmissive;
         this._blade.emissive.setRGB(b.r + g * 0.55 + f * 0.1, b.g + g * 0.07, b.b);
@@ -8300,10 +10000,15 @@ window.World = (function () {
     // -------------------------------------------------------------------------------------------------------------------
     update(dt, target, waveNumber) {
       if (!this._placed) this._placeInView();
+      this._blockedHit = false;
+      Storm.tick(dt);
+      if (this._ent && !this._ent.cleaned && !this.dead) this._entTick(dt);
       super.update(dt, target, waveNumber);
       if (this.dead || this._removed) return;
-      // boss bar every frame (waves.js also does it: same values)
-      if (window.HUD && HUD.bossBar) { HUD.bossBar(true, Math.max(0, this.hp) / this.maxHp, this.displayName || NAME); this._barShown = true; }
+      this._guardTick(dt);
+      this._splitTick(dt);
+      // boss bar every frame (waves.js also does it: same values), from the moment it has landed
+      if (window.HUD && HUD.bossBar && !this.cinematic) { HUD.bossBar(true, Math.max(0, this.hp) / this.maxHp, this.displayName || NAME); this._barShown = true; }
     }
 
     // The wave's spawner prefers points behind the player; the boss's arrival has to be SEEN, so a boss that Waves spawned outside
@@ -8350,8 +10055,26 @@ window.World = (function () {
     }
 
     takeHit(hit) {
+      if (this._ent && !this._ent.landed) return false;          // not before it has landed
+      hit = hit || {};
+      const g = this._g;
+      if (this.state === 'dizzy' && typeof hit.damage === 'number') hit.damage *= DIZZY_DMG;
+      // a head shot into the raised shield: a fraction of the damage, sparks and a clang, and it is no head shot any more. The shield sits in
+      // front of the face, so a bullet that was meant for the head usually lands on it and is zoned as arm / torso: anything that lands
+      // within the guard radius of the head centre counts, and does the damage of a head shot x GUARD_BLOCK either way.
+      if (g.on && g.w > 0.5 && !this.dead && (hit.zone === 'head' || this._onGuard(hit.point))) {
+        hit.zone = 'torso';
+        hit.damage = (window.Combat && Combat.damageFor ? Combat.damageFor('head', this) : 150) * GUARD_BLOCK;
+        this._blockedHit = true; this._shieldFlash = 1; g.blocks++;
+        if (hit.point) {
+          _sv.copy(hit.dir || _sn).negate();
+          if (window.FX && FX.sparks) { try { FX.sparks(hit.point, _sv, 14); } catch (e) { /* ignore */ } }
+          sfx('clang', hit.point);
+        }
+      }
+      const wasHead = hit.zone === 'head';
       const killed = super.takeHit(hit);
-      if (!killed) this._checkPhase();
+      if (!killed) { this._checkPhase(); if (wasHead) this._guardAlert(); }
       return killed;
     }
 
@@ -8361,6 +10084,13 @@ window.World = (function () {
     onDeath(hit) {
       this.atk = null;
       this.mesh.position.y = 0;
+      this.mesh.rotation.z = 0;
+      this._g.on = false; this._g.pending = -1;
+      this._entAbort();
+      this._splitAbort();
+      this._spinRate = 0;
+      if (this._swoosh) this._swoosh.visible = false;
+      Storm.target = 0;                                           // the sky clears
       if (window.HUD && HUD.bossBar) { try { HUD.bossBar(false); } catch (e) { /* ignore */ } }
       this._barShown = false;
       this._hideTele();
@@ -8401,6 +10131,8 @@ window.World = (function () {
         this.mesh.rotation.y = this._yaw;
       }
       super._updateDead(dt);
+      Storm.tick(dt);
+      this._updateDizzy(dt);
       const ev = this._deathEvents;
       for (let i = 0; i < ev.length; i++) if (!ev[i].done && this._deadT >= ev[i].t) { ev[i].done = true; try { ev[i].fn(); } catch (e) { /* ignore */ } }
       this._updateLook(dt);
@@ -8418,6 +10150,11 @@ window.World = (function () {
         for (const m of T.mats) m.dispose();
         this._tele = null;
       }
+      this._entClean();
+      disposeRes(this._res);
+      this._spikes = this._stars = this._swoosh = null;
+      if (this._ent) { Cine.hide(); this._ent = null; }
+      Storm.reset();
       for (const m of this._gearMats || []) { try { m.dispose(); } catch (e) { /* ignore */ } }
       for (const g of this._hornGeos || []) { try { g.dispose(); } catch (e) { /* ignore */ } }
       for (const g of this._shGeos || []) { try { g.dispose(); } catch (e) { /* ignore */ } }
@@ -8482,6 +10219,10 @@ window.World = (function () {
       mk('stripEdgeL', edge, mat(0xffa040, 0.95), 6);
       mk('stripEdgeR', edge, mat(0xffa040, 0.95), 6);
       mk('wave', wave, mat(0xffd9a0, 0.8), 7);
+      const crackMat = new THREE.MeshBasicMaterial({ map: getCrackTex(), transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false,
+        polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+      mats.push(crackMat);
+      mk('crack', strip, crackMat, 5.5);
       this._tele = { meshes: meshes, geos: geos, mats: mats, names: Object.keys(meshes) };     // names: cached, _updateTele runs every frame
       return this._tele;
     }
@@ -8493,10 +10234,12 @@ window.World = (function () {
     }
 
     _updateTele(dt) {
-      const W = this._wave;
+      const W = this._wave, S = this._split;
       const st = this.state;
-      const wantTele = !this.dead && (st === 'windup' || st === 'attack' || st === 'leapWind' || st === 'leap' || st === 'chargeWind' || st === 'charge');
-      if (!wantTele && !W) { if (this._tele) this._hideTele(); return; }
+      const wantTele = !this.dead && (st === 'windup' || st === 'attack' || st === 'leapWind' || st === 'leap' || st === 'chargeWind' || st === 'charge'
+        || st === 'whirlWind' || st === 'whirl');
+      const crackOn = !this.dead && (S.active || S.fade > 0);
+      if (!wantTele && !W && !crackOn) { if (this._tele) this._hideTele(); return; }
       const T = this._ensureTele();
       if (!T) return;
       const M = T.meshes;
@@ -8507,7 +10250,23 @@ window.World = (function () {
 
       if (wantTele) {
         const P = this.P;
-        if ((st === 'windup' || st === 'attack') && this.atk === 'sweep') {
+        if ((st === 'windup' || st === 'attack') && this.atk === 'split') {
+          // the Earthsplitter's line: it follows the player, locks (brighter) and is struck
+          const w = SPLIT_W, len = this._sLen, yaw = Math.atan2(this._sdir.x, this._sdir.z);
+          const u = st === 'windup' ? clamp(this.stateT / this.windupTime, 0, 1) : 1;
+          const locked = st === 'attack' || u >= SPLIT_LOCK;
+          M.stripBase.visible = true; M.stripBase.position.set(p.x, 0.05, p.z); M.stripBase.rotation.y = yaw; M.stripBase.scale.set(w, 1, len);
+          M.stripBase.material.opacity = 0.24 + 0.08 * pulse + (locked ? 0.08 : 0);
+          M.stripFill.visible = true; M.stripFill.position.set(p.x, 0.055, p.z); M.stripFill.rotation.y = yaw;
+          M.stripFill.scale.set(w, 1, len * (st === 'windup' ? lerp(0.1, 1, smooth(u)) : 1));
+          M.stripFill.material.opacity = st === 'windup' ? 0.26 + 0.3 * u + (locked ? 0.12 : 0) : 0.65;
+          const px = Math.cos(yaw), pz = -Math.sin(yaw);
+          for (let i = 0; i < 2; i++) {
+            const k = STRIP_EDGES[i], sg = EDGE_SIGN[i];
+            M[k].visible = true; M[k].position.set(p.x + px * sg * w / 2, 0.06, p.z + pz * sg * w / 2); M[k].rotation.y = yaw; M[k].scale.set(0.16, 1, len);
+            M[k].material.opacity = locked ? 0.95 : 0.55 + 0.2 * pulse;
+          }
+        } else if ((st === 'windup' || st === 'attack') && this.atk === 'sweep') {
           const u = st === 'windup' ? clamp(this.stateT / this.windupTime, 0, 1) : 1;
           const R = SWEEP_R * diff().reach;
           M.fanBase.visible = true; M.fanBase.position.set(p.x, 0.05, p.z); M.fanBase.rotation.y = this._yaw; M.fanBase.scale.set(R, 1, R);
@@ -8530,6 +10289,18 @@ window.World = (function () {
           M.discFill.material.opacity = 0.32 + 0.3 * u;
           M.ring.visible = true; M.ring.position.set(L.tx, 0.06, L.tz); M.ring.scale.set(R, 1, R);
           M.ring.material.opacity = L.locked ? 0.7 + 0.3 * pulse : 0.55;
+        } else if (st === 'whirlWind' || st === 'whirl') {
+          // the Whirlwind's reach: a ring around the boss that fills up during the windup, then pulses while it spins
+          const R = WHIRL_R * diff().reach;
+          const u = st === 'whirlWind' ? clamp(this.stateT / P.whirlWind, 0, 1) : 1;
+          M.discBase.visible = true; M.discBase.position.set(p.x, 0.05, p.z); M.discBase.scale.set(R, 1, R);
+          M.discBase.material.opacity = 0.24 + 0.08 * pulse;
+          M.discFill.visible = true; M.discFill.position.set(p.x, 0.055, p.z);
+          const f = st === 'whirlWind' ? lerp(0.1, 1, smooth(u)) : 1;
+          M.discFill.scale.set(R * f, 1, R * f);
+          M.discFill.material.opacity = st === 'whirlWind' ? 0.3 + 0.3 * u : 0.42 + 0.12 * pulse;
+          M.ring.visible = true; M.ring.position.set(p.x, 0.06, p.z); M.ring.scale.set(R, 1, R);
+          M.ring.material.opacity = st === 'whirl' ? 0.75 + 0.25 * pulse : 0.55;
         } else if (st === 'chargeWind' || st === 'charge') {
           const w = CHARGE_HIT_R * 2, len = this._cLen;
           const u = st === 'chargeWind' ? clamp(this.stateT / P.chargeWind, 0, 1) : 1;
@@ -8546,6 +10317,13 @@ window.World = (function () {
             M[k].visible = true; M[k].position.set(sx + px * sg * w / 2, 0.06, sz + pz * sg * w / 2); M[k].rotation.y = yaw; M[k].scale.set(0.16, 1, len);
           }
         }
+      }
+
+      if (crackOn) {
+        const yaw = Math.atan2(S.dx, S.dz);
+        M.crack.visible = true; M.crack.position.set(S.ox, 0.052, S.oz); M.crack.rotation.y = yaw;
+        M.crack.scale.set(SPLIT_W * 1.15, 1, Math.max(0.01, S.front));
+        M.crack.material.opacity = S.active ? 1 : Math.min(1, S.fade * 1.6);
       }
 
       if (W) {
@@ -8570,6 +10348,8 @@ window.World = (function () {
   // QA helpers (?debug=1; installed when the first Boss is built: debug.js loads after this file)
   // ------------------------------------------------------------------------------------------------------------------------
   let dbgDone = false;
+  // __dbg is made by debug.js, which loads after this file: install the helpers once the page has loaded (or when the first Boss is built)
+  if (document.readyState === 'complete') setTimeout(() => installDebug(), 0); else window.addEventListener('load', () => installDebug());
   function installDebug() {
     if (dbgDone || !window.__dbg) return;
     dbgDone = true;
@@ -8587,10 +10367,14 @@ window.World = (function () {
         const p = b.mesh.position, pp = playerPos();
         return { phase: b.phase, state: b.state, atk: b.atk, clip: b.currentClip, hp: b.hp, maxHp: b.maxHp, dead: b.dead, hold: b.hold,
           pos: [round(p.x), round(p.y), round(p.z)], yaw: round(b._yaw), dist: pp ? round(Math.hypot(pp.x - p.x, pp.z - p.z)) : null,
-          stateT: round(b.stateT), cds: { gap: round(b._gap), leap: round(b._leapCd), charge: round(b._chargeCd) }, pendingRoars: b._roarPending,
+          stateT: round(b.stateT), cds: { gap: round(b._gap), leap: round(b._leapCd), charge: round(b._chargeCd), split: round(b._splitCd), whirl: round(b._whirlCd) },
+          pendingRoars: b._roarPending,
+          guard: { on: b._g.on, w: round(b._g.w), t: round(b._g.t), cd: round(b._g.cd), aimed: b._g.aimed, aimDist: round(b._g.lastD), blocks: b._g.blocks, level: round(b._guardLevel()) },
+          ent: b._ent ? { t: round(b._ent.t), landed: b._ent.landed, done: b._ent.done, y: round(b._ent.y) } : null,
+          split: { active: b._split.active, front: round(b._split.front), len: round(b._sLen) },
           minions: b.minions.filter((m) => !m.dead && !m._removed).length, height: round(b.height), glow: round(b._glow), combo: b._combo };
       },
-      // start an attack right now (the AI keeps running): 'sweep' | 'leap' | 'charge' | 'roar'
+      // start an attack right now (the AI keeps running): 'sweep' | 'leap' | 'charge' | 'split' (Earthsplitter) | 'whirl' (Whirlwind) | 'roar'
       force(kind) {
         const b = find();
         if (!b) return null;
@@ -8600,9 +10384,47 @@ window.World = (function () {
         if (kind === 'sweep') b.startWindup();
         else if (kind === 'leap') b.startLeap(ctx);
         else if (kind === 'charge') { if (b.phase < 2) b.phase = 2; b.startCharge(ctx); }
+        else if (kind === 'split' || kind === 'earthsplitter') b.startSplit(ctx);
+        else if (kind === 'whirl' || kind === 'whirlwind') { if (b.phase < 2) b.phase = 2; b.startWhirl(ctx); }
         else if (kind === 'roar') b.startRoar('phase');
         return this.info();
       },
+      // raise (true) / lower (false) the shield arm right now for a while (default 1.2 s); undefined = raise. Lowering leaves a cooldown (default 99 s: no new guard)
+      guard(on, sec) {
+        const b = find();
+        if (!b) return null;
+        if (on === false) { b._guardEnd(b._guardLevel()); b._g.cd = sec === undefined ? 99 : sec; }
+        else { b._guardStart(); b._g.t = sec || 1.2; }
+        return { on: b._g.on, w: round(b._g.w), cd: round(b._g.cd), blocks: b._g.blocks };
+      },
+      // tune the guard pose live: guardPose({ u: [fwd, left, up], f: [fwd, left, up] })
+      guardPose(o) { if (o && o.u) GUARD_POSE.u = o.u; if (o && o.f) GUARD_POSE.f = o.f; return GUARD_POSE; },
+      // world position of the middle of the head (where a head shot lands): [x, y, z]
+      headPos() {
+        const b = find();
+        if (!b) return null;
+        b.mesh.updateMatrixWorld(true);
+        const h = b.bones.head.getWorldPosition(new V3());
+        h.y += HEAD_UP * b.sizeScale;
+        return h.toArray().map(round);
+      },
+      // arm the entrance cinematic on the boss (or build a boss 19 m ahead of the camera and arm it): the sequence starts on its next update
+      entrance() {
+        let b = find();
+        if (!b) {
+          if (!window.Enemies || !window.Game) return null;
+          const d = new V3(); Game.camera.getWorldDirection(d); d.y = 0; d.normalize();
+          b = new Boss();
+          const pp = playerPos();
+          b.mesh.position.set(pp.x + d.x * 19, 0, pp.z + d.z * 19);
+          Enemies.add(b);
+        } else { b._ent = null; b.mesh.visible = true; }
+        b._placed = true;
+        b.startEntrance();
+        return this.info();
+      },
+      // sky mood 0..1 (the cinematic sets it itself): the lights, background and fog of the scene
+      storm(level, flash) { Storm.target = level === undefined ? 0.78 : level; if (flash) Storm.flash = flash; return { level: Storm.level, target: Storm.target }; },
       // jump to phase n: set the HP just below its threshold (takeHit is the real path, so minions + roar happen)
       phase(n) {
         const b = find();
@@ -8648,7 +10470,7 @@ window.World = (function () {
         for (const k of Object.keys(b._tele.meshes)) { const m = b._tele.meshes[k]; if (m.visible) out[k] = { pos: m.position.toArray().map(round), scale: m.scale.toArray().map(round), op: round(m.material.opacity) }; }
         return out;
       },
-      constants() { return { SIZE: SIZE, HP: HP, PH: PH, DMG: DMG, SWEEP_R: SWEEP_R, J: J }; },
+      constants() { return { SIZE: SIZE, HP: HP, PH: PH, DMG: DMG, SWEEP_R: SWEEP_R, J: J, ENT: ENT, SPLIT_W: SPLIT_W, SPIKE_R: SPIKE_R, WHIRL_R: WHIRL_R }; },
     };
   }
 })();
@@ -8661,11 +10483,14 @@ window.World = (function () {
           around the arena centre, preferring points behind / beside the player's view, never on a collider and never near
           the player. A wave is complete only when pending == 0 AND alive == 0.  Then the player is healed (25 HP on Normal,
           everything before the boss) via Game.heal, a 4 s countdown banner, then the next wave.
-          The LAST wave is the Boss (Difficulty.waves: 4 on Easy, 5 on Normal, 6 on Hard; intro banner + Sfx.bossRoar, boss bar).
+          The LAST wave is the Boss (Difficulty.waves: 4 on Easy, 5 on Normal, 6 on Hard; a short "Boss wave" banner + the wave horn, then
+          BOSS_DELAY later the Iron Warlord's entrance cinematic (boss.js: letterbox, storm, lightning, it bursts out of the ground,
+          title card, roar; the player keeps control), boss bar).
           Victory only after the boss dies -> HUD.victory(stats).
    Everything is driven by update(dt) timers (no setTimeout), so the QA virtual clock and freezeAI behave.
 
-   Boss (the last wave): `new window.Boss()` (no arguments), then mesh.position is set to the spawn point, `waveNumber` is assigned and
+   Boss (the last wave): `new window.Boss()` (no arguments), then mesh.position is set to the spawn point, `waveNumber` is assigned,
+   `boss.startEntrance()` arms the cinematic (it runs on the boss's first update, after the boss was moved in front of the player) and
    Enemies.add(boss) is called. Waves reads boss.hp / maxHp / displayName / dead. Minions the boss summons itself (Enemies.add)
    are NOT tracked here: they do not hold the wave open and they are killed when the boss dies (victory comes only from the
    boss's death). If the Boss class is missing, throws or comes back unusable, a tougher Knight stands in (Waves.bossFallback).
@@ -8692,13 +10517,15 @@ window.World = (function () {
   //   boss     x boss HP                           heal     HP restored per wave   windup   x knight windup (telegraph) time
   //   speed    x knight walk / run speed           reach    x boss sweep / slam reach and attack distance
   //   throwers share of knights that throw daggers, rushers share that do the shield rush (both chosen when the knight spawns)
+  //   bossGuard how readily the Iron Warlord raises its shield arm against head shots (0..1: the chance it reacts, and the shorter its reaction
+  //             time and cooldown; boss.js "Head guard")
   //   waves    waves in a run, the boss being the last: more waves as the difficulty rises
   //   streak   kills in a row that earn the bonus weapon (grenade.js), nades = how many grenades it gives (1; a run also starts with 1)
   // ------------------------------------------------------------------------------------------------------------------------
   const LEVELS = {
-    easy:   { key: 'easy',   label: 'Easy',   dmg: 0.6, hp: 0.8,  knights: -2, boss: 0.75, heal: 40, windup: 1.0, speed: 0.9,  reach: 0.9,  throwers: 0.20, rushers: 0.10, streak: 4, nades: 1, waves: 4 },
-    normal: { key: 'normal', label: 'Normal', dmg: 1.0, hp: 1.0,  knights: 0,  boss: 1.0,  heal: 25, windup: 1.0, speed: 1.0,  reach: 1.0,  throwers: 0.35, rushers: 0.20, streak: 5, nades: 1, waves: 5 },
-    hard:   { key: 'hard',   label: 'Hard',   dmg: 1.4, hp: 1.25, knights: 2,  boss: 1.3,  heal: 15, windup: 0.8, speed: 1.15, reach: 1.15, throwers: 0.50, rushers: 0.35, streak: 6, nades: 1, waves: 6 },
+    easy:   { key: 'easy',   label: 'Easy',   dmg: 0.6, hp: 0.8,  knights: -2, boss: 0.75, heal: 40, windup: 1.0, speed: 0.9,  reach: 0.9,  throwers: 0.20, rushers: 0.10, bossGuard: 0.35, streak: 4, nades: 1, waves: 4 },
+    normal: { key: 'normal', label: 'Normal', dmg: 1.0, hp: 1.0,  knights: 0,  boss: 1.0,  heal: 25, windup: 1.0, speed: 1.0,  reach: 1.0,  throwers: 0.35, rushers: 0.20, bossGuard: 0.60, streak: 5, nades: 1, waves: 5 },
+    hard:   { key: 'hard',   label: 'Hard',   dmg: 1.4, hp: 1.25, knights: 2,  boss: 1.3,  heal: 15, windup: 0.8, speed: 1.15, reach: 1.15, throwers: 0.50, rushers: 0.35, bossGuard: 0.90, streak: 6, nades: 1, waves: 6 },
   };
   let level = 'normal';
   try { const saved = localStorage.getItem('kf_difficulty'); if (saved && LEVELS[saved]) level = saved; } catch (e) { /* private mode */ }
@@ -8740,7 +10567,7 @@ window.World = (function () {
   const COUNTDOWN = 4;                   // seconds between waves
   // HP restored when a wave is cleared comes from Difficulty.heal (25 on Normal; 100 HP, 15 per knight hit, no other healing);
   // the break before the boss restores everything (the boss does 22-36 per hit).
-  const BOSS_DELAY = 1.8;                // boss appears this long after the intro banner / roar
+  const BOSS_DELAY = 1.8;                // boss appears this long after the intro banner (which is gone by then: the entrance cinematic follows)
   const VICTORY_DELAY = 3.0;             // let the boss death play out before the victory screen
   const MAX_ALIVE = 8;                   // never more than this many wave knights alive at once
   const BOSS_NAME = 'The Iron Warlord';
@@ -8810,6 +10637,7 @@ window.World = (function () {
       const b = new window.Boss();
       if (!b || !b.mesh || typeof b.takeHit !== 'function') throw new Error('Boss instance has no mesh / takeHit');
       b.waveNumber = wave;
+      if (typeof b.startEntrance === 'function') b.startEntrance();       // the storm / lightning / burst-from-the-ground cinematic
       return { enemy: b, fallback: false, error: null };
     } catch (e) { err = e; }
     console.error('[waves] Boss construction failed, using a tougher knight as a stand-in:', err);
@@ -8988,13 +10816,12 @@ window.World = (function () {
         if (HUD.setKills) HUD.setKills(this.kills);
         if (HUD.bossBar) HUD.bossBar(false);
         if (HUD.banner) {
-          if (this._bossWave) HUD.banner('Boss wave', BOSS_NAME + ' approaches', 3600, { kind: 'boss' });
+          if (this._bossWave) HUD.banner('Boss wave', BOSS_NAME + ' approaches', 1800, { kind: 'boss' });
           else HUD.banner('Wave ' + n, this.pending + ' knights approach', 2600);
         }
       }
       if (window.Sfx) {
-        if (this._bossWave) { if (Sfx.bossRoar) Sfx.bossRoar(); }
-        else if (Sfx.waveStart) Sfx.waveStart();
+        if (Sfx.waveStart) Sfx.waveStart();                    // the boss itself roars at the end of its entrance (boss.js)
         if (Sfx.duck) Sfx.duck(this._bossWave);                // the meadow ambience drops a little during the boss fight
       }
       // first knight is on the field immediately; the boss waits for its intro
@@ -9048,7 +10875,7 @@ window.World = (function () {
         this.boss = e;
         const hp = hpOf(e);
         this._bossMax = (typeof e.maxHp === 'number' && e.maxHp > 0) ? e.maxHp : (hp > 0 ? hp : 1);
-        if (window.HUD && HUD.bossBar) HUD.bossBar(true, 1, this._bossName());
+        if (window.HUD && HUD.bossBar) HUD.bossBar(!e.cinematic, 1, this._bossName());      // the bar appears when the entrance cinematic has landed
       }
       this._hud();
     },
@@ -9071,6 +10898,7 @@ window.World = (function () {
     _updateBossBar() {
       const b = this.boss;
       if (!b || this.bossKilled || !window.HUD || !HUD.bossBar) return;
+      if (b.cinematic) return;
       const hp = hpOf(b);
       const max = (typeof b.maxHp === 'number' && b.maxHp > 0) ? b.maxHp : this._bossMax;
       HUD.bossBar(true, typeof hp === 'number' ? Math.max(0, hp) / max : 1, this._bossName());
@@ -9158,14 +10986,25 @@ window.World = (function () {
        always: FX.tracer(muzzle, point), FX.shake, Sfx.shoot, camera kick
    Every cross-module call is guarded, so any module can be missing.
    Kills: Waves owns the kill counter when Waves.onEnemyKilled exists; otherwise Game counts them itself.
-   Controls: WASD / arrow keys move, Shift sprints, mouse aims (pointer lock), left button fires, R reloads.
-   Touch (touch.js): window.TouchInput feeds an analog move vector (input.analog / ax / ay) and a sprint flag through getInput. */
+   Controls: WASD / arrow keys move, Shift sprints, mouse aims (pointer lock), left button fires, right button throws a grenade (like G,
+   grenade.js; the browser context menu is suppressed on the canvas), R reloads, F / V kick.
+   Touch (touch.js): window.TouchInput feeds an analog move vector (input.analog / ax / ay) and a sprint flag through getInput; the KICK button calls Game.tryKick.
+
+   Kick (melee): tryKick() starts it (0.9 s cooldown, not while reloading or dead), asks Weapon.kick() for the viewmodel animation
+   ({ impactAt, duration } in seconds, or null = the weapon declines; without Weapon.kick it uses KICK_IMPACT / KICK_DURATION) and, impactAt
+   later, _kickImpact() hits up to 3 living enemies, nearest first, that are within KICK_REACH m (horizontal) and +-38 degrees of the
+   camera's horizontal forward: knights take 30 damage (torso, chest height, dir = forward) through enemy.takeHit, then Combat.onHit /
+   onKill for sparks, sound and knockback, a further 7 m/s shove along forward and an interruption into 'stagger' (also mid windup / attack;
+   not a charging or stumbling rusher); the boss takes 15 and is neither shoved nor staggered (its reach adds KICK_BIG m per metre of extra
+   size, as it never stands closer than ~4 m). Kills go through _onKill like bullet kills (Waves dedupes, the grenade streak follows).
+   Sfx.kickWhoosh on a miss, Sfx.kickThud on a hit. Debug (?debug=1): __dbg.kick(instant?). */
 window.getInput = function () {
   const input = { forward: false, backward: false, left: false, right: false, sprint: false, analog: false, ax: 0, ay: 0 };
   const keys = {};
   document.addEventListener('keydown', function (e) {
     keys[e.code] = true;
     if (e.code === 'KeyR') { if (window.Game && Game.tryReload) Game.tryReload(); }
+    else if ((e.code === 'KeyF' || e.code === 'KeyV') && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) { if (window.Game && Game.tryKick) Game.tryKick(); }
   });
   document.addEventListener('keyup', function (e) { keys[e.code] = false; });
   // A key released while the window was in the background (alt-tab, Esc pause + alt-tab) never delivers its keyup: without
@@ -9196,6 +11035,12 @@ window.getInput = function () {
   const RELOAD_MS = 1600;
   const FIRE_GATE_MS = 350;
   const FALLBACK_DAMAGE = 34;     // used only when Combat.damageFor is absent
+  const KICK_COOLDOWN = 0.9;                       // s from one kick to the next
+  const KICK_IMPACT = 0.17, KICK_DURATION = 0.5;   // s: used when Weapon.kick does not exist (impact after the press, whole animation)
+  const KICK_REACH = 2.3, KICK_BIG = 0.9;          // m from the player (horizontal); + KICK_BIG per metre a body is bigger than a knight (the boss)
+  const KICK_COS = Math.cos(38 * Math.PI / 180);   // within +-38 degrees of the camera's horizontal forward
+  const KICK_MAX = 3;                              // targets per kick, nearest first
+  const KICK_DAMAGE = 30, KICK_DAMAGE_BOSS = 15, KICK_PUSH = 7;
   const X_AXIS = new THREE.Vector3(1, 0, 0);
   const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
@@ -9203,6 +11048,7 @@ window.getInput = function () {
   const _dir = new THREE.Vector3();
   const _tmp = new THREE.Vector3();
   const _q = new THREE.Quaternion();
+  const _kE = [null, null, null], _kD = [0, 0, 0];  // the kick's chosen targets and their distances (scratch, sorted by distance)
 
   function isDead(e) {
     return !!e && (e.dead === true || (typeof e.hp === 'number' && e.hp <= 0));
@@ -9275,20 +11121,30 @@ window.getInput = function () {
       this.ammo = MAX_AMMO;
       this.reloadTimer = 0;
       this._kills = 0;
-      this._kick = { p: 0, pv: 0, y: 0, yv: 0 };          // camera kick spring state
+      this._kick = { p: 0, pv: 0, y: 0, yv: 0 };          // camera recoil spring state
       this._kickApplied = { p: 0, y: 0 };                  // portion of the kick currently baked into the camera
       this._shakeApplied = new THREE.Vector3();            // shake offset currently added to the camera position
       this._stride = 0;
       this._raycaster = new THREE.Raycaster();
       document.addEventListener('mousedown', function (e) {
-        if (document.pointerLockElement && e.button === 0) self.tryFire();
+        if (!document.pointerLockElement) return;
+        if (e.button === 0) self.tryFire();
+        else if (e.button === 2 && window.Grenade && Grenade.throwIt) Grenade.throwIt();      // right button = G
       });
+      renderer.domElement.addEventListener('contextmenu', function (e) { e.preventDefault(); });   // the right button is a game control
+
+      // melee kick (see the header): cooldown, time left until the foot lands (-1 = no kick under way)
+      this.kicks = 0;
+      this._kickCool = 0;
+      this._kickWait = -1;
+      this._kickBtn = document.getElementById('tKick');   // touch button: dimmed during the cooldown
 
       this.getInput = window.getInput();
 
       // HUD init
       if (window.HUD && HUD.updateAmmo) HUD.updateAmmo(this.ammo, MAX_AMMO, false);
       if (window.HUD && HUD.updateHP) HUD.updateHP(this.playerHP);
+      this._installDebug();
     },
 
     // an outside push on the player (m/s, decays in a fraction of a second): the shield rush shoves you back with it
@@ -9306,6 +11162,128 @@ window.getInput = function () {
       if (window.Sfx && Sfx.reload) Sfx.reload();
       if (window.Weapon && Weapon.reload) Weapon.reload(RELOAD_MS);
       if (window.HUD && HUD.updateAmmo) HUD.updateAmmo(this.ammo, MAX_AMMO, true);
+    },
+
+    // ---- melee kick -----------------------------------------------------------------------------------------------------
+    // F / V / the KICK button. Starts the kick; _kickImpact() lands it Weapon.kick()'s impactAt seconds later. force (debug) skips the
+    // cooldown / reload / not-started checks.
+    tryKick: function (force) {
+      if (this.dead || this._kickWait >= 0) return false;
+      if (!force) {
+        if (this._kickCool > 0 || this.reloadTimer > 0) return false;
+        const M = window.Main;
+        if (M && ((M.isStarted && !M.isStarted()) || (M.isPaused && M.isPaused()))) return false;
+      }
+      let impactAt = KICK_IMPACT, duration = KICK_DURATION;
+      if (window.Weapon && typeof Weapon.kick === 'function') {
+        let r;
+        try { r = Weapon.kick(); } catch (e) { console.error('[Game] Weapon.kick', e); r = undefined; }     // a throwing viewmodel must not cancel the kick
+        if (r === null) return false;                                                                    // the weapon declines (busy)
+        if (r && isFinite(r.impactAt) && r.impactAt >= 0) impactAt = r.impactAt;
+        if (r && isFinite(r.duration) && r.duration > 0) duration = r.duration;
+      }
+      this._kickWait = impactAt;
+      this._kickCool = KICK_COOLDOWN;
+      this._kickInfo = { impactAt: impactAt, duration: duration };
+      this.kicks++;
+      if (this._kickBtn) this._kickBtn.classList.add('cool');
+      return true;
+    },
+
+    // The foot lands: the camera's horizontal forward (fx, fz) decides who is in front. Returns a plain summary under ?debug=1, else null.
+    _kickImpact: function () {
+      const list = window.Enemies && Enemies.list, pp = this.playerObj.position;
+      this.camera.updateMatrixWorld(true);
+      this.camera.getWorldDirection(_dir);
+      let fx = _dir.x, fz = _dir.z, fl = Math.hypot(fx, fz);
+      if (fl < 0.05) {                    // looking (almost) straight up or down: the camera's up vector points the way the body faces
+        _tmp.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
+        const s = _dir.y < 0 ? 1 : -1;
+        fx = _tmp.x * s; fz = _tmp.z * s; fl = Math.hypot(fx, fz);
+      }
+      if (fl < 1e-4) { fx = 0; fz = -1; fl = 1; }
+      fx /= fl; fz /= fl;
+
+      // the (at most KICK_MAX) nearest living enemies in reach and inside the cone
+      let n = 0;
+      for (let i = 0; list && i < list.length; i++) {
+        const e = list[i];
+        if (!e || !e.mesh || e._removed || isDead(e)) continue;
+        const p = e.mesh.position, S = e.sizeScale || 1;
+        const dx = p.x - pp.x, dz = p.z - pp.z, d = Math.hypot(dx, dz);
+        if (d > KICK_REACH + KICK_BIG * (S - 1)) continue;
+        if (d > 0.4 && (dx * fx + dz * fz) / d < KICK_COS) continue;           // (right on top of you counts as in front)
+        let j = n < KICK_MAX ? n : KICK_MAX - 1;
+        if (n >= KICK_MAX && d >= _kD[j]) continue;
+        while (j > 0 && _kD[j - 1] > d) { _kE[j] = _kE[j - 1]; _kD[j] = _kD[j - 1]; j--; }
+        _kE[j] = e; _kD[j] = d;
+        if (n < KICK_MAX) n++;
+      }
+
+      const dir = new THREE.Vector3(fx, 0, fz);
+      let killed = 0, firstPoint = null;
+      const info = window.__dbg ? { hits: [], kills: 0, forward: [fx, fz] } : null;
+      for (let i = 0; i < n; i++) {
+        const e = _kE[i]; _kE[i] = null;
+        const point = this._kickEnemy(e, fx, fz, dir, info);
+        if (!firstPoint) firstPoint = point;
+        if (isDead(e)) killed++;
+      }
+
+      if (n) {
+        if (window.HUD && HUD.hitmark) HUD.hitmark(killed ? 'kill' : 'hit');
+        if (window.Sfx && Sfx.kickThud) { try { Sfx.kickThud(firstPoint); } catch (e) { /* ignore */ } }
+        if (window.FX && FX.shake) FX.shake(0.2);
+        this._kick.pv -= 0.8;                                                  // the view dips into the blow
+      } else {
+        if (window.Sfx && Sfx.kickWhoosh) { try { Sfx.kickWhoosh(); } catch (e) { /* ignore */ } }
+        this._kick.pv -= 0.3;
+      }
+      if (info) { info.hit = n; info.kills = killed; this.lastKick = info; }
+      return info;
+    },
+
+    // One enemy takes the kick; returns the point it was hit at.
+    _kickEnemy: function (e, fx, fz, dir, info) {
+      const p = e.mesh.position, S = e.sizeScale || 1, boss = e.type === 'boss';
+      // chest height (the boss: its leg), on the side facing the player
+      const point = new THREE.Vector3(p.x - fx * 0.3 * S, boss ? 1.2 : 1.1 * S, p.z - fz * 0.3 * S);
+      const hitData = { damage: boss ? KICK_DAMAGE_BOSS : KICK_DAMAGE, zone: 'torso', point: point, dir: dir.clone(), kick: true };
+      const hp0 = e.hp, wasDead = isDead(e);
+      try {
+        if (typeof e.takeHit === 'function') e.takeHit(hitData);
+      } catch (err) { console.error('[Game] kick hit failed', err); }
+      const killed = !wasDead && isDead(e);
+
+      if (window.Combat) {                                     // sparks, armour sound, knockback / the death reaction
+        try {
+          if (killed) { if (!e._killFx && Combat.onKill) Combat.onKill(e, hitData, dir); }
+          else if (Combat.onHit) Combat.onHit(e, hitData, dir);
+        } catch (err) { console.error('[Game] Combat reaction (kick)', err); }
+      }
+      if (!boss) {
+        if (typeof e.applyImpulse === 'function') { try { e.applyImpulse(new THREE.Vector3(fx * KICK_PUSH, 0, fz * KICK_PUSH)); } catch (err) { /* ignore */ } }
+        const st = e.state;      // knocked off balance, whatever it was doing, except a charge in full flight (and its stumble, which is its own opening)
+        if (!killed && typeof e.setState === 'function' && st !== 'rush' && st !== 'stumble') {
+          if (st !== 'stagger') e.setState('stagger'); else e.stateT = 0;
+        }
+      }
+      if (killed) this._onKill(e);
+      if (info) info.hits.push({ type: e.type || null, dmg: hitData.damage, hp0: hp0, hp: e.hp, killed: killed, state: e.state, dist: Math.round(Math.hypot(p.x - this.playerObj.position.x, p.z - this.playerObj.position.z) * 100) / 100 });
+      return point;
+    },
+
+    _installDebug: function () {
+      if (!window.__dbg) return;
+      const G = this;
+      // __dbg.kick(): press the kick (forced: no cooldown / reload / title screen checks); the foot lands impactAt seconds of game time later.
+      // __dbg.kick(true): land it at once and return { hit, kills, hits: [{ type, dmg, hp0, hp, killed, state, dist }] } (also Game.lastKick).
+      window.__dbg.kick = function (instant) {
+        if (!G.tryKick(true)) return { ok: false };
+        if (!instant) return { ok: true, impactAt: G._kickInfo.impactAt, duration: G._kickInfo.duration };
+        G._kickWait = -1;
+        return Object.assign({ ok: true }, G._kickImpact());
+      };
     },
 
     // Resolve the enemy object (Knight / Boss) from a mesh that was hit.
@@ -9464,6 +11442,7 @@ window.getInput = function () {
       if (this.playerHP <= 0) {
         this.dead = true;
         this.reloadTimer = 0; this.reloading = false;
+        this._kickWait = -1;                                   // a kick under way never lands
         this._removeShake();
         try { document.exitPointerLock(); } catch (e) { /* ignore */ }
         let best = 0;
@@ -9570,6 +11549,14 @@ window.getInput = function () {
         }
       }
       this.reloading = this.reloadTimer > 0;
+      if (this._kickCool > 0) {
+        this._kickCool -= dt;
+        if (this._kickCool <= 0 && this._kickBtn) this._kickBtn.classList.remove('cool');
+      }
+      if (this._kickWait >= 0) {
+        this._kickWait -= dt;
+        if (this._kickWait < 0) { this._kickWait = -1; if (!this.dead) this._kickImpact(); }
+      }
       this._applyKick(dt);
       this._leashEnemies();                                    // keeps strays inside the wall (see above); runs even without focus
 
@@ -9662,7 +11649,7 @@ window.getInput = function () {
      left thumb    floating stick: touch anywhere on the left 44 % of the screen, drag to move (analog speed); push it to the edge to sprint
      right thumb   drag anywhere on the right to aim
      FIRE          fires (semi-auto, like the mouse button); keep the finger down and drag to aim while shooting
-     RELOAD        reloads         SPRINT (above RELOAD)   toggles a latched sprint
+     RELOAD        reloads         SPRINT (above RELOAD)   toggles a latched sprint         KICK (above SPRINT)   melee kick (Game.tryKick)
      GRENADE       (above FIRE, only while you hold grenades from a kill streak) lobs one
      top right     pause and mute (the touch versions of Esc and M)
    Touch mode switches on when the primary pointer is coarse, on the first real touch, or with ?touch=1 (QA / desktop testing; ?touch=0
@@ -9827,9 +11814,9 @@ window.getInput = function () {
   }
 
   function init() {
-    ['look', 'zone', 'base', 'knob', 'fire', 'reload', 'sprint', 'grenade', 'pause', 'mute'].forEach(function (k) {
+    ['look', 'zone', 'base', 'knob', 'fire', 'reload', 'sprint', 'kick', 'grenade', 'pause', 'mute'].forEach(function (k) {
       E[k] = document.getElementById({ look: 'touchLook', zone: 'stickZone', base: 'stickBase', knob: 'stickKnob', fire: 'tFire', reload: 'tReload',
-        sprint: 'tSprint', grenade: 'tGrenade', pause: 'tPause', mute: 'tMute' }[k]);
+        sprint: 'tSprint', kick: 'tKick', grenade: 'tGrenade', pause: 'tPause', mute: 'tMute' }[k]);
     });
     if (!E.look || !E.zone || !E.base || !E.fire) return;           // markup missing: touch controls are simply off
 
@@ -9848,6 +11835,7 @@ window.getInput = function () {
 
     press(E.reload, function () { if (window.Game && Game.tryReload) Game.tryReload(); });
     if (E.grenade) press(E.grenade, function () { if (window.Grenade && Grenade.throwIt) Grenade.throwIt(); });
+    if (E.kick) press(E.kick, function () { if (window.Game && Game.tryKick) Game.tryKick(); });
     press(E.sprint, function () {
       T.latch = !T.latch;
       E.sprint.classList.toggle('on', T.latch);
@@ -9912,7 +11900,7 @@ window.getInput = function () {
    Earning:  kills in a row (each within STREAK_WINDOW seconds of the last) fill the streak; at Difficulty.streak (Easy 4, Normal 5, Hard 6)
              you are given Difficulty.nades grenades (1 on every level; at most MAX_CARRY carried). A run starts with START_NADES = 1 and the streak starts again.
              Kills by grenade count too, so a good throw chains into the next reward.
-   Using:    G (desktop) or the GRENADE button (touch) lobs one in an arc from the camera. It bounces off the ground, trees and rocks,
+   Using:    G or the right mouse button (desktop; game.js turns the right button into throwIt) or the GRENADE button (touch) lobs one in an arc from the camera. It bounces off the ground, trees and rocks,
              detonates the moment it touches a knight, or when its 2 s fuse runs out (the LED on it blinks faster and faster).
    Blast:    RADIUS m, linear falloff from MAX_DAMAGE at the centre (a knight dies inside ~2.5 m, a boss takes 35 %), knights are thrown
              back, thrown daggers in the blast are destroyed. YOU are hurt too, up to SELF_DAMAGE x difficulty damage inside SELF_R m, and
@@ -9993,7 +11981,7 @@ window.getInput = function () {
         const n = diff().nades;
         const before = this.count;
         this.give(n);
-        if (window.HUD && HUD.banner) { try { HUD.banner('Bonus weapon', 'Grenades +' + (this.count - before) + ' - ' + (window.TouchInput && TouchInput.active ? 'tap GRENADE' : 'press G'), 2600, { kind: 'clear' }); } catch (e) { /* ignore */ } }
+        if (window.HUD && HUD.banner) { try { HUD.banner('Bonus weapon', 'Grenades +' + (this.count - before) + ' - ' + (window.TouchInput && TouchInput.active ? 'tap GRENADE' : 'press G or right-click'), 2600, { kind: 'clear' }); } catch (e) { /* ignore */ } }
         if (window.Sfx && Sfx.bonus) { try { Sfx.bonus(); } catch (e) { /* ignore */ } }
       }
       this._hud();
